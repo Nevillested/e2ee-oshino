@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
+	"log"
 	"net/http"
 	"server/internal/db"
 
@@ -15,6 +15,10 @@ import (
 type RegisterRequest struct {
 	Login    string `json:"login"`
 	Password string `json:"password"`
+}
+
+type RegisterResponse struct {
+	TotpURL string `json:"totp_url"`
 }
 
 func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
@@ -29,7 +33,7 @@ func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 		//декодируем JSON из байтов в структуру RegisterRequest, передавая в параметры указатель на структуру newRegisterRequest
 		var DecodeError = NewDecoder.Decode(&newRegisterRequest)
 
-		//если произошла ошибка при декодировании JSON, то выводим сообщение об ошибке и возвращаем клиенту статус 400 Bad Request
+		//если произошла ошибка при декодировании JSON, то выводим сообщение об ошибке и возвращаем клиенту статус 500
 		if DecodeError != nil {
 			http.Error(w, "Ошибка декодирования JSON", http.StatusBadRequest)
 			return
@@ -51,8 +55,6 @@ func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 
 		var NewHashSalt string = hashS + "$" + saltS
 
-		//curl -X POST http://127.0.0.1:8080/register -H "Content-Type: application/json" -d '{"login":"alice","password":"supersecret123"}'
-
 		//создаем структуру для генерации ключа TOTP (Time-based One-Time Password), который будет использоваться для двухфакторной аутентификации. В структуре указываем имя нашего приложения и имя аккаунта (AccountName), которые будут отображаться в приложении для генерации одноразовых паролей (например, Google Authenticator).
 		var NewGenerateOptions = totp.GenerateOpts{Issuer: "OShinobu", AccountName: newRegisterRequest.Login}
 
@@ -67,7 +69,6 @@ func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 
 		//получаем ссылку на QR-код, который можно отсканировать в приложении для генерации одноразовых паролей (например, Google Authenticator)
 		var NewQRCodeURL string = NewKey.URL()
-		fmt.Println(NewQRCodeURL)
 
 		//получаем секретный ключ TOTP в виде строки, который будет храниться в базе данных и использоваться для проверки одноразовых паролей при аутентификации
 		var NewSecret = NewKey.Secret()
@@ -82,13 +83,26 @@ func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 		//вызываем функцию создания аккаунта, получая в ответ объект с данными аккаунта и ошибку
 		var NewRegAcc, NewRegAccError = queries.CreateAccount(r.Context(), NewAccountParamsStruct)
 
+		//лоигруем о событии регистрации
+		log.Printf("зарегистрирован новый аккаунт: %s (id: %s)", NewRegAcc.Login, NewRegAcc.ID)
+
 		//проверяем есть ли ошибка при создании аккаунта. Если есть, возвращаем пользователю код ошибки сервера 500 Internal Server Error и сообщение об ошибке.
 		if NewRegAccError != nil {
-			http.Error(w, fmt.Sprintf("Ошибка регистрации аккаунта %v", NewRegAccError), http.StatusInternalServerError)
+			http.Error(w, "Ошибка регистрации аккаунта", http.StatusInternalServerError)
 			return
 		}
 
-		fmt.Println("Аккаут создан ", NewRegAcc.ID)
+		//создаем экземпляра структуры с ответом на регистрацию
+		var NewRegisterResponse RegisterResponse
+
+		//помещаем в ответ ссылку на QR-код, который можно отсканировать в приложении для генерации одноразовых паролей (например, Google Authenticator)
+		NewRegisterResponse.TotpURL = NewQRCodeURL
+
+		//устанавливаем тип ответа - JSON
+		w.Header().Set("Content-Type", "application/json")
+
+		//переводим наш JSON в байты и отправляем клиенту. json.NewEncoder(w).Encode(NewRegisterResponse) - это функция, которая кодирует структуру NewRegisterResponse в JSON и записывает результат в http.ResponseWriter w, который отправляет ответ клиенту.
+		json.NewEncoder(w).Encode(NewRegisterResponse)
 
 	}
 }

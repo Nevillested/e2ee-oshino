@@ -33,3 +33,20 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (A
 	)
 	return i, err
 }
+
+const getAccountByLogin = `-- name: GetAccountByLogin :one
+SELECT id, login, password_hash, totp_secret, created_at FROM accounts WHERE login = $1
+`
+
+func (q *Queries) GetAccountByLogin(ctx context.Context, login string) (Account, error) {
+	row := q.db.QueryRow(ctx, getAccountByLogin, login)
+	var i Account
+	err := row.Scan(
+		&i.ID,
+		&i.Login,
+		&i.PasswordHash,
+		&i.TotpSecret,
+		&i.CreatedAt,
+	)
+	return i, err
+}
