@@ -5,7 +5,15 @@ import (
 	"net/http"
 	"server/internal/db"
 
+	"encoding/base64"
+
+	"crypto/sha256"
+	"strings"
+
+	"time"
+
 	"github.com/coder/websocket"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 /*
@@ -16,6 +24,44 @@ import (
 func NewWebSocketHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
 
 	return func(w http.ResponseWriter, r *http.Request) {
+
+		//получаем заголовок
+		var NewAuthorization = r.Header.Get("Authorization")
+
+		//проверяем, не пустой ли заголовок
+		if len(NewAuthorization) == 0 {
+			http.Error(w, "Ошибка заголовка вебсокета", http.StatusUnauthorized)
+			return
+		}
+
+		//Из заголовка удаляем "Bearer " чтобы оставить только токен
+		var token string = strings.TrimPrefix(NewAuthorization, "Bearer ")
+
+		//формируем хэш токен по sha256
+		var hashArray [32]byte = sha256.Sum256([]byte(token))
+		var tokenHash string = base64.StdEncoding.EncodeToString(hashArray[:])
+
+		//лезем в бд и по хэшу токена ищем там данные пользователя
+		var Session, SessionErr = queries.GetValidSessionByToken(r.Context(), tokenHash)
+
+		//проверяем есть ли валидные сессии или нет
+		if SessionErr != nil {
+			http.Error(w, "Нет валидных сессий", http.StatusUnauthorized)
+			return
+		}
+
+		//устанавливаем новую дату жизни токена. 30 дней от текущего момента
+		var NewDtExpiries = pgtype.Timestamptz{Time: time.Now().Add(30 * 24 * time.Hour), InfinityModifier: pgtype.Finite, Valid: true}
+
+		//продлеваем жизнь токену, под которым вошел пользователь
+		var ExSessionError = queries.ExtendSession(r.Context(), db.ExtendSessionParams{ID: Session.ID, ExpiresAt: NewDtExpiries})
+
+		//проверяем продлена ли жизнь токена
+		if ExSessionError != nil {
+			log.Printf("не удалось продлить сессию: %v", ExSessionError)
+		}
+
+		//открытие соединения вебсокета upgrade из http в websocket
 		var ws_object, ws_error = websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 
 		//не выходим из программы совсем, как в случае с сервером, а только закрываем вебсокет-соединение и продолжаем работу
@@ -51,7 +97,7 @@ func NewWebSocketHandler(queries *db.Queries) func(http.ResponseWriter, *http.Re
 				break
 			}
 		}
-		// далее использование queries
+
 	}
 
 }
