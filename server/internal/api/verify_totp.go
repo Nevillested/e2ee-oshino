@@ -34,7 +34,7 @@ func NewVerifyTOTPHandler(queries *db.Queries) func(http.ResponseWriter, *http.R
 		//делаем запрос к бд, передавая в качестве параметра логин, который пришел от клиента. В ответ получаем структуру Account, которая содержит все данные аккаунта, включая секретный ключ TOTP, который сохранили на этапе регистрации
 		var account, SqlError = queries.GetAccountByLogin(r.Context(), NewDataFromClient.Login)
 
-		//проверяем ошибки, при запросе к бд, если есть, даем пользотваелю ответ со статусом 500
+		//проверяем ошибки, при запросе к бд, если есть, даем пользователю ответ со статусом 500
 		if SqlError != nil {
 			http.Error(w, "Ошибка поиска пользователя", http.StatusInternalServerError)
 			return

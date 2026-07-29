@@ -37,17 +37,20 @@ func main() {
 	//defer - это ключевое слово, которое откладывает выполнение функции до тех пор, пока не завершится выполнение функции, где был написан defer
 	defer pg_connect.Close()
 
-	//создаем эндопоинт (endpoint) для проверки состояния сервера
+	//создаем эндопоинт для проверки состояния сервера
 	const endpoint_health string = "/health"
 
-	//создаем эндопоинт (endpoint) для вебсокета
+	//создаем эндопоинт для вебсокета
 	const endpoint_ws string = "/ws"
 
-	//создаем эндопоинт (endpoint) для регистрации пользователя
+	//создаем эндопоинт для регистрации пользователя
 	const endpoint_register string = "/register"
 
-	//создаем эндопоинт (endpoint) для проверки TOTP
+	//создаем эндопоинт для проверки TOTP
 	const endpoint_verify_totp string = "/verify-totp"
+
+	//создаем эндпоинт для входа в приложение
+	const endpoint_login string = "/login"
 
 	//создаем свою таблицу маршрутов (mux) для обработки HTTP-запросов
 	var mux = http.NewServeMux()
@@ -63,6 +66,9 @@ func main() {
 
 	//добавляет в таблицу mux (multiplexor) запись о том, что при обращении к endpoint_verify_totp будет вызвана функция NewVerifyTOTPHandler
 	mux.HandleFunc(endpoint_verify_totp, api.NewVerifyTOTPHandler(queries))
+
+	//добавляет в таблицу mux (multiplexor) запись о том, что при обращении к endpoint_login будет вызвана функция NewLogin
+	mux.HandleFunc(endpoint_login, api.NewLoginHandler(queries))
 
 	//сохраняем в переменную и запускаем HTTP-сервер на порту 8080. ListenAndServe - блокирующая функция, которая будет работать до тех пор, пока сервер не будет остановлен или не произойдет ошибка
 	//внутри запускается бесконечный цикл, который как раз через mux проверяет, какие запросы пришли и вызывает в горутине (параллельно) соответствующие функции-обработчики, а сам цикл продолжает работать и ждать новых запросов

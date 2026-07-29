@@ -15,3 +15,11 @@ type Account struct {
 	TotpSecret   string
 	CreatedAt    pgtype.Timestamptz
 }
+
+type Session struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	TokenHash string
+	ExpiresAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
