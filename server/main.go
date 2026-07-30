@@ -37,38 +37,21 @@ func main() {
 	//defer - это ключевое слово, которое откладывает выполнение функции до тех пор, пока не завершится выполнение функции, где был написан defer
 	defer pg_connect.Close()
 
-	//создаем эндопоинт для проверки состояния сервера
-	const endpoint_health string = "/health"
-
-	//создаем эндопоинт для вебсокета
-	const endpoint_ws string = "/ws"
-
-	//создаем эндопоинт для регистрации пользователя
-	const endpoint_register string = "/register"
-
-	//создаем эндопоинт для проверки TOTP
-	const endpoint_verify_totp string = "/verify-totp"
-
-	//создаем эндпоинт для входа в приложение
-	const endpoint_login string = "/login"
-
 	//создаем свою таблицу маршрутов (mux) для обработки HTTP-запросов
 	var mux = http.NewServeMux()
 
-	//добавляет в таблицу mux (multiplexor) запись о том, что при обращении к endpoint_health будет вызвана функция NewHealthHandler
-	mux.HandleFunc(endpoint_health, api.NewHealthHandler(queries))
-
-	//добавляет в таблицу mux (multiplexor) запись о том, что при обращении к endpoint_ws будет вызвана функция NewWebSocketHandler
-	mux.HandleFunc(endpoint_ws, api.NewWebSocketHandler(queries))
-
-	//добавляет в таблицу mux (multiplexor) запись о том, что при обращении к endpoint_register будет вызвана функция NewRegisterHandler
-	mux.HandleFunc(endpoint_register, api.NewRegisterHandler(queries))
-
-	//добавляет в таблицу mux (multiplexor) запись о том, что при обращении к endpoint_verify_totp будет вызвана функция NewVerifyTOTPHandler
-	mux.HandleFunc(endpoint_verify_totp, api.NewVerifyTOTPHandler(queries))
-
-	//добавляет в таблицу mux (multiplexor) запись о том, что при обращении к endpoint_login будет вызвана функция NewLogin
-	mux.HandleFunc(endpoint_login, api.NewLoginHandler(queries))
+	/*
+	  mux.HandleFunc - принимает на вход строку и функцию, тем самым сопоставляя моршрут.
+	  То есть если через http пришло что-то вроде /qwsdfg ты мы этому значению сопоставляем функцию, которую нужно вызвать
+	*/
+	mux.HandleFunc("/health", api.NewHealthHandler(queries))
+	mux.HandleFunc("/ws", api.NewWebSocketHandler(queries))
+	mux.HandleFunc("/register", api.NewRegisterHandler(queries))
+	mux.HandleFunc("/verify-totp", api.NewVerifyTOTPHandler(queries))
+	mux.HandleFunc("/login", api.NewLoginHandler(queries))
+	mux.HandleFunc("/register-device", api.NewRegisterDeviceHandler(queries))
+	mux.HandleFunc("/prekeys/upload", api.NewUploadPrekeysHandler(queries))
+	mux.HandleFunc("GET /devices/{device_id}/prekey-bundle", api.NewGetPrekeyBundleHandler(queries))
 
 	//сохраняем в переменную и запускаем HTTP-сервер на порту 8080. ListenAndServe - блокирующая функция, которая будет работать до тех пор, пока сервер не будет остановлен или не произойдет ошибка
 	//внутри запускается бесконечный цикл, который как раз через mux проверяет, какие запросы пришли и вызывает в горутине (параллельно) соответствующие функции-обработчики, а сам цикл продолжает работать и ждать новых запросов

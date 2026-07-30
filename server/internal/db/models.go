@@ -16,10 +16,35 @@ type Account struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type Device struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	IdentityPubkey []byte
+	DeviceName     pgtype.Text
+	LastSeen       pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}
+
+type OneTimePrekey struct {
+	ID        pgtype.UUID
+	DeviceID  pgtype.UUID
+	Pubkey    []byte
+	Used      bool
+	CreatedAt pgtype.Timestamptz
+}
+
 type Session struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
 	TokenHash string
 	ExpiresAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
+type SignedPrekey struct {
+	ID        pgtype.UUID
+	DeviceID  pgtype.UUID
+	Pubkey    []byte
+	Signature []byte
 	CreatedAt pgtype.Timestamptz
 }
