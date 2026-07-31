@@ -41,7 +41,7 @@ func NewRegisterDeviceHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 		//декодируем JSON из байтов в структуру NewRegisterDeviceRequest, передавая в параметры указатель на структуру newRegisterRequest
 		var DecodeError = NewDecoder.Decode(&NewRegisterDeviceRequest)
 
-		//если произошла ошибка при декодировании JSON, то выводим сообщение об ошибке и возвращаем клиенту статус 500
+		//если произошла ошибка при декодировании JSON, то выводим сообщение об ошибке и возвращаем клиенту статус 400
 		if DecodeError != nil {
 			http.Error(w, "Ошибка декодирования JSON", http.StatusBadRequest)
 			return

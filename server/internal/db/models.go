@@ -33,6 +33,13 @@ type OneTimePrekey struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type PendingMessage struct {
+	ID         pgtype.UUID
+	ToDeviceID pgtype.UUID
+	Ciphertext string
+	CreatedAt  pgtype.Timestamptz
+}
+
 type Session struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
