@@ -1,2 +1,5 @@
-
 .vscode/launch.json
+/server/.env
+/server/*.exe
+/server/server
+/server/__debug*
