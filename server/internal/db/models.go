@@ -25,6 +25,15 @@ type Device struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type MediaFile struct {
+	ID                  pgtype.UUID
+	UploadedByAccountID pgtype.UUID
+	RecipientAccountID  pgtype.UUID
+	ObjectKey           string
+	SizeBytes           int64
+	CreatedAt           pgtype.Timestamptz
+}
+
 type OneTimePrekey struct {
 	ID        pgtype.UUID
 	DeviceID  pgtype.UUID

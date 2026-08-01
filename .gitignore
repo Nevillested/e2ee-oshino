@@ -3,3 +3,4 @@
 /server/*.exe
 /server/server
 /server/__debug*
+server/frps-config/frps.toml
