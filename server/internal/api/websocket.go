@@ -5,14 +5,20 @@ import (
 	"log"
 	"net/http"
 	"server/internal/db"
+	"strings"
 
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type WSMessage struct {
+type WSMsgFrom struct {
 	ToDeviceId string `json:"ToDeviceId"`
 	Ciphertext string `json:"Ciphertext"`
+	Type       string `json:"Type"`
+}
+
+type WSMsgTo struct {
+	Type string `json:"Type"`
 }
 
 /*
@@ -116,6 +122,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry) func
 		//-------------------------------------------------------------------------------------------------------------------------------------
 
 		//держим вебсокет в цикле постоянно открытым
+	readLoop:
 		for {
 			//читаем данные из вебсокета
 			var message_type, message, read_error = ws_object.Read(r.Context())
@@ -127,10 +134,10 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry) func
 			}
 
 			//создаем переменную, в которой будем хранить кому предназначено сообщение и само сообщений
-			var NewMessage WSMessage
+			var NewWSMsgFrom WSMsgFrom
 
-			//объявляем переменную, которая будет декодировать из байтов в NewMessage (JSON)
-			var DecodeError = json.Unmarshal(message, &NewMessage)
+			//объявляем переменную, которая будет декодировать из байтов в NewWSMsgFrom (JSON)
+			var DecodeError = json.Unmarshal(message, &NewWSMsgFrom)
 
 			//если произошла ошибка, то переходим к чтению следующего сообщения
 			if DecodeError != nil {
@@ -139,51 +146,99 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry) func
 			}
 
 			//проверяем подключено ли сейчас к серверу то устройство, куда предназначается сообщение
-			var ConnReceiver, Status = registry.Get(NewMessage.ToDeviceId)
+			var ConnReceiver, Status = registry.Get(NewWSMsgFrom.ToDeviceId)
 
-			if Status == true { //если подключено, то сразу отправляем подключенному к серверу устройству сообщение
+			var MessageType string = NewWSMsgFrom.Type
 
-				//отправляем клиенту предназначающеееся сообщение, которое пришло от кого-то
-				var write_error = ConnReceiver.Write(r.Context(), message_type, message)
+			//тип сообщения - обычное текстовое сообщение
+			if MessageType == "message" {
 
-				//если произошла ошибка при отправке сообщения, то выводим сообщение об ошибке и выходим из цикла
-				if write_error != nil {
-					log.Printf("ошибка отправки сообщения в вебсокет: %v", write_error)
-					break
+				//...если устройство сейчас подключено, то сразу отправляем сообщение
+				if Status == true {
+
+					//отправляем клиенту предназначающеееся сообщение, которое пришло от кого-то
+					var write_error = ConnReceiver.Write(r.Context(), message_type, message)
+
+					//если произошла ошибка при отправке сообщения, то выводим сообщение об ошибке и выходим из цикла
+					if write_error != nil {
+						log.Printf("ошибка отправки сообщения в вебсокет: %v", write_error)
+						break readLoop
+					}
+
+					//...если не подключено ставим сообщение в очередь до тех пор, пока устройство не подключится
+				} else {
+
+					log.Printf("Сообщение поставлено в очередь до тех пор, пока устройство не будет в сети")
+
+					//объявляем переменную, где будут храниться необходимые данные для передачи сообщения в очередь бд - на ожидание
+					var NewSavePendingMessage db.SavePendingMessageParams
+
+					//в постгре мы будем хранить Device ID в поле с типом UUID, поэтому нужно для начала конвертировать...
+					var ToDeviceIDUUID pgtype.UUID
+
+					//...конвертировать из String в UUID
+					ScanUuidErr := ToDeviceIDUUID.Scan(NewWSMsgFrom.ToDeviceId)
+
+					//проверить на ошибки конвертации
+					if ScanUuidErr != nil {
+						log.Printf("Ошибка конвертации Device ID: %v", ScanUuidErr)
+						continue
+					}
+
+					//заполнить переменную данными (в этой переменной лежат параметры для вставки в таблицу очереди сообщений)
+					NewSavePendingMessage.ToDeviceID = ToDeviceIDUUID
+					NewSavePendingMessage.Ciphertext = string(message)
+
+					//вставить сообщение в таблицу ожидания (ожидание подключение клиента к серверу)
+					var SqlErr = queries.SavePendingMessage(r.Context(), NewSavePendingMessage)
+
+					//проверить на ошибки вставки
+					if SqlErr != nil {
+						log.Printf("Ошибка добавления сообщения в очередь: %v", SqlErr)
+						continue
+					}
+
 				}
 
-			} else { //если не подключено ставим сообщение в очередь до тех пор, пока устройство не подключится
+				//типы сообщений с таким префиксом - это звонки
+			} else if strings.HasPrefix(MessageType, "call_") {
 
-				log.Printf("Сообщение поставлено в очередь до тех пор, пока устройство не будет в сети")
+				//...и пользователь подключен - то сразу передаем сообщение звонка получателю
+				if Status == true {
 
-				//объявляем переменную, где будут храниться необходимые данные для передачи сообщения в очередь бд - на ожидание
-				var NewSavePendingMessage db.SavePendingMessageParams
+					var write_error = ConnReceiver.Write(r.Context(), message_type, message)
 
-				//в постгре мы будем хранить Device ID в поле с типом UUID, поэтому нужно для начала конвертировать...
-				var ToDeviceIDUUID pgtype.UUID
+					if write_error != nil {
+						log.Printf("ошибка отправки сообщения в вебсокет: %v", write_error)
+						break readLoop
+					}
 
-				//...конвертировать из String в UUID
-				ScanUuidErr := ToDeviceIDUUID.Scan(NewMessage.ToDeviceId)
+					//...и пользователь не подключен - то отправителю даем ответ, что абонент недоступен
+				} else {
 
-				//проверить на ошибки конвертации
-				if ScanUuidErr != nil {
-					log.Printf("Ошибка конвертации Device ID: %v", ScanUuidErr)
-					continue
+					var NewWSMsgTo WSMsgTo
+
+					NewWSMsgTo.Type = "call_unavailable"
+
+					respBytes, marshalErr := json.Marshal(NewWSMsgTo)
+
+					if marshalErr != nil {
+						log.Printf("ошибка кодирования ответа: %v", marshalErr)
+						continue
+					}
+
+					var write_error = ws_object.Write(r.Context(), websocket.MessageText, respBytes)
+
+					if write_error != nil {
+						log.Printf("ошибка отправки ответа отправителю: %v", write_error)
+						break readLoop
+					}
+
 				}
 
-				//заполнить переменную данными (в этой переменной лежат параметры для вставки в таблицу очереди сообщений)
-				NewSavePendingMessage.ToDeviceID = ToDeviceIDUUID
-				NewSavePendingMessage.Ciphertext = string(message)
-
-				//вставить сообщение в таблицу ожидания (ожидание подключение клиента к серверу)
-				var SqlErr = queries.SavePendingMessage(r.Context(), NewSavePendingMessage)
-
-				//проверить на ошибки вставки
-				if SqlErr != nil {
-					log.Printf("Ошибка добавления сообщения в очередь: %v", SqlErr)
-					continue
-				}
-
+				//все остальные необработанные типы сообщений - неизвестные
+			} else {
+				log.Printf("неизвестный тип сообщения: %s", MessageType)
 			}
 
 		}
