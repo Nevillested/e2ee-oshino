@@ -1,6 +1,6 @@
 -- name: CreateDevice :one
-INSERT INTO devices (account_id, identity_pubkey, device_name)
-VALUES ($1, $2, $3)
+INSERT INTO devices (account_id, identity_pubkey, device_name, identity_dh_pubkey, identity_dh_signature)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetDevicesByAccount :many

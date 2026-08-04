@@ -38,21 +38,30 @@ func (q *Queries) ClaimOneTimePrekey(ctx context.Context, deviceID pgtype.UUID) 
 }
 
 const getIdentityAndSignedPrekey = `-- name: GetIdentityAndSignedPrekey :one
-SELECT d.identity_pubkey, sp.pubkey AS signed_prekey, sp.signature
+SELECT d.identity_pubkey, d.identity_dh_pubkey, d.identity_dh_signature,
+       sp.pubkey AS signed_prekey, sp.signature
 FROM devices d
 JOIN signed_prekeys sp ON sp.device_id = d.id
 WHERE d.id = $1
 `
 
 type GetIdentityAndSignedPrekeyRow struct {
-	IdentityPubkey []byte
-	SignedPrekey   []byte
-	Signature      []byte
+	IdentityPubkey      []byte
+	IdentityDhPubkey    []byte
+	IdentityDhSignature []byte
+	SignedPrekey        []byte
+	Signature           []byte
 }
 
 func (q *Queries) GetIdentityAndSignedPrekey(ctx context.Context, id pgtype.UUID) (GetIdentityAndSignedPrekeyRow, error) {
 	row := q.db.QueryRow(ctx, getIdentityAndSignedPrekey, id)
 	var i GetIdentityAndSignedPrekeyRow
-	err := row.Scan(&i.IdentityPubkey, &i.SignedPrekey, &i.Signature)
+	err := row.Scan(
+		&i.IdentityPubkey,
+		&i.IdentityDhPubkey,
+		&i.IdentityDhSignature,
+		&i.SignedPrekey,
+		&i.Signature,
+	)
 	return i, err
 }

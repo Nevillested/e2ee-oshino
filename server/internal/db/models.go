@@ -17,12 +17,14 @@ type Account struct {
 }
 
 type Device struct {
-	ID             pgtype.UUID
-	AccountID      pgtype.UUID
-	IdentityPubkey []byte
-	DeviceName     pgtype.Text
-	LastSeen       pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	IdentityPubkey      []byte
+	DeviceName          pgtype.Text
+	LastSeen            pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+	IdentityDhPubkey    []byte
+	IdentityDhSignature []byte
 }
 
 type MediaFile struct {

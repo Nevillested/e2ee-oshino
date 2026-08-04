@@ -12,19 +12,27 @@ import (
 )
 
 const createDevice = `-- name: CreateDevice :one
-INSERT INTO devices (account_id, identity_pubkey, device_name)
-VALUES ($1, $2, $3)
-RETURNING id, account_id, identity_pubkey, device_name, last_seen, created_at
+INSERT INTO devices (account_id, identity_pubkey, device_name, identity_dh_pubkey, identity_dh_signature)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, account_id, identity_pubkey, device_name, last_seen, created_at, identity_dh_pubkey, identity_dh_signature
 `
 
 type CreateDeviceParams struct {
-	AccountID      pgtype.UUID
-	IdentityPubkey []byte
-	DeviceName     pgtype.Text
+	AccountID           pgtype.UUID
+	IdentityPubkey      []byte
+	DeviceName          pgtype.Text
+	IdentityDhPubkey    []byte
+	IdentityDhSignature []byte
 }
 
 func (q *Queries) CreateDevice(ctx context.Context, arg CreateDeviceParams) (Device, error) {
-	row := q.db.QueryRow(ctx, createDevice, arg.AccountID, arg.IdentityPubkey, arg.DeviceName)
+	row := q.db.QueryRow(ctx, createDevice,
+		arg.AccountID,
+		arg.IdentityPubkey,
+		arg.DeviceName,
+		arg.IdentityDhPubkey,
+		arg.IdentityDhSignature,
+	)
 	var i Device
 	err := row.Scan(
 		&i.ID,
@@ -33,12 +41,14 @@ func (q *Queries) CreateDevice(ctx context.Context, arg CreateDeviceParams) (Dev
 		&i.DeviceName,
 		&i.LastSeen,
 		&i.CreatedAt,
+		&i.IdentityDhPubkey,
+		&i.IdentityDhSignature,
 	)
 	return i, err
 }
 
 const getDevicesByAccount = `-- name: GetDevicesByAccount :many
-SELECT id, account_id, identity_pubkey, device_name, last_seen, created_at FROM devices WHERE account_id = $1
+SELECT id, account_id, identity_pubkey, device_name, last_seen, created_at, identity_dh_pubkey, identity_dh_signature FROM devices WHERE account_id = $1
 `
 
 func (q *Queries) GetDevicesByAccount(ctx context.Context, accountID pgtype.UUID) ([]Device, error) {
@@ -57,6 +67,8 @@ func (q *Queries) GetDevicesByAccount(ctx context.Context, accountID pgtype.UUID
 			&i.DeviceName,
 			&i.LastSeen,
 			&i.CreatedAt,
+			&i.IdentityDhPubkey,
+			&i.IdentityDhSignature,
 		); err != nil {
 			return nil, err
 		}

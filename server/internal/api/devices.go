@@ -12,8 +12,10 @@ import (
 )
 
 type RegisterDeviceRequest struct {
-	IdentityPubkey string `json:"identity_pubkey"` // base64
-	DeviceName     string `json:"device_name"`     // опционально
+	IdentityPubkey      string `json:"identity_pubkey"`       // base64, Ed25519
+	DeviceName          string `json:"device_name"`           // опционально
+	IdentityDhPubkey    string `json:"identity_dh_pubkey"`    // base64, X25519
+	IdentityDhSignature string `json:"identity_dh_signature"` // base64, подпись identity_dh_pubkey ключом IdentityPubkey
 }
 
 type RegisterDeviceResponse struct {
@@ -56,6 +58,20 @@ func NewRegisterDeviceHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 			return
 		}
 
+		var IdentDhPubKey, BaseIdentDhPubKeyErr = base64.StdEncoding.DecodeString(NewRegisterDeviceRequest.IdentityDhPubkey)
+
+		if BaseIdentDhPubKeyErr != nil {
+			http.Error(w, "Невалидный DH-публичный ключ", http.StatusBadRequest)
+			return
+		}
+
+		var IdentDhSignature, BaseIdentDhSignatureErr = base64.StdEncoding.DecodeString(NewRegisterDeviceRequest.IdentityDhSignature)
+
+		if BaseIdentDhSignatureErr != nil {
+			http.Error(w, "Невалидная подпись DH-ключа", http.StatusBadRequest)
+			return
+		}
+
 		//вытаскиваем DeviceName из присланного пользователем
 		var DeviceName string = NewRegisterDeviceRequest.DeviceName
 
@@ -70,8 +86,13 @@ func NewRegisterDeviceHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 		}
 
 		//Создаем переменную, в которую передадим все параметры для выполнения SQL запрос
-		var DeviceParams = db.CreateDeviceParams{AccountID: Session.AccountID, IdentityPubkey: IdentPubKey, DeviceName: DeviceNameStruct}
-
+		var DeviceParams = db.CreateDeviceParams{
+			AccountID:           Session.AccountID,
+			IdentityPubkey:      IdentPubKey,
+			DeviceName:          DeviceNameStruct,
+			IdentityDhPubkey:    IdentDhPubKey,
+			IdentityDhSignature: IdentDhSignature,
+		}
 		//выполняем запрос
 		var DeviceRst, SqlErr = queries.CreateDevice(r.Context(), DeviceParams)
 

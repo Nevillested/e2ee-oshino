@@ -14,10 +14,12 @@ import (
 )
 
 type ResponseKeys struct {
-	IdentityPubkey string `json:"identity_pubkey"`
-	SignedPrekey   string `json:"signed_prekey"`
-	Signature      string `json:"signature"`
-	OneTimePrekey  string `json:"one_time_prekey"`
+	IdentityPubkey      string `json:"identity_pubkey"`
+	IdentityDhPubkey    string `json:"identity_dh_pubkey"`
+	IdentityDhSignature string `json:"identity_dh_signature"`
+	SignedPrekey        string `json:"signed_prekey"`
+	Signature           string `json:"signature"`
+	OneTimePrekey       string `json:"one_time_prekey"`
 }
 
 func NewGetPrekeyBundleHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
@@ -87,6 +89,8 @@ func NewGetPrekeyBundleHandler(queries *db.Queries) func(http.ResponseWriter, *h
 
 		//заполняем ответ
 		NewResponseKeys.IdentityPubkey = base64.StdEncoding.EncodeToString(NewGetIdentityAndSignedPrekeyRow.IdentityPubkey)
+		NewResponseKeys.IdentityDhPubkey = base64.StdEncoding.EncodeToString(NewGetIdentityAndSignedPrekeyRow.IdentityDhPubkey)
+		NewResponseKeys.IdentityDhSignature = base64.StdEncoding.EncodeToString(NewGetIdentityAndSignedPrekeyRow.IdentityDhSignature)
 		NewResponseKeys.SignedPrekey = base64.StdEncoding.EncodeToString(NewGetIdentityAndSignedPrekeyRow.SignedPrekey)
 		NewResponseKeys.Signature = base64.StdEncoding.EncodeToString(NewGetIdentityAndSignedPrekeyRow.Signature)
 		NewResponseKeys.OneTimePrekey = base64.StdEncoding.EncodeToString(NewOneTimePrekey.Pubkey)
