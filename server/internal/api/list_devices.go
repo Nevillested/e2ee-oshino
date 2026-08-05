@@ -80,6 +80,8 @@ func NewGetDevicesByLoginHandler(queries *db.Queries) func(http.ResponseWriter, 
 		//добавляем в ответ список устройств
 		NewListeDevicesResponse.AccountID = Account.ID.String()
 
+		NewListeDevicesResponse.Devices = NewDevicesInfo
+
 		//устанавливаем тип ответа - JSON
 		w.Header().Set("Content-Type", "application/json")
 
