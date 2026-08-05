@@ -14,6 +14,7 @@ import (
 )
 
 type ResponseKeys struct {
+	AccountID           string `json:"account_id"`
 	IdentityPubkey      string `json:"identity_pubkey"`
 	IdentityDhPubkey    string `json:"identity_dh_pubkey"`
 	IdentityDhSignature string `json:"identity_dh_signature"`
@@ -94,6 +95,7 @@ func NewGetPrekeyBundleHandler(queries *db.Queries) func(http.ResponseWriter, *h
 		NewResponseKeys.SignedPrekey = base64.StdEncoding.EncodeToString(NewGetIdentityAndSignedPrekeyRow.SignedPrekey)
 		NewResponseKeys.Signature = base64.StdEncoding.EncodeToString(NewGetIdentityAndSignedPrekeyRow.Signature)
 		NewResponseKeys.OneTimePrekey = base64.StdEncoding.EncodeToString(NewOneTimePrekey.Pubkey)
+		NewResponseKeys.AccountID = NewGetIdentityAndSignedPrekeyRow.AccountID.String()
 
 		//устанавливаем тип ответа - JSON
 		w.Header().Set("Content-Type", "application/json")

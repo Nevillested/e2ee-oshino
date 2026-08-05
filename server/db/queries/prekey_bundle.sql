@@ -1,5 +1,5 @@
 -- name: GetIdentityAndSignedPrekey :one
-SELECT d.identity_pubkey, d.identity_dh_pubkey, d.identity_dh_signature,
+SELECT d.account_id, d.identity_pubkey, d.identity_dh_pubkey, d.identity_dh_signature,
        sp.pubkey AS signed_prekey, sp.signature
 FROM devices d
 JOIN signed_prekeys sp ON sp.device_id = d.id
