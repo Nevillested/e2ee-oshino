@@ -17,7 +17,8 @@ type DeviceInfo struct {
 }
 
 type ListDevicesResponse struct {
-	Devices []DeviceInfo `json:"devices"`
+	AccountID string       `json:"account_id"`
+	Devices   []DeviceInfo `json:"devices"`
 }
 
 func NewGetDevicesByLoginHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
@@ -77,7 +78,7 @@ func NewGetDevicesByLoginHandler(queries *db.Queries) func(http.ResponseWriter, 
 		var NewListeDevicesResponse ListDevicesResponse
 
 		//добавляем в ответ список устройств
-		NewListeDevicesResponse.Devices = NewDevicesInfo
+		NewListeDevicesResponse.AccountID = Account.ID.String()
 
 		//устанавливаем тип ответа - JSON
 		w.Header().Set("Content-Type", "application/json")
