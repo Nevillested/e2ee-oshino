@@ -13,7 +13,8 @@ import (
 )
 
 type DeviceOwnerResponse struct {
-	Login string `json:"login"`
+	AccountID string `json:"account_id"`
+	Login     string `json:"login"`
 }
 
 func NewGetDeviceOwnerHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
@@ -34,7 +35,7 @@ func NewGetDeviceOwnerHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 			return
 		}
 
-		var login, SqlErr = queries.GetLoginByDeviceID(r.Context(), DeviceID)
+		var row, SqlErr = queries.GetLoginByDeviceID(r.Context(), DeviceID)
 		if SqlErr != nil {
 			if errors.Is(SqlErr, pgx.ErrNoRows) {
 				http.Error(w, "Устройство не найдено", http.StatusNotFound)
@@ -45,7 +46,8 @@ func NewGetDeviceOwnerHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 		}
 
 		var NewResponse DeviceOwnerResponse
-		NewResponse.Login = login
+		NewResponse.AccountID = row.AccountID.String()
+		NewResponse.Login = row.Login
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(NewResponse)
