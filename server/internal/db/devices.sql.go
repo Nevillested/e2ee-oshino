@@ -48,7 +48,10 @@ func (q *Queries) CreateDevice(ctx context.Context, arg CreateDeviceParams) (Dev
 }
 
 const getDevicesByAccount = `-- name: GetDevicesByAccount :many
-SELECT id, account_id, identity_pubkey, device_name, last_seen, created_at, identity_dh_pubkey, identity_dh_signature FROM devices WHERE account_id = $1
+SELECT DISTINCT ON (account_id) id, account_id, identity_pubkey, device_name, last_seen, created_at, identity_dh_pubkey, identity_dh_signature
+FROM devices
+WHERE account_id = $1
+ORDER BY account_id, created_at DESC
 `
 
 func (q *Queries) GetDevicesByAccount(ctx context.Context, accountID pgtype.UUID) ([]Device, error) {

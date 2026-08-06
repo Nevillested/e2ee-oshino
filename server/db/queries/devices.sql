@@ -4,7 +4,10 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetDevicesByAccount :many
-SELECT * FROM devices WHERE account_id = $1;
+SELECT DISTINCT ON (account_id) *
+FROM devices
+WHERE account_id = $1
+ORDER BY account_id, created_at DESC;
 
 -- name: UpdateDeviceLastSeen :exec
 UPDATE devices SET last_seen = now() WHERE id = $1;
