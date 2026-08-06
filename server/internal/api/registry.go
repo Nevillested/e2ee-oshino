@@ -66,3 +66,15 @@ func NewConnectionRegistry() *ConnectionRegistry {
 	//возврат
 	return &NewRegistry
 }
+
+// RemoveIfCurrent удаляет запись только если в реестре сейчас лежит
+// именно это соединение — а не более новое, которое могло успеть
+// зарегистрироваться позже (защита от гонки при быстром переподключении).
+func (reg *ConnectionRegistry) RemoveIfCurrent(deviceID string, conn *websocket.Conn) {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	if reg.conns[deviceID] == conn {
+		delete(reg.conns, deviceID)
+	}
+}

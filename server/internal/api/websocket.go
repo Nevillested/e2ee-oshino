@@ -61,7 +61,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry) func
 		registry.Add(DeviceID, ws_object)
 
 		//заранее определим удаление текущего устройства из списка подключенных, когда текущая функция завершится
-		defer registry.Remove(DeviceID)
+		defer registry.RemoveIfCurrent(DeviceID, ws_object)
 
 		//-------------------------------------------------------------------------------------------------------------------------------------
 		//Сразу после добавления устройства в сисок подключенных надо забрать все сообщения от сервера, которые накопились, для этого:
