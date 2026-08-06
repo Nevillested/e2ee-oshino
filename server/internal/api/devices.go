@@ -85,7 +85,14 @@ func NewRegisterDeviceHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 			DeviceNameStruct = pgtype.Text{String: DeviceName, Valid: false}
 		}
 
-		//Создаем переменную, в которую передадим все параметры для выполнения SQL запрос
+		//1 аккаунт = 1 устройство
+		var DeleteOldDevicesErr = queries.DeleteDevicesByAccount(r.Context(), Session.AccountID)
+		if DeleteOldDevicesErr != nil {
+			http.Error(w, "Ошибка очистки прежних устройств", http.StatusInternalServerError)
+			return
+		}
+
+		// Создаем переменную, в которую передадим все параметры для выполнения SQL запрос
 		var DeviceParams = db.CreateDeviceParams{
 			AccountID:           Session.AccountID,
 			IdentityPubkey:      IdentPubKey,
@@ -93,7 +100,8 @@ func NewRegisterDeviceHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 			IdentityDhPubkey:    IdentDhPubKey,
 			IdentityDhSignature: IdentDhSignature,
 		}
-		//выполняем запрос
+
+		// выполняем запрос
 		var DeviceRst, SqlErr = queries.CreateDevice(r.Context(), DeviceParams)
 
 		//проверяем есть ли ошибка при добавлении устройства

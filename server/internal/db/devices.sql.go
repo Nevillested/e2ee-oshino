@@ -47,11 +47,17 @@ func (q *Queries) CreateDevice(ctx context.Context, arg CreateDeviceParams) (Dev
 	return i, err
 }
 
+const deleteDevicesByAccount = `-- name: DeleteDevicesByAccount :exec
+DELETE FROM devices WHERE account_id = $1
+`
+
+func (q *Queries) DeleteDevicesByAccount(ctx context.Context, accountID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteDevicesByAccount, accountID)
+	return err
+}
+
 const getDevicesByAccount = `-- name: GetDevicesByAccount :many
-SELECT DISTINCT ON (account_id) id, account_id, identity_pubkey, device_name, last_seen, created_at, identity_dh_pubkey, identity_dh_signature
-FROM devices
-WHERE account_id = $1
-ORDER BY account_id, created_at DESC
+SELECT id, account_id, identity_pubkey, device_name, last_seen, created_at, identity_dh_pubkey, identity_dh_signature FROM devices WHERE account_id = $1
 `
 
 func (q *Queries) GetDevicesByAccount(ctx context.Context, accountID pgtype.UUID) ([]Device, error) {

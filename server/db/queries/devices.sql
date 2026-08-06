@@ -4,10 +4,7 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetDevicesByAccount :many
-SELECT DISTINCT ON (account_id) *
-FROM devices
-WHERE account_id = $1
-ORDER BY account_id, created_at DESC;
+SELECT * FROM devices WHERE account_id = $1;
 
 -- name: UpdateDeviceLastSeen :exec
 UPDATE devices SET last_seen = now() WHERE id = $1;
@@ -17,3 +14,6 @@ SELECT a.id AS account_id, a.login
 FROM devices d
 JOIN accounts a ON a.id = d.account_id
 WHERE d.id = $1;
+
+-- name: DeleteDevicesByAccount :exec
+DELETE FROM devices WHERE account_id = $1;
