@@ -80,6 +80,20 @@ func (q *Queries) GetDevicesByAccount(ctx context.Context, accountID pgtype.UUID
 	return items, nil
 }
 
+const getLoginByDeviceID = `-- name: GetLoginByDeviceID :one
+SELECT a.login
+FROM devices d
+JOIN accounts a ON a.id = d.account_id
+WHERE d.id = $1
+`
+
+func (q *Queries) GetLoginByDeviceID(ctx context.Context, id pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getLoginByDeviceID, id)
+	var login string
+	err := row.Scan(&login)
+	return login, err
+}
+
 const updateDeviceLastSeen = `-- name: UpdateDeviceLastSeen :exec
 UPDATE devices SET last_seen = now() WHERE id = $1
 `
