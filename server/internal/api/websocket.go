@@ -159,10 +159,36 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry) func
 					//отправляем клиенту предназначающеееся сообщение, которое пришло от кого-то
 					var write_error = ConnReceiver.Write(r.Context(), message_type, message)
 
-					//если произошла ошибка при отправке сообщения, то выводим сообщение об ошибке и выходим из цикла
+					//если произошла ошибка при отправке сообщения, значит пользователь все-таки отвалился
 					if write_error != nil {
-						log.Printf("ошибка отправки сообщения в вебсокет: %v", write_error)
-						break readLoop
+						log.Printf("получатель считался онлайн, но отправка не удалась: %v", write_error)
+
+						//удаляем пользователя из списка подключенных
+						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
+
+						//конвертируем Device ID из String в UUID, чтобы поставить сообщение в очередь на отправку, когда устройство подключится
+						var ToDeviceIDUUID pgtype.UUID
+						ScanUuidErr := ToDeviceIDUUID.Scan(NewWSMsgFrom.ToDeviceId)
+
+						//проверяем ошибки
+						if ScanUuidErr != nil {
+							log.Printf("Ошибка конвертации Device ID: %v", ScanUuidErr)
+							continue
+						}
+
+						//переменная для вставки сообщения в очередь на отправку, когда устройство подключится
+						var NewSavePendingMessage db.SavePendingMessageParams
+						NewSavePendingMessage.ToDeviceID = ToDeviceIDUUID
+						NewSavePendingMessage.Ciphertext = string(message)
+
+						//ставим в очередь на отправку, когда устройство подключится
+						var SqlErr = queries.SavePendingMessage(r.Context(), NewSavePendingMessage)
+
+						//проверяем ошибки
+						if SqlErr != nil {
+							log.Printf("Ошибка добавления сообщения в очередь после неудачной записи: %v", SqlErr)
+						}
+						continue
 					}
 
 					//...если не подключено ставим сообщение в очередь до тех пор, пока устройство не подключится
