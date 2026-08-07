@@ -11,3 +11,6 @@ WHERE token_hash = $1 AND expires_at > now();
 UPDATE sessions
 SET expires_at = $2
 WHERE id = $1;
+
+-- name: RevokeOtherSessions :exec
+DELETE FROM sessions WHERE account_id = $1 AND id != $2;

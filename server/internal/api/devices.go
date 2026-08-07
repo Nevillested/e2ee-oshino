@@ -91,6 +91,14 @@ func NewRegisterDeviceHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 			http.Error(w, "Ошибка очистки прежних устройств", http.StatusInternalServerError)
 			return
 		}
+		//обнуляем сессии устройства
+		var RevokeErr = queries.RevokeOtherSessions(r.Context(), db.RevokeOtherSessionsParams{
+			AccountID: Session.AccountID,
+			ID:        Session.ID,
+		})
+		if RevokeErr != nil {
+			log.Printf("не удалось отозвать старые сессии: %v", RevokeErr)
+		}
 
 		// Создаем переменную, в которую передадим все параметры для выполнения SQL запрос
 		var DeviceParams = db.CreateDeviceParams{

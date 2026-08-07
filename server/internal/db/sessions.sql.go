@@ -69,3 +69,17 @@ func (q *Queries) GetValidSessionByToken(ctx context.Context, tokenHash string) 
 	)
 	return i, err
 }
+
+const revokeOtherSessions = `-- name: RevokeOtherSessions :exec
+DELETE FROM sessions WHERE account_id = $1 AND id != $2
+`
+
+type RevokeOtherSessionsParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) RevokeOtherSessions(ctx context.Context, arg RevokeOtherSessionsParams) error {
+	_, err := q.db.Exec(ctx, revokeOtherSessions, arg.AccountID, arg.ID)
+	return err
+}
