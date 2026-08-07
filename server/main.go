@@ -78,6 +78,7 @@ func main() {
 	mux.HandleFunc("GET /media/{id}", api.NewGetMediaHandler(queries, minioClient))
 	mux.HandleFunc("GET /session/check", api.NewSessionCheckHandler(queries))
 	mux.HandleFunc("DELETE /account", api.NewDeleteAccountHandler(queries))
+	mux.HandleFunc("GET /account/me", api.NewAccountMeHandler(queries))
 
 	//сохраняем в переменную и запускаем HTTP-сервер на порту 8081. ListenAndServe - блокирующая функция, которая будет работать до тех пор, пока сервер не будет остановлен или не произойдет ошибка
 	//внутри запускается бесконечный цикл, который как раз через mux проверяет, какие запросы пришли и вызывает в горутине (параллельно) соответствующие функции-обработчики, а сам цикл продолжает работать и ждать новых запросов
