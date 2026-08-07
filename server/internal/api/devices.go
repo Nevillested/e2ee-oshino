@@ -22,7 +22,7 @@ type RegisterDeviceResponse struct {
 	DeviceID string `json:"device_id"`
 }
 
-func NewRegisterDeviceHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
+func NewRegisterDeviceHandler(queries *db.Queries, registry *ConnectionRegistry) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		//проверяем токен
@@ -86,6 +86,13 @@ func NewRegisterDeviceHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 		}
 
 		//1 аккаунт = 1 устройство
+		var OldDevices, GetOldDevicesErr = queries.GetDevicesByAccount(r.Context(), Session.AccountID)
+		if GetOldDevicesErr == nil {
+			for _, oldDevice := range OldDevices {
+				registry.CloseAndRemove(oldDevice.ID.String())
+			}
+		}
+
 		var DeleteOldDevicesErr = queries.DeleteDevicesByAccount(r.Context(), Session.AccountID)
 		if DeleteOldDevicesErr != nil {
 			http.Error(w, "Ошибка очистки прежних устройств", http.StatusInternalServerError)
