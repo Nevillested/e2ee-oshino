@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createAccount = `-- name: CreateAccount :one
@@ -32,6 +34,15 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (A
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const deleteAccount = `-- name: DeleteAccount :exec
+DELETE FROM accounts WHERE id = $1
+`
+
+func (q *Queries) DeleteAccount(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAccount, id)
+	return err
 }
 
 const getAccountByLogin = `-- name: GetAccountByLogin :one

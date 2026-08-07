@@ -5,3 +5,6 @@ RETURNING *;
 
 -- name: GetAccountByLogin :one
 SELECT * FROM accounts WHERE login = $1;
+
+-- name: DeleteAccount :exec
+DELETE FROM accounts WHERE id = $1;
