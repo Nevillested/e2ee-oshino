@@ -48,6 +48,7 @@ showLoadingOverlay(context, 'Идёт авторизация, подождите
       );
 
       await Session.saveToken(token);
+      await Session.saveLogin(_loginController.text.trim());
       await ensureDeviceRegistered(_apiClient, token);
 
       if (!mounted) return;

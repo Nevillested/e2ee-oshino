@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.oshinobu.oshinobu_client"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

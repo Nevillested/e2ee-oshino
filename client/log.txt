@@ -1,0 +1,1186 @@
+Launching lib/main.dart on Pixel 7 Pro in debug mode...
+Running Gradle task 'assembleDebug'...                          
+WARNING: Your app uses the following plugins that apply Kotlin Gradle Plugin (KGP): emoji_picker_flutter, flutter_webrtc, photo_manager
+Future versions of Flutter will fail to build if your app uses plugins that apply KGP.
+
+Please check the changelogs of these plugins and upgrade to a version that supports Built-in Kotlin.
+If no such version exists, report the issue to the plugin. If necessary, here is a guide on filing 
+an issue against a plugin: https://docs.flutter.dev/release/breaking-changes/migrate-to-built-in-kotlin/for-app-developers#report-incompatible-kotlin-gradle-plugin-usage-to-plugin-authors
+
+If you are a plugin author, please migrate your plugin to Built-in Kotlin using this guide: https://docs.flutter.dev/release/breaking-changes/migrate-to-built-in-kotlin/for-plugin-authors
+Running Gradle task 'assembleDebug'...                             11.1s
+✓ Built build/app/outputs/flutter-apk/app-debug.apk
+Installing build/app/outputs/flutter-apk/app-debug.apk...           5.8s
+I/FlutterActivityAndFragmentDelegate(27892): If you are attempting to set --enable-dart-profiling via Intent extras to launch a Flutter component outside of using the Flutter CLI, note that support for setting engine flags on Android via Intent will soon be dropped; see https://github.com/flutter/flutter/issues/180686 for more information on this breaking change. To migrate, set --enable-dart-profiling or any other flags specified via Intent extras on the command line instead or see https://github.com/flutter/flutter/blob/main/docs/engine/Flutter-Android-Engine-Flags.md for alternative methods.
+D/FlutterJNI(27892): Beginning load of flutter...
+D/FlutterJNI(27892): flutter (null) was loaded normally!
+I/flutter (27892): [IMPORTANT:flutter/shell/platform/android/android_context_vk_impeller.cc(62)] Using the Impeller rendering backend (Vulkan).
+D/FlutterRenderer(27892): Width is zero. 0,0
+D/FlutterRenderer(27892): Width is zero. 0,0
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/HWUI    (27892): Using FreeType backend (prop=Auto)
+D/WindowLayoutComponentImpl(27892): Register WindowLayoutInfoListener on Context=com.oshinobu.oshinobu_client.MainActivity@3a31228, of which baseContext=android.app.ContextImpl@a0a1a18
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/InsetsController(27892): hide(ime())
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:c5fa1627: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+Syncing files to device Pixel 7 Pro...                             192ms
+
+Flutter run key commands.
+r Hot reload. 🔥🔥🔥
+R Hot restart.
+h List all available interactive commands.
+d Detach (terminate "flutter run" but leave application running).
+c Clear the screen
+q Quit (terminate the application on the device).
+
+A Dart VM Service on Pixel 7 Pro is available at: http://127.0.0.1:43673/_QppqYpk3Oc=/
+The Flutter DevTools debugger and profiler on Pixel 7 Pro is available at: http://127.0.0.1:43673/_QppqYpk3Oc=/devtools/?uri=ws://127.0.0.1:43673/_QppqYpk3Oc=/ws
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): io.flutter.embedding.android.FlutterActivity$1@92bfc4
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): android.app.Activity$$ExternalSyntheticLambda0@dd46f04
+D/DesktopExperienceFlags(27892): Toggle override initialized to: false
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): io.flutter.embedding.android.FlutterActivity$1@92bfc4
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:5157a56: onRequestShow at ORIGIN_CLIENT reason SHOW_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): show(ime())
+D/InsetsController(27892): Setting requestedVisibleTypes to 511 (was 503)
+I/AssistStructure(27892): Flattened final assist data: 500 bytes, containing 1 windows, 3 views
+D/ProfileInstaller(27892): Installing profile for com.oshinobu.oshinobu_client
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): android.view.ImeBackAnimationController@6517024
+D/VRI[MainActivity](27892): WindowInsets changed: ime:[0,0,0,837] 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+W/InteractionJankMonitor(27892): Initializing without READ_DEVICE_CONFIG permission. enabled=false, interval=1, missedFrameThreshold=3, frameTimeThreshold=64, package=com.oshinobu.oshinobu_client
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:5157a56: onShown
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:eac429a1: onRequestHide at ORIGIN_CLIENT reason HIDE_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): hide(ime())
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): io.flutter.embedding.android.FlutterActivity$1@92bfc4
+D/InsetsController(27892): Setting requestedVisibleTypes to 503 (was 511)
+D/CompatChangeReporter(27892): Compat change id reported: 395521150; UID 10357; state: ENABLED
+D/VRI[MainActivity](27892): WindowInsets changed: ime:null 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): system_server:5d5e10ab: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+W/RemoteInputConnectionImpl(27892): requestCursorUpdates on inactive InputConnection
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:4cdfdb2c: onRequestShow at ORIGIN_CLIENT reason SHOW_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): show(ime())
+D/InsetsController(27892): Setting requestedVisibleTypes to 511 (was 503)
+D/VRI[MainActivity](27892): WindowInsets changed: ime:[0,0,0,837] 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:4cdfdb2c: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): android.view.ImeBackAnimationController@6517024
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:4cdfdb2c: onShown
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:ca417ee1: onRequestHide at ORIGIN_CLIENT reason HIDE_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): hide(ime())
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): io.flutter.embedding.android.FlutterActivity$1@92bfc4
+D/InsetsController(27892): Setting requestedVisibleTypes to 503 (was 511)
+D/VRI[MainActivity](27892): WindowInsets changed: ime:null 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): system_server:94068cb0: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+W/RemoteInputConnectionImpl(27892): requestCursorUpdates on inactive InputConnection
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:f2fa6c70: onRequestShow at ORIGIN_CLIENT reason SHOW_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): show(ime())
+D/InsetsController(27892): Setting requestedVisibleTypes to 511 (was 503)
+D/VRI[MainActivity](27892): WindowInsets changed: ime:[0,0,0,837] 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:f2fa6c70: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): android.view.ImeBackAnimationController@6517024
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:f2fa6c70: onShown
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:9f358439: onRequestHide at ORIGIN_CLIENT reason HIDE_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): hide(ime())
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): io.flutter.embedding.android.FlutterActivity$1@92bfc4
+D/InsetsController(27892): Setting requestedVisibleTypes to 503 (was 511)
+D/VRI[MainActivity](27892): WindowInsets changed: ime:null 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): system_server:e447664c: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+W/RemoteInputConnectionImpl(27892): requestCursorUpdates on inactive InputConnection
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:c8fe375e: onRequestShow at ORIGIN_CLIENT reason SHOW_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): show(ime())
+D/InsetsController(27892): Setting requestedVisibleTypes to 511 (was 503)
+D/VRI[MainActivity](27892): WindowInsets changed: ime:[0,0,0,837] 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:c8fe375e: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): android.view.ImeBackAnimationController@6517024
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:c8fe375e: onShown
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:cd49c314: onRequestHide at ORIGIN_CLIENT reason HIDE_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): hide(ime())
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): io.flutter.embedding.android.FlutterActivity$1@92bfc4
+D/InsetsController(27892): Setting requestedVisibleTypes to 503 (was 511)
+D/QuirkSettingsLoader(27892): QuirkSettings$MetadataHolderService is not found.
+D/CameraX (27892): QuirkSettings from app metadata: null
+D/CameraX (27892): QuirkSettings by default: QuirkSettings{enabledWhenDeviceHasQuirk=true, forceEnabledQuirks=[], forceDisabledQuirks=[]}
+D/VRI[MainActivity](27892): WindowInsets changed: ime:null 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): system_server:4d85cf9b: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+D/InteractionJankMonitor(27892): Build configuration failed!
+D/InteractionJankMonitor(27892): java.lang.IllegalArgumentException: Must pass in a valid surface control if only instrument surface; 
+D/InteractionJankMonitor(27892): 	at com.android.internal.jank.InteractionJankMonitor$Configuration.validate(InteractionJankMonitor.java:946)
+D/InteractionJankMonitor(27892): 	at com.android.internal.jank.InteractionJankMonitor$Configuration.<init>(InteractionJankMonitor.java:882)
+D/InteractionJankMonitor(27892): 	at com.android.internal.jank.InteractionJankMonitor$Configuration.<init>(InteractionJankMonitor.java:0)
+D/InteractionJankMonitor(27892): 	at com.android.internal.jank.InteractionJankMonitor$Configuration$Builder.build(InteractionJankMonitor.java:852)
+D/InteractionJankMonitor(27892): 	at com.android.internal.jank.InteractionJankMonitor.begin(InteractionJankMonitor.java:400)
+D/InteractionJankMonitor(27892): 	at android.view.inputmethod.ImeTracker$ImeJankTracker.lambda$onRequestAnimation$0(ImeTracker.java:970)
+D/InteractionJankMonitor(27892): 	at android.view.inputmethod.ImeTracker$ImeJankTracker$$ExternalSyntheticLambda0.run(D8$$SyntheticClass:0)
+D/InteractionJankMonitor(27892): 	at android.os.Handler.handleCallback(Handler.java:1095)
+D/InteractionJankMonitor(27892): 	at android.os.Handler.dispatchMessageImpl(Handler.java:135)
+D/InteractionJankMonitor(27892): 	at android.os.Handler.dispatchMessage(Handler.java:125)
+D/InteractionJankMonitor(27892): 	at android.os.Looper.loopOnce(Looper.java:296)
+D/InteractionJankMonitor(27892): 	at android.os.Looper.loop(Looper.java:397)
+D/InteractionJankMonitor(27892): 	at android.app.ActivityThread.main(ActivityThread.java:9523)
+D/InteractionJankMonitor(27892): 	at java.lang.reflect.Method.invoke(Native Method)
+D/InteractionJankMonitor(27892): 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:575)
+D/InteractionJankMonitor(27892): 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:939)
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/DeviceQuirks(27892): camera2 DeviceQuirks = ExtraSupportedSurfaceCombinationsQuirk
+D/CXCP    (27892): Created UseCaseConfigurationMap
+D/CXCP    (27892): Created CameraPipe in 4.183 ms
+D/CXCP    (27892): Camera2DeviceCache: Expected minimum camera count = 2
+D/CXCP    (27892): Created CameraFactoryAdapter in 0.243 ms
+I/CameraManagerGlobal(27892): Connecting to camera service
+I/CXCP    (27892): Loaded CameraIdList [CameraId-0, CameraId-1]
+D/CXCP    (27892): Updated available camera list: [] -> [0, 1]
+D/CXCP    (27892): Creating new surface combinations for: [0, 1]
+D/CXCP    (27892): Loading metadata for CameraId-0
+I/CXCP    (27892): Loaded metadata for CameraId-0 in 8.486 ms
+D/CameraQuirks(27892): camera2 CameraQuirks = CloseCaptureSessionOnVideoQuirk | FinalizeSessionOnCloseQuirk
+D/CXCP    (27892): Loading metadata for CameraId-1
+I/CXCP    (27892): Loaded metadata for CameraId-1 in 1.489 ms
+D/CameraQuirks(27892): camera2 CameraQuirks = CloseCaptureSessionOnVideoQuirk | FinalizeSessionOnCloseQuirk | TorchFlashRequiredFor3aUpdateQuirk
+D/CXCP    (27892): Committed new surface combination map. Total cameras: 2
+D/CameraRepository(27892): Added camera: 0
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/CameraQuirks(27892): camera2 CameraQuirks = CloseCaptureSessionOnVideoQuirk | FinalizeSessionOnCloseQuirk
+I/CXCP    (27892): Device Level: INFO_SUPPORTED_HARDWARE_LEVEL_FULL
+D/CXCP    (27892): Created CameraInternalAdapter<CameraId-0(1)> for CameraId-0
+D/CameraRepository(27892): Added camera: 1
+D/CameraQuirks(27892): camera2 CameraQuirks = CloseCaptureSessionOnVideoQuirk | FinalizeSessionOnCloseQuirk | TorchFlashRequiredFor3aUpdateQuirk
+I/CXCP    (27892): Device Level: INFO_SUPPORTED_HARDWARE_LEVEL_FULL
+D/CXCP    (27892): Created CameraInternalAdapter<CameraId-1(2)> for CameraId-1
+D/CXCP    (27892): Loaded ConcurrentCameraIdsSet {{0, 1}}
+I/CameraPresencePrvdr(27892): Starting CameraPresenceProvider monitoring.
+I/CameraPresenceSrc(27892): First observer added. Starting monitoring.
+I/PipePresenceSrc(27892): Starting to collect camera ID flow.
+D/CameraPresencePrvdr(27892): Registered state observer for camera: 0
+D/CameraPresencePrvdr(27892): Registered state observer for camera: 1
+D/CameraValidator(27892): Verifying camera lens facing on cheetah
+D/CXCP    (27892): Emitting camera ID list: [CameraId-0, CameraId-1]
+D/CXCP    (27892): Emitting camera ID list: [CameraId-0, CameraId-1]
+D/CXCP    (27892): Emitting camera ID list: [CameraId-0, CameraId-1]
+D/PipePresenceSrc(27892): Flow emitted new camera set: CameraIdentifier{cameraIds=0}, CameraIdentifier{cameraIds=1}
+I/PipePresenceSrc(27892): Handling first camera set, triggering fresh query.
+D/PipePresenceSrc(27892): [FetchData] Refreshed camera list from hardware: [CameraIdentifier{cameraIds=0}, CameraIdentifier{cameraIds=1}]
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+W/Glide   (27892): Failed to find GeneratedAppGlideModule. You should include an annotationProcessor compile dependency on com.github.bumptech.glide:compiler in your application and a @GlideModule annotated AppGlideModule implementation or LibraryGlideModules will be silently ignored
+W/RemoteInputConnectionImpl(27892): requestCursorUpdates on inactive InputConnection
+D/Recorder(27892): mRequiredFreeStorageBytes = 50 MB
+D/DeviceQuirks(27892): core DeviceQuirks = SurfaceOrderQuirk
+W/CXCP    (27892): Detaching [] from UseCaseManager<CameraGraphConfigProvider<CameraId-0>> (Ignored)
+D/ResolvedFeatureGroup(27892): resolveFeatureGroup: sessionConfig = SessionConfig@a4b108f {useCases=[Preview:androidx.camera.core.Preview-dbd4ca0b-44a7-43d3-a6ef-14d0346225fc, ImageCapture:androidx.camera.core.ImageCapture-627871f2-9a30-4ce8-9137-776bdc00ea7f, ImageAnalysis:androidx.camera.core.ImageAnalysis-4619f193-4f96-45da-91cc-1276615f495b], frameRateRange=[0, 0], requiredFeatureGroup=[], preferredFeatureGroup=[], effects=[], viewPort=null}, lensFacing = 1
+D/CameraUseCaseAdapter(27892): addUseCases: appUseCasesToAdd = [Preview:androidx.camera.core.Preview-dbd4ca0b-44a7-43d3-a6ef-14d0346225fc, ImageCapture:androidx.camera.core.ImageCapture-627871f2-9a30-4ce8-9137-776bdc00ea7f, ImageAnalysis:androidx.camera.core.ImageAnalysis-4619f193-4f96-45da-91cc-1276615f495b], featureGroup = null
+D/CXCP    (27892): Creating config for PREVIEW
+D/CXCP    (27892): Creating config for IMAGE_CAPTURE
+D/CXCP    (27892): Creating config for IMAGE_ANALYSIS
+D/CXCP    (27892): Creating config for PREVIEW
+D/CXCP    (27892): Creating config for IMAGE_CAPTURE
+D/CXCP    (27892): Creating config for IMAGE_ANALYSIS
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = Preview:androidx.camera.core.Preview-dbd4ca0b-44a7-43d3-a6ef-14d0346225fc
+D/SupportedOutputSizesCollector(27892): useCaseConfig = androidx.camera.core.impl.PreviewConfig@7c8e5b4, candidateSizes = [4080x3072, 4032x3024, 4000x3000, 4032x2268, 3840x2160, 4000x2000, 3264x2448, 3264x1836, 2560x1920, 2688x1512, 1920x1920, 2560x1280, 2048x1536, 1920x1440, 1920x1080, 1600x1200, 1920x960, 1792x1008, 1440x1080, 1344x1008, 1280x960, 1080x1080, 1280x720, 1024x768, 1024x576, 800x600, 720x480, 640x480, 640x360, 352x288, 320x240, 176x144]
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageCapture:androidx.camera.core.ImageCapture-627871f2-9a30-4ce8-9137-776bdc00ea7f
+D/SupportedOutputSizesCollector(27892): useCaseConfig = androidx.camera.core.impl.ImageCaptureConfig@3589552, candidateSizes = [4080x3072, 4032x3024, 4000x3000, 4032x2268, 3840x2160, 4000x2000, 3264x2448, 3264x1836, 2560x1920, 2688x1512, 1920x1920, 2560x1280, 2048x1536, 1920x1440, 1920x1080]
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageAnalysis:androidx.camera.core.ImageAnalysis-4619f193-4f96-45da-91cc-1276615f495b
+D/SupportedOutputSizesCollector(27892): useCaseConfig = androidx.camera.core.impl.ImageAnalysisConfig@b57f2d9, candidateSizes = [4080x3072, 4032x3024, 4000x3000, 4032x2268, 3840x2160, 4000x2000, 3264x2448, 3264x1836, 2560x1920, 2688x1512, 1920x1920, 2560x1280, 2048x1536, 1920x1440, 1920x1080, 1600x1200, 1920x960, 1792x1008, 1440x1080, 1344x1008, 1280x960, 1080x1080, 1280x720, 1024x768, 1024x576, 800x600, 720x480, 640x480, 640x360, 352x288, 320x240, 176x144]
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = Preview:androidx.camera.core.Preview-dbd4ca0b-44a7-43d3-a6ef-14d0346225fc
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageCapture:androidx.camera.core.ImageCapture-627871f2-9a30-4ce8-9137-776bdc00ea7f
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageAnalysis:androidx.camera.core.ImageAnalysis-4619f193-4f96-45da-91cc-1276615f495b
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = Preview:androidx.camera.core.Preview-dbd4ca0b-44a7-43d3-a6ef-14d0346225fc
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageCapture:androidx.camera.core.ImageCapture-627871f2-9a30-4ce8-9137-776bdc00ea7f
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageAnalysis:androidx.camera.core.ImageAnalysis-4619f193-4f96-45da-91cc-1276615f495b
+D/CXCP    (27892): DynamicRangeResolver: Resolved dynamic range for use case androidx.camera.core.Preview-dbd4ca0b-44a7-43d3-a6ef-14d0346225fc to no compatible HDR dynamic ranges.
+D/CXCP    (27892): DynamicRange@d46b49e{encoding=UNSPECIFIED, bitDepth=0}
+D/CXCP    (27892): ->
+D/CXCP    (27892): DynamicRange@2573b7f{encoding=SDR, bitDepth=8}
+D/CXCP    (27892): resolvedDynamicRanges = {androidx.camera.core.impl.ImageCaptureConfig@3589552=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}, androidx.camera.core.impl.ImageAnalysisConfig@b57f2d9=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}, androidx.camera.core.impl.PreviewConfig@7c8e5b4=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}}
+D/CXCP    (27892): getSuggestedStreamSpecifications: isPreviewStabilizationSupported = true, isFeatureComboInvocation = false
+D/CXCP    (27892): resolveSpecsByCheckingMethod: checkingMethod = WITHOUT_FEATURE_COMBO
+D/CXCP    (27892): resolveSpecsBySettings: featureSettings = FeatureSettings(cameraMode=0, requiredMaxBitDepth=8, hasVideoCapture=false, videoStabilization=UNSPECIFIED, isUltraHdrOn=false, isHighSpeedOn=false, isFeatureComboInvocation=false, requiresFeatureComboQuery=false, targetFpsRange=[0, 0], isStrictFpsRequired=false)
+D/CameraQuirks(27892): camera2 CameraQuirks = CloseCaptureSessionOnVideoQuirk | FinalizeSessionOnCloseQuirk
+D/CameraQuirks(27892): camera2 CameraQuirks = CloseCaptureSessionOnVideoQuirk | FinalizeSessionOnCloseQuirk
+D/CameraQuirks(27892): camera2 CameraQuirks = CloseCaptureSessionOnVideoQuirk | FinalizeSessionOnCloseQuirk
+D/CXCP    (27892): orderedSurfaceConfigListForStreamUseCase = [SurfaceConfig(configType=JPEG, configSize=MAXIMUM, streamUseCase=STILL_CAPTURE), SurfaceConfig(configType=PRIV, configSize=PREVIEW, streamUseCase=PREVIEW), SurfaceConfig(configType=YUV, configSize=PREVIEW, streamUseCase=PREVIEW)]
+D/CXCP    (27892): resolveSpecsBySettings: bestSizesAndFps = BestSizesAndMaxFpsForConfigs(bestSizes=[1920x1440, 320x240, 320x240], bestSizesForStreamUseCase=[1920x1440, 320x240, 320x240], maxFpsForBestSizes=30, maxFpsForStreamUseCase=30, maxFpsForAllSizes=2147483647)
+W/CXCP    (27892): Detaching [] from UseCaseManager<CameraGraphConfigProvider<CameraId-0>> (Ignored)
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = Preview:androidx.camera.core.Preview-dbd4ca0b-44a7-43d3-a6ef-14d0346225fc
+D/Preview (27892): onSuggestedStreamSpecUpdated: primaryStreamSpec = StreamSpec{resolution=320x240, originalConfiguredResolution=320x240, dynamicRange=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}, sessionType=0, expectedFrameRateRange=[0, 0], implementationOptions=androidx.camera.camera2.impl.Camera2ImplConfig@54b23e4, zslDisabled=false}, secondaryStreamSpec null
+D/DeferrableSurface(27892): Surface created[total_surfaces=1, used_surfaces=0](androidx.camera.core.processing.SurfaceEdge$SettableSurface@c45f04d}
+D/DeferrableSurface(27892): Surface created[total_surfaces=2, used_surfaces=0](androidx.camera.core.SurfaceRequest$2@10e4449}
+D/DeferrableSurface(27892): New surface in use[total_surfaces=2, used_surfaces=1](androidx.camera.core.SurfaceRequest$2@10e4449}
+D/DeferrableSurface(27892): use count+1, useCount=1 androidx.camera.core.SurfaceRequest$2@10e4449
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageCapture:androidx.camera.core.ImageCapture-627871f2-9a30-4ce8-9137-776bdc00ea7f
+D/ImageCapture(27892): onSuggestedStreamSpecUpdated: primaryStreamSpec = StreamSpec{resolution=1920x1440, originalConfiguredResolution=1920x1440, dynamicRange=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}, sessionType=0, expectedFrameRateRange=[0, 0], implementationOptions=androidx.camera.camera2.impl.Camera2ImplConfig@62e645a, zslDisabled=false}, secondaryStreamSpec null
+D/ImageCapture(27892): createPipeline(cameraId: 0, streamSpec: StreamSpec{resolution=1920x1440, originalConfiguredResolution=1920x1440, dynamicRange=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}, sessionType=0, expectedFrameRateRange=[0, 0], implementationOptions=androidx.camera.camera2.impl.Camera2ImplConfig@62e645a, zslDisabled=false})
+I/Surface (27892): Creating surface for consumer unnamed-27892-2 with slotExpansion=1 for 64 slots
+I/Surface (27892): Creating surface for consumer ImageReader-1920x1440f21m4-27892-0 with slotExpansion=1 for 64 slots
+D/DeferrableSurface(27892): Surface created[total_surfaces=3, used_surfaces=1](androidx.camera.core.impl.ImmediateSurface@bf0568b}
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageAnalysis:androidx.camera.core.ImageAnalysis-4619f193-4f96-45da-91cc-1276615f495b
+D/ImageAnalysis(27892): onSuggestedStreamSpecUpdated: primaryStreamSpec = StreamSpec{resolution=320x240, originalConfiguredResolution=320x240, dynamicRange=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}, sessionType=0, expectedFrameRateRange=[0, 0], implementationOptions=androidx.camera.camera2.impl.Camera2ImplConfig@7753381, zslDisabled=false}, secondaryStreamSpec null
+I/Surface (27892): Creating surface for consumer unnamed-27892-3 with slotExpansion=1 for 64 slots
+I/Surface (27892): Creating surface for consumer ImageReader-320x240f23m4-27892-1 with slotExpansion=1 for 64 slots
+I/Surface (27892): Creating surface for consumer unnamed-27892-4 with slotExpansion=1 for 64 slots
+I/Surface (27892): Creating surface for consumer ImageReader-320x240f23m4-27892-2 with slotExpansion=1 for 64 slots
+D/DeferrableSurface(27892): Surface created[total_surfaces=4, used_surfaces=1](androidx.camera.core.impl.ImmediateSurface@4b14e14}
+D/CXCP    (27892): Attaching [Preview:androidx.camera.core.Preview-dbd4ca0b-44a7-43d3-a6ef-14d0346225fc, ImageCapture:androidx.camera.core.ImageCapture-627871f2-9a30-4ce8-9137-776bdc00ea7f, ImageAnalysis:androidx.camera.core.ImageAnalysis-4619f193-4f96-45da-91cc-1276615f495b] from UseCaseManager<CameraGraphConfigProvider<CameraId-0>>
+D/CXCP    (27892): Prepared UseCaseGraphContext (Deferred)
+D/CXCP    (27892): Configured UseCaseCamera-1
+D/CXCP    (27892): populateSurfaceToStreamUseCaseMapping() - streamUseCaseMap = {androidx.camera.core.SurfaceRequest$2@10e4449=1, androidx.camera.core.impl.ImmediateSurface@bf0568b=2, androidx.camera.core.impl.ImmediateSurface@4b14e14=1}
+D/CXCP    (27892): setFlashAsync: flashMode = 2, requestControl = androidx.camera.camera2.impl.DeferredUseCaseCameraRequestControl@507f87b
+D/CXCP    (27892): Notifying [] camera control ready
+D/ImageCapture(27892): onCameraControlReady
+D/CXCP    (27892): setFlashAsync: flashMode = 2, requestControl = androidx.camera.camera2.impl.DeferredUseCaseCameraRequestControl@507f87b
+D/CXCP    (27892): Camera 0 has become available
+I/CXCP    (27892): CameraGraph-1 (Camera 0)
+I/CXCP    (27892):   Facing:    Back (Logical, Full)
+I/CXCP    (27892):   Mode:      Normal
+I/CXCP    (27892): Outputs:
+I/CXCP    (27892):   Stream-1    Output-1    320x240     PRIVATE          [DynamicRangeProfile(value=1)] [StreamUseCase(value=1)] [StreamUseHint(value=0)]
+I/CXCP    (27892):   Stream-3    Output-3    320x240     YUV_420_888      [DynamicRangeProfile(value=1)] [StreamUseCase(value=1)] [StreamUseHint(value=0)]
+I/CXCP    (27892):   Stream-2    Output-2    1920x1440   JPEG             [DynamicRangeProfile(value=1)] [StreamUseCase(value=2)] [StreamUseHint(value=0)]
+I/CXCP    (27892): Session Template: TEMPLATE_PREVIEW
+I/CXCP    (27892): Session Parameters: (None)
+I/CXCP    (27892): Default Template: TEMPLATE_PREVIEW
+I/CXCP    (27892): Default Parameters
+I/CXCP    (27892):   Metadata.Key(androidx.camera.camera2.pipe.captureRequestTag) android.hardware.camera2.CaptureRequest.setTag.CX
+I/CXCP    (27892): Required Parameters: (None)
+D/CXCP    (27892): Camera graph updated from null to CameraGraph-1
+I/CXCP    (27892): Starting CameraGraph-1
+D/CXCP    (27892): GraphProcessor(cameraGraph: CameraGraph-1) onGraphStarting
+D/CXCP    (27892): CameraGraph-1 state updated to GRAPH_STARTING
+D/CXCP    (27892): Camera2CameraController(CameraGraph-1) (CameraId-0) camera status changed: CameraAvailable(camera=CameraId-0)
+D/CXCP    (27892): Updated current camera internal state to CombinedCameraState(state=OPENING, error=null)
+D/CXCP    (27892): Camera2CameraController(CameraGraph-1): Not restarting. Controller state = androidx.camera.camera2.pipe.CameraController$ControllerState$STOPPED@78f17ba, last camera error = null, camera availability = CameraAvailable(camera=CameraId-0), last camera priorities changed = null, current timestamp = TimestampNs(value=246862265972941).
+D/CXCP    (27892): PruningProcessingQueue: Pruning [RequestOpen(virtualCamera=VirtualCamera-1, sharedCameraIds=[], graphListener=GraphProcessor(cameraGraph: CameraGraph-1), isPrewarm=false, isForegroundObserver=androidx.camera.camera2.pipe.compat.Camera2CameraController$$ExternalSyntheticLambda1@503f66b)]
+D/CXCP    (27892): PruningProcessingQueue: Processing RequestOpen(virtualCamera=VirtualCamera-1, sharedCameraIds=[], graphListener=GraphProcessor(cameraGraph: CameraGraph-1), isPrewarm=false, isForegroundObserver=androidx.camera.camera2.pipe.compat.Camera2CameraController$$ExternalSyntheticLambda1@503f66b)
+I/CXCP    (27892): PruningCamera2DeviceManager#processRequestOpen(CameraId-0)
+D/CXCP    (27892): Started Camera2CameraController(CameraGraph-1)
+D/CXCP    (27892): Opening CameraId-0 with retries...
+D/CXCP    (27892): Setting up Surfaces with UseCaseSurfaceManager
+D/DeferrableSurface(27892): use count+1, useCount=2 androidx.camera.core.SurfaceRequest$2@10e4449
+D/DeferrableSurface(27892): New surface in use[total_surfaces=4, used_surfaces=2](androidx.camera.core.impl.ImmediateSurface@bf0568b}
+D/DeferrableSurface(27892): use count+1, useCount=1 androidx.camera.core.impl.ImmediateSurface@bf0568b
+D/DeferrableSurface(27892): New surface in use[total_surfaces=4, used_surfaces=3](androidx.camera.core.impl.ImmediateSurface@4b14e14}
+D/DeferrableSurface(27892): use count+1, useCount=1 androidx.camera.core.impl.ImmediateSurface@4b14e14
+I/CXCP    (27892): Opening CameraId-0
+D/CXCP    (27892): CameraId-0 has become available! Notifying listeners...
+D/CXCP    (27892): Configured androidx.camera.camera2.impl.UseCaseCameraRequestControlImpl@5a6c7e3
+D/CXCP    (27892): UseCaseCameraRequestControlImpl#removeParametersAsync: [DEFAULT] keys = [CaptureRequest.Key(android.control.zoomRatio), CaptureRequest.Key(android.control.settingsOverride)]
+D/CXCP    (27892): UseCaseCameraState#updateState: parameters = {}, internalParameters = {Metadata.Key(camerax.tag_bundle)=android.hardware.camera2.CaptureRequest.setTag.CX}, streams = null, template = RequestTemplate(value=1)
+D/CXCP    (27892): UseCaseCameraRequestControlImpl#setParametersAsync: [DEFAULT] values = {CaptureRequest.Key(android.control.aeExposureCompensation)=0}, optionPriority = OPTIONAL
+D/CXCP    (27892): UseCaseCameraState#updateState: parameters = {CaptureRequest.Key(android.control.aeExposureCompensation)=0}, internalParameters = {Metadata.Key(camerax.tag_bundle)=android.hardware.camera2.CaptureRequest.setTag.CX}, streams = null, template = RequestTemplate(value=1)
+D/CXCP    (27892): UseCaseCameraRequestControlImpl#updateCamera2ConfigAsync
+D/CXCP    (27892): UseCaseCameraState#updateState: parameters = {CaptureRequest.Key(android.control.aeExposureCompensation)=0}, internalParameters = {Metadata.Key(camerax.tag_bundle)=android.hardware.camera2.CaptureRequest.setTag.CX}, streams = null, template = RequestTemplate(value=1)
+D/CXCP    (27892): UseCaseCameraRequestControlImpl: Building SessionConfig...
+D/CXCP    (27892): UseCaseCameraRequestControlImpl: SessionConfig built. Updating state...
+D/CXCP    (27892): UseCaseCameraRequestControlImpl: State update processing.
+D/CXCP    (27892): UseCaseCameraState#updateState: parameters = {CaptureRequest.Key(android.control.aeExposureCompensation)=0}, internalParameters = {Metadata.Key(camerax.tag_bundle)=android.hardware.camera2.CaptureRequest.setTag.CX}, streams = [Stream-1], template = RequestTemplate(value=1)
+D/CXCP    (27892): Update RepeatingRequest: Request(streams=[Stream-1], template=RequestTemplate(value=1))@bce36a
+D/CXCP    (27892): State3AControl.getFinalPreferredAeMode: preferAeMode = 1
+D/CXCP    (27892): UseCaseCameraRequestControlImpl#setParametersAsync: [DEFAULT] values = {CaptureRequest.Key(android.control.aeMode)=1, CaptureRequest.Key(android.control.afMode)=4, CaptureRequest.Key(android.control.awbMode)=1}, optionPriority = OPTIONAL
+D/CXCP    (27892): UseCaseCameraState#updateState: parameters = {CaptureRequest.Key(android.control.aeExposureCompensation)=0, CaptureRequest.Key(android.control.aeMode)=1, CaptureRequest.Key(android.control.afMode)=4, CaptureRequest.Key(android.control.awbMode)=1}, internalParameters = {Metadata.Key(camerax.tag_bundle)=android.hardware.camera2.CaptureRequest.setTag.CX}, streams = null, template = RequestTemplate(value=1)
+D/CXCP    (27892): Update RepeatingRequest: Request(streams=[Stream-1], template=RequestTemplate(value=1))@bb3505b
+D/CXCP    (27892): UseCaseCameraState: Updating 3A modes: AE(AeMode(value=1), changed=true), AF(AfMode(value=4), changed=true), AWB(AwbMode(value=1), changed=true)
+D/CXCP    (27892): Controller3A#update3A: cancelling previous request null
+D/CXCP    (27892): UseCaseCameraRequestControlImpl#updateCamera2ConfigAsync
+D/CXCP    (27892): UseCaseCameraState#updateState: parameters = {CaptureRequest.Key(android.control.aeExposureCompensation)=0, CaptureRequest.Key(android.control.aeMode)=1, CaptureRequest.Key(android.control.afMode)=4, CaptureRequest.Key(android.control.awbMode)=1}, internalParameters = {Metadata.Key(camerax.tag_bundle)=android.hardware.camera2.CaptureRequest.setTag.CX}, streams = null, template = RequestTemplate(value=1)
+D/CXCP    (27892): Update RepeatingRequest: Request(streams=[Stream-1], template=RequestTemplate(value=1))@83dcc36
+D/CXCP    (27892): Camera 0 has become unavailable
+D/CXCP    (27892): Camera2CameraController(CameraGraph-1) (CameraId-0) camera status changed: CameraUnavailable(camera=CameraId-0)
+D/CXCP    (27892): Camera2CameraController(CameraGraph-1): Not restarting. Controller state = androidx.camera.camera2.pipe.CameraController$ControllerState$STARTED@e4c9737, last camera error = null, camera availability = CameraUnavailable(camera=CameraId-0), last camera priorities changed = null, current timestamp = TimestampNs(value=246862289328979).
+I/CXCP    (27892): Unavailable camera 0 detected
+I/CXCP    (27892): Loaded CameraIdList [CameraId-0, CameraId-1]
+D/CXCP    (27892): Emitting camera ID list: [CameraId-0, CameraId-1]
+D/CXCP    (27892): tryOpenCamera: openCamera() for CameraId-0 returned
+I/CXCP    (27892): Opened CameraId-0 in 30.462 ms
+D/CXCP    (27892): tryOpenCamera: CameraId-0 opened
+I/CXCP    (27892): Camera open completed: OpenCameraResult(cameraState=CameraState-1, errorCode=null)
+I/CXCP    (27892): PruningCameraDeviceManager: CameraId-0 opened successfully
+I/Surface (27892): Creating surface for consumer unnamed-27892-5 with slotExpansion=1 for 64 slots
+I/Surface (27892): Creating surface for consumer ImageReader-320x240f22m7-27892-3 with slotExpansion=1 for 64 slots
+D/CXCP    (27892): Configured Surface(name=null mNativeObject=-5476376656218484896)/@0x6962c0e for Stream-1
+I/CXCP    (27892): Configured Stream-1 with Surface(name=null mNativeObject=-5476376656218484896)/@0x6962c0e
+D/CXCP    (27892): SurfaceActive androidx.camera.core.SurfaceRequest$2@10e4449 in androidx.camera.camera2.impl.UseCaseSurfaceManager@aa5064b
+D/DeferrableSurface(27892): use count+1, useCount=3 androidx.camera.core.SurfaceRequest$2@10e4449
+D/CXCP    (27892): Configured Surface(name=null mNativeObject=-5476376656218596960)/@0xa6195c5 for Stream-2
+I/CXCP    (27892): Configured Stream-2 with Surface(name=null mNativeObject=-5476376656218596960)/@0xa6195c5
+D/CXCP    (27892): SurfaceActive androidx.camera.core.impl.ImmediateSurface@bf0568b in androidx.camera.camera2.impl.UseCaseSurfaceManager@aa5064b
+D/DeferrableSurface(27892): use count+1, useCount=2 androidx.camera.core.impl.ImmediateSurface@bf0568b
+D/CXCP    (27892): Configured Surface(name=null mNativeObject=-5476376656218624976)/@0x28cfb1a for Stream-3
+I/CXCP    (27892): Configured Stream-3 with Surface(name=null mNativeObject=-5476376656218624976)/@0x28cfb1a
+D/CXCP    (27892): SurfaceActive androidx.camera.core.impl.ImmediateSurface@4b14e14 in androidx.camera.camera2.impl.UseCaseSurfaceManager@aa5064b
+D/DeferrableSurface(27892): use count+1, useCount=2 androidx.camera.core.impl.ImmediateSurface@4b14e14
+I/CXCP    (27892): Surface setup complete
+I/CXCP    (27892): Creating CameraCaptureSession from CameraId-0 using CaptureSessionState-1 with {Stream-1=Surface(name=null mNativeObject=-5476376656218484896)/@0x6962c0e, Stream-3=Surface(name=null mNativeObject=-5476376656218624976)/@0x28cfb1a, Stream-2=Surface(name=null mNativeObject=-5476376656218596960)/@0xa6195c5}
+D/DeferrableSurface(27892): use count-1,  useCount=2 closed=false androidx.camera.core.SurfaceRequest$2@10e4449
+D/DeferrableSurface(27892): use count-1,  useCount=1 closed=false androidx.camera.core.impl.ImmediateSurface@bf0568b
+D/DeferrableSurface(27892): use count-1,  useCount=1 closed=false androidx.camera.core.impl.ImmediateSurface@4b14e14
+D/CXCP    (27892): CXCP#createCaptureSession-0 - 105.322 ms
+D/CXCP    (27892): CaptureSessionState-1 Configured
+I/CXCP    (27892): Configured CaptureSessionState-1 in 108.727 ms
+D/CXCP    (27892): GraphProcessor(cameraGraph: CameraGraph-1) onGraphStarted
+D/CXCP    (27892): CameraGraph-1 state updated to GRAPH_STARTED
+D/CXCP    (27892): Updated current camera internal state to CombinedCameraState(state=OPEN, error=null)
+D/CXCP    (27892): Building CaptureRequest for Request(streams=[Stream-1], template=RequestTemplate(value=1))@83dcc36
+D/CXCP    (27892): CaptureSessionState-1 Ready
+D/CXCP    (27892): CXCP#createCaptureRequest-0 - 0.333 ms
+D/CXCP    (27892): GraphRequestProcessor-1 submitting Camera2CaptureSequence-1
+D/CXCP    (27892): CXCP#setRepeatingRequest-0 - 0.866 ms
+D/CXCP    (27892): CaptureSessionState-1 Active
+D/CXCP    (27892): GraphRequestProcessor-1 submitted Camera2CaptureSequence-1
+I/ImeTracker(27892): system_server:94cd5717: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:41b7290d: onRequestShow at ORIGIN_CLIENT reason SHOW_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): show(ime())
+D/InsetsController(27892): Setting requestedVisibleTypes to 511 (was 503)
+I/AssistStructure(27892): Flattened final assist data: 516 bytes, containing 1 windows, 3 views
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): android.view.ImeBackAnimationController@6517024
+D/VRI[MainActivity](27892): WindowInsets changed: ime:[0,0,0,837] 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:41b7290d: onShown
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:ec12045f: onRequestHide at ORIGIN_CLIENT reason HIDE_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): hide(ime())
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): io.flutter.embedding.android.FlutterActivity$1@92bfc4
+D/InsetsController(27892): Setting requestedVisibleTypes to 503 (was 511)
+D/VRI[MainActivity](27892): WindowInsets changed: ime:null 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): system_server:55b2dbbf: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+W/RemoteInputConnectionImpl(27892): requestCursorUpdates on inactive InputConnection
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:108fa66c: onRequestShow at ORIGIN_CLIENT reason SHOW_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): show(ime())
+D/InsetsController(27892): Setting requestedVisibleTypes to 511 (was 503)
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): android.view.ImeBackAnimationController@6517024
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:108fa66c: onCancelled at PHASE_CLIENT_ANIMATION_CANCEL
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/VRI[MainActivity](27892): WindowInsets changed: ime:[0,0,0,837] 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring off
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:108fa66c: onShown
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:2ae4a06c: onRequestHide at ORIGIN_CLIENT reason HIDE_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): hide(ime())
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): io.flutter.embedding.android.FlutterActivity$1@92bfc4
+D/InsetsController(27892): Setting requestedVisibleTypes to 503 (was 511)
+D/VRI[MainActivity](27892): WindowInsets changed: ime:null 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): system_server:6e8a3f05: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+W/RemoteInputConnectionImpl(27892): requestCursorUpdates on inactive InputConnection
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/ImeTracker(27892): system_server:ab26b430: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:112285c6: onRequestShow at ORIGIN_CLIENT reason SHOW_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): show(ime())
+D/InsetsController(27892): Setting requestedVisibleTypes to 511 (was 503)
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): android.view.ImeBackAnimationController@6517024
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:112285c6: onCancelled at PHASE_CLIENT_ANIMATION_CANCEL
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/VRI[MainActivity](27892): WindowInsets changed: ime:[0,0,0,837] 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring off
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:112285c6: onShown
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:8dd55c47: onRequestHide at ORIGIN_CLIENT reason HIDE_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): hide(ime())
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): io.flutter.embedding.android.FlutterActivity$1@92bfc4
+D/InsetsController(27892): Setting requestedVisibleTypes to 503 (was 511)
+D/VRI[MainActivity](27892): WindowInsets changed: ime:null 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): system_server:9d4797db: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+D/InteractionJankMonitor(27892): Build configuration failed!
+D/InteractionJankMonitor(27892): java.lang.IllegalArgumentException: Must pass in a valid surface control if only instrument surface; 
+D/InteractionJankMonitor(27892): 	at com.android.internal.jank.InteractionJankMonitor$Configuration.validate(InteractionJankMonitor.java:946)
+D/InteractionJankMonitor(27892): 	at com.android.internal.jank.InteractionJankMonitor$Configuration.<init>(InteractionJankMonitor.java:882)
+D/InteractionJankMonitor(27892): 	at com.android.internal.jank.InteractionJankMonitor$Configuration.<init>(InteractionJankMonitor.java:0)
+D/InteractionJankMonitor(27892): 	at com.android.internal.jank.InteractionJankMonitor$Configuration$Builder.build(InteractionJankMonitor.java:852)
+D/InteractionJankMonitor(27892): 	at com.android.internal.jank.InteractionJankMonitor.begin(InteractionJankMonitor.java:400)
+D/InteractionJankMonitor(27892): 	at android.view.inputmethod.ImeTracker$ImeJankTracker.lambda$onRequestAnimation$0(ImeTracker.java:970)
+D/InteractionJankMonitor(27892): 	at android.view.inputmethod.ImeTracker$ImeJankTracker$$ExternalSyntheticLambda0.run(D8$$SyntheticClass:0)
+D/InteractionJankMonitor(27892): 	at android.os.Handler.handleCallback(Handler.java:1095)
+D/InteractionJankMonitor(27892): 	at android.os.Handler.dispatchMessageImpl(Handler.java:135)
+D/InteractionJankMonitor(27892): 	at android.os.Handler.dispatchMessage(Handler.java:125)
+D/InteractionJankMonitor(27892): 	at android.os.Looper.loopOnce(Looper.java:296)
+D/InteractionJankMonitor(27892): 	at android.os.Looper.loop(Looper.java:397)
+D/InteractionJankMonitor(27892): 	at android.app.ActivityThread.main(ActivityThread.java:9523)
+D/InteractionJankMonitor(27892): 	at java.lang.reflect.Method.invoke(Native Method)
+D/InteractionJankMonitor(27892): 	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:575)
+D/InteractionJankMonitor(27892): 	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:939)
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+W/RemoteInputConnectionImpl(27892): requestCursorUpdates on inactive InputConnection
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:e59e220d: onRequestShow at ORIGIN_CLIENT reason SHOW_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): show(ime())
+D/InsetsController(27892): Setting requestedVisibleTypes to 511 (was 503)
+D/VRI[MainActivity](27892): WindowInsets changed: ime:[0,0,0,837] 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/VRI[MainActivity](27892): WindowInsets changed: ime:null 
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): android.view.ImeBackAnimationController@6517024
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:e59e220d: onCancelled at PHASE_CLIENT_ANIMATION_CANCEL
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/VRI[MainActivity](27892): WindowInsets changed: ime:[0,0,0,837] 
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring off
+D/InputConnectionAdaptor(27892): The input method toggled cursor monitoring on
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:e59e220d: onShown
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:a4e99cf3: onRequestUser at ORIGIN_CLIENT reason CONTROL_WINDOW_INSETS_ANIMATION fromUser false userId 0 displayId 0
+D/InsetsController(27892): Setting requestedVisibleTypes to 503 (was 511)
+D/VRI[MainActivity](27892): WindowInsets changed: ime:null 
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:a4e99cf3: onDispatched
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): system_server:5dd23914: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/WindowOnBackDispatcher(27892): setTopOnBackInvokedCallback (unwrapped): io.flutter.embedding.android.FlutterActivity$1@92bfc4
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:a4e99cf3: onUserFinished hidden
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+D/FlutterJNI(27892): Sending viewport metrics to the engine.
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+W/RemoteInputConnectionImpl(27892): requestCursorUpdates on inactive InputConnection
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:12784a19: onRequestHide at ORIGIN_CLIENT reason HIDE_SOFT_INPUT fromUser false userId 0 displayId 0
+D/InsetsController(27892): hide(ime())
+I/ImeTracker(27892): com.oshinobu.oshinobu_client:12784a19: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+E/ConsumerBase(27892): [ImageReader-320x240f22m7-27892-3] abandonLocked: ConsumerBase is abandoned!
+D/DeferrableSurface(27892): surface closed,  useCount=2 closed=true androidx.camera.core.SurfaceRequest$2@10e4449
+D/DeferrableSurface(27892): surface closed,  useCount=0 closed=true androidx.camera.core.processing.SurfaceEdge$SettableSurface@c45f04d
+D/DeferrableSurface(27892): Surface terminated[total_surfaces=3, used_surfaces=3](androidx.camera.core.processing.SurfaceEdge$SettableSurface@c45f04d}
+D/DeferrableSurface(27892): use count-1,  useCount=1 closed=true androidx.camera.core.SurfaceRequest$2@10e4449
+W/ScreenFlashWrapper(27892): completePendingScreenFlashClear: none pending!
+D/ImageCapture(27892): clearPipeline
+D/DeferrableSurface(27892): surface closed,  useCount=1 closed=true androidx.camera.core.impl.ImmediateSurface@bf0568b
+D/DeferrableSurface(27892): surface closed,  useCount=1 closed=true androidx.camera.core.impl.ImmediateSurface@4b14e14
+D/CXCP    (27892): Detaching [Preview:androidx.camera.core.Preview-dbd4ca0b-44a7-43d3-a6ef-14d0346225fc, ImageCapture:androidx.camera.core.ImageCapture-627871f2-9a30-4ce8-9137-776bdc00ea7f, ImageAnalysis:androidx.camera.core.ImageAnalysis-4619f193-4f96-45da-91cc-1276615f495b] from UseCaseManager<CameraGraphConfigProvider<CameraId-0>>
+W/ScreenFlashWrapper(27892): completePendingScreenFlashClear: none pending!
+D/CXCP    (27892): reset: videoUsage = 0
+D/CXCP    (27892): UseCaseCameraRequestControl: closed
+D/CXCP    (27892): Closing UseCaseCamera-1
+D/CXCP    (27892): setFlashAsync: flashMode = 2, requestControl = null
+I/CXCP    (27892): Closing CameraGraph-1
+D/CXCP    (27892): setFlashAsync: flashMode = 2, requestControl = null
+D/CXCP    (27892): LowLightBoostControl#setLowLightBoostAsync: lowLightBoost = false
+W/CXCP    (27892): Attach [] from UseCaseManager<CameraGraphConfigProvider<CameraId-0>> (Ignored)
+W/CXCP    (27892): Detaching [] from UseCaseManager<CameraGraphConfigProvider<CameraId-0>> (Ignored)
+D/CXCP    (27892): Closing GraphRequestProcessor-1
+D/CXCP    (27892): Closed Camera2CameraController(CameraGraph-1)
+D/CXCP    (27892): Closing GraphRequestProcessor-1
+E/BufferQueueProducer(27892): [ImageReader-320x240f22m7-27892-3](id:6cf400000005,api:4,p:1173,c:27892) queueBuffer: BufferQueue has been abandoned
+D/CXCP    (27892): GraphProcessor(cameraGraph: CameraGraph-1) onGraphStopping
+D/CXCP    (27892): CameraGraph-1 state updated to GRAPH_STOPPING
+D/CXCP    (27892): Updated current camera internal state to CombinedCameraState(state=CLOSING, error=null)
+D/CXCP    (27892): CaptureSessionState-1 Shutdown
+D/CXCP    (27892): Camera2CaptureSequenceProcessor-1#stopRepeating
+D/CXCP    (27892): CXCP#stopRepeating-0 - 3.209 ms
+D/CXCP    (27892): Camera2CaptureSequenceProcessor-1#abortCaptures
+E/BufferQueueProducer(27892): [ImageReader-320x240f22m7-27892-3](id:6cf400000005,api:4,p:1173,c:27892) cancelBuffer: BufferQueue has been abandoned
+D/CXCP    (27892): CXCP#abortCaptures-0 - 9.724 ms
+D/CXCP    (27892): Closing capture session for CaptureSessionState-1
+D/CXCP    (27892): CaptureSessionState-1 Ready
+D/CXCP    (27892): CaptureSessionState-1 Closed
+D/CXCP    (27892): CaptureSessionState-1 session finalizing
+D/CXCP    (27892): Finalizing CaptureSessionState-1
+D/CXCP    (27892): SurfaceInactive androidx.camera.core.SurfaceRequest$2@10e4449 in androidx.camera.camera2.impl.UseCaseSurfaceManager@aa5064b
+D/CXCP    (27892): GraphProcessor(cameraGraph: CameraGraph-1) onGraphStopped
+D/DeferrableSurface(27892): use count-1,  useCount=0 closed=true androidx.camera.core.SurfaceRequest$2@10e4449
+D/CXCP    (27892): CameraGraph-1 state updated to GRAPH_STOPPED
+D/DeferrableSurface(27892): Surface no longer in use[total_surfaces=3, used_surfaces=2](androidx.camera.core.SurfaceRequest$2@10e4449}
+D/CXCP    (27892): Updated current camera internal state to CombinedCameraState(state=CLOSED, error=null)
+D/DeferrableSurface(27892): Surface terminated[total_surfaces=2, used_surfaces=2](androidx.camera.core.SurfaceRequest$2@10e4449}
+D/CXCP    (27892): SurfaceInactive androidx.camera.core.impl.ImmediateSurface@4b14e14 in androidx.camera.camera2.impl.UseCaseSurfaceManager@aa5064b
+I/CXCP    (27892): Disconnecting VirtualCamera-1
+D/DeferrableSurface(27892): use count-1,  useCount=0 closed=true androidx.camera.core.impl.ImmediateSurface@4b14e14
+D/DeferrableSurface(27892): Surface no longer in use[total_surfaces=2, used_surfaces=1](androidx.camera.core.impl.ImmediateSurface@4b14e14}
+D/DeferrableSurface(27892): Surface terminated[total_surfaces=1, used_surfaces=1](androidx.camera.core.impl.ImmediateSurface@4b14e14}
+D/CXCP    (27892): SurfaceInactive androidx.camera.core.impl.ImmediateSurface@bf0568b in androidx.camera.camera2.impl.UseCaseSurfaceManager@aa5064b
+D/DeferrableSurface(27892): use count-1,  useCount=0 closed=true androidx.camera.core.impl.ImmediateSurface@bf0568b
+E/ConsumerBase(27892): [ImageReader-320x240f23m4-27892-1] abandonLocked: ConsumerBase is abandoned!
+D/DeferrableSurface(27892): Surface no longer in use[total_surfaces=1, used_surfaces=0](androidx.camera.core.impl.ImmediateSurface@bf0568b}
+D/DeferrableSurface(27892): Surface terminated[total_surfaces=0, used_surfaces=0](androidx.camera.core.impl.ImmediateSurface@bf0568b}
+E/ConsumerBase(27892): [ImageReader-320x240f23m4-27892-2] abandonLocked: ConsumerBase is abandoned!
+E/ConsumerBase(27892): [ImageReader-1920x1440f21m4-27892-0] abandonLocked: ConsumerBase is abandoned!
+D/CXCP    (27892): androidx.camera.camera2.impl.UseCaseSurfaceManager@aa5064b remove surface listener
+D/CXCP    (27892): Camera2CameraController(CameraGraph-1) is closed
+D/CXCP    (27892): Camera2CameraController(CameraGraph-1) finalized
+D/CXCP    (27892): PruningProcessingQueue: Pruning [RequestClose(activeCamera=ActiveCamera(cameraId=CameraId-0)@81275c2)]
+D/CXCP    (27892): PruningProcessingQueue: Processing RequestClose(activeCamera=ActiveCamera(cameraId=CameraId-0)@81275c2)
+I/CXCP    (27892): PruningCamera2DeviceManager#processRequestClose(CameraId-0)
+D/CXCP    (27892): handleQuirksBeforeClosing(android.hardware.camera2.impl.CameraDeviceImpl@b5d08c4)
+D/CXCP    (27892): CaptureSessionState-1 session disconnecting
+D/CXCP    (27892): closeCameraDevice(0)
+I/CXCP    (27892): Closing Camera 0
+I/libbinder.BpBinder(27892): onLastStrongRef automatically unlinking death recipients for binder (0xb4000072cdd15c90) with descriptor: '(not cached)'
+D/CXCP    (27892): Emitting camera ID list: [CameraId-0, CameraId-1]
+D/CXCP    (27892): CXCP#CameraDevice-0#close - 64.481 ms
+D/CXCP    (27892): CameraId-0: onClosed
+D/CXCP    (27892): CameraState-1: onFinalized
+I/oshinobu_client(27892): Background young concurrent mark compact GC freed 2113KB AllocSpace bytes, 0(0B) LOS objects, 99% free, 5111KB/512MB, paused 1.107ms,8.423ms total 67.747ms
+W/CXCP    (27892): Detaching [] from UseCaseManager<CameraGraphConfigProvider<CameraId-0>> (Ignored)
+D/Recorder(27892): mRequiredFreeStorageBytes = 50 MB
+D/ResolvedFeatureGroup(27892): resolveFeatureGroup: sessionConfig = SessionConfig@9d7cfde {useCases=[Preview:androidx.camera.core.Preview-b35093c3-3801-4797-97ec-24cc05e08fc0, ImageCapture:androidx.camera.core.ImageCapture-49ac889a-c18c-4cf6-89f7-f8416298d744, ImageAnalysis:androidx.camera.core.ImageAnalysis-08ef9b19-66ca-4549-929b-5e4b41e60a33], frameRateRange=[0, 0], requiredFeatureGroup=[], preferredFeatureGroup=[], effects=[], viewPort=null}, lensFacing = 1
+D/CameraUseCaseAdapter(27892): addUseCases: appUseCasesToAdd = [Preview:androidx.camera.core.Preview-b35093c3-3801-4797-97ec-24cc05e08fc0, ImageCapture:androidx.camera.core.ImageCapture-49ac889a-c18c-4cf6-89f7-f8416298d744, ImageAnalysis:androidx.camera.core.ImageAnalysis-08ef9b19-66ca-4549-929b-5e4b41e60a33], featureGroup = null
+D/CXCP    (27892): Creating config for PREVIEW
+D/CXCP    (27892): Creating config for IMAGE_CAPTURE
+D/CXCP    (27892): Creating config for IMAGE_ANALYSIS
+D/CXCP    (27892): Creating config for PREVIEW
+D/CXCP    (27892): Creating config for IMAGE_CAPTURE
+D/CXCP    (27892): Creating config for IMAGE_ANALYSIS
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = Preview:androidx.camera.core.Preview-b35093c3-3801-4797-97ec-24cc05e08fc0
+D/SupportedOutputSizesCollector(27892): useCaseConfig = androidx.camera.core.impl.PreviewConfig@5ed55bf, candidateSizes = [4080x3072, 4032x3024, 4000x3000, 4032x2268, 3840x2160, 4000x2000, 3264x2448, 3264x1836, 2560x1920, 2688x1512, 1920x1920, 2560x1280, 2048x1536, 1920x1440, 1920x1080, 1600x1200, 1920x960, 1792x1008, 1440x1080, 1344x1008, 1280x960, 1080x1080, 1280x720, 1024x768, 1024x576, 800x600, 720x480, 640x480, 640x360, 352x288, 320x240, 176x144]
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageCapture:androidx.camera.core.ImageCapture-49ac889a-c18c-4cf6-89f7-f8416298d744
+D/SupportedOutputSizesCollector(27892): useCaseConfig = androidx.camera.core.impl.ImageCaptureConfig@6e7e48c, candidateSizes = [4080x3072, 4032x3024, 4000x3000, 4032x2268, 3840x2160, 4000x2000, 3264x2448, 3264x1836, 2560x1920, 2688x1512, 1920x1920, 2560x1280, 2048x1536, 1920x1440, 1920x1080]
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageAnalysis:androidx.camera.core.ImageAnalysis-08ef9b19-66ca-4549-929b-5e4b41e60a33
+D/SupportedOutputSizesCollector(27892): useCaseConfig = androidx.camera.core.impl.ImageAnalysisConfig@8a727d5, candidateSizes = [4080x3072, 4032x3024, 4000x3000, 4032x2268, 3840x2160, 4000x2000, 3264x2448, 3264x1836, 2560x1920, 2688x1512, 1920x1920, 2560x1280, 2048x1536, 1920x1440, 1920x1080, 1600x1200, 1920x960, 1792x1008, 1440x1080, 1344x1008, 1280x960, 1080x1080, 1280x720, 1024x768, 1024x576, 800x600, 720x480, 640x480, 640x360, 352x288, 320x240, 176x144]
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = Preview:androidx.camera.core.Preview-b35093c3-3801-4797-97ec-24cc05e08fc0
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageCapture:androidx.camera.core.ImageCapture-49ac889a-c18c-4cf6-89f7-f8416298d744
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageAnalysis:androidx.camera.core.ImageAnalysis-08ef9b19-66ca-4549-929b-5e4b41e60a33
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = Preview:androidx.camera.core.Preview-b35093c3-3801-4797-97ec-24cc05e08fc0
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageCapture:androidx.camera.core.ImageCapture-49ac889a-c18c-4cf6-89f7-f8416298d744
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageAnalysis:androidx.camera.core.ImageAnalysis-08ef9b19-66ca-4549-929b-5e4b41e60a33
+D/CXCP    (27892): DynamicRangeResolver: Resolved dynamic range for use case androidx.camera.core.Preview-b35093c3-3801-4797-97ec-24cc05e08fc0 to no compatible HDR dynamic ranges.
+D/CXCP    (27892): DynamicRange@d46b49e{encoding=UNSPECIFIED, bitDepth=0}
+D/CXCP    (27892): ->
+D/CXCP    (27892): DynamicRange@2573b7f{encoding=SDR, bitDepth=8}
+D/CXCP    (27892): resolvedDynamicRanges = {androidx.camera.core.impl.ImageCaptureConfig@6e7e48c=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}, androidx.camera.core.impl.ImageAnalysisConfig@8a727d5=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}, androidx.camera.core.impl.PreviewConfig@5ed55bf=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}}
+D/CXCP    (27892): getSuggestedStreamSpecifications: isPreviewStabilizationSupported = true, isFeatureComboInvocation = false
+D/CXCP    (27892): resolveSpecsByCheckingMethod: checkingMethod = WITHOUT_FEATURE_COMBO
+D/CXCP    (27892): resolveSpecsBySettings: featureSettings = FeatureSettings(cameraMode=0, requiredMaxBitDepth=8, hasVideoCapture=false, videoStabilization=UNSPECIFIED, isUltraHdrOn=false, isHighSpeedOn=false, isFeatureComboInvocation=false, requiresFeatureComboQuery=false, targetFpsRange=[0, 0], isStrictFpsRequired=false)
+D/CameraQuirks(27892): camera2 CameraQuirks = CloseCaptureSessionOnVideoQuirk | FinalizeSessionOnCloseQuirk
+D/CameraQuirks(27892): camera2 CameraQuirks = CloseCaptureSessionOnVideoQuirk | FinalizeSessionOnCloseQuirk
+D/CameraQuirks(27892): camera2 CameraQuirks = CloseCaptureSessionOnVideoQuirk | FinalizeSessionOnCloseQuirk
+D/CXCP    (27892): orderedSurfaceConfigListForStreamUseCase = [SurfaceConfig(configType=JPEG, configSize=MAXIMUM, streamUseCase=STILL_CAPTURE), SurfaceConfig(configType=PRIV, configSize=PREVIEW, streamUseCase=PREVIEW), SurfaceConfig(configType=YUV, configSize=PREVIEW, streamUseCase=PREVIEW)]
+D/CXCP    (27892): resolveSpecsBySettings: bestSizesAndFps = BestSizesAndMaxFpsForConfigs(bestSizes=[1920x1440, 320x240, 320x240], bestSizesForStreamUseCase=[1920x1440, 320x240, 320x240], maxFpsForBestSizes=30, maxFpsForStreamUseCase=30, maxFpsForAllSizes=2147483647)
+W/CXCP    (27892): Detaching [] from UseCaseManager<CameraGraphConfigProvider<CameraId-0>> (Ignored)
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = Preview:androidx.camera.core.Preview-b35093c3-3801-4797-97ec-24cc05e08fc0
+D/Preview (27892): onSuggestedStreamSpecUpdated: primaryStreamSpec = StreamSpec{resolution=320x240, originalConfiguredResolution=320x240, dynamicRange=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}, sessionType=0, expectedFrameRateRange=[0, 0], implementationOptions=androidx.camera.camera2.impl.Camera2ImplConfig@10d0bea, zslDisabled=false}, secondaryStreamSpec null
+D/DeferrableSurface(27892): Surface created[total_surfaces=1, used_surfaces=0](androidx.camera.core.processing.SurfaceEdge$SettableSurface@d2b8edb}
+D/DeferrableSurface(27892): Surface created[total_surfaces=2, used_surfaces=0](androidx.camera.core.SurfaceRequest$2@54a3db7}
+D/DeferrableSurface(27892): New surface in use[total_surfaces=2, used_surfaces=1](androidx.camera.core.SurfaceRequest$2@54a3db7}
+D/DeferrableSurface(27892): use count+1, useCount=1 androidx.camera.core.SurfaceRequest$2@54a3db7
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageCapture:androidx.camera.core.ImageCapture-49ac889a-c18c-4cf6-89f7-f8416298d744
+D/ImageCapture(27892): onSuggestedStreamSpecUpdated: primaryStreamSpec = StreamSpec{resolution=1920x1440, originalConfiguredResolution=1920x1440, dynamicRange=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}, sessionType=0, expectedFrameRateRange=[0, 0], implementationOptions=androidx.camera.camera2.impl.Camera2ImplConfig@ecdc390, zslDisabled=false}, secondaryStreamSpec null
+D/ImageCapture(27892): createPipeline(cameraId: 0, streamSpec: StreamSpec{resolution=1920x1440, originalConfiguredResolution=1920x1440, dynamicRange=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}, sessionType=0, expectedFrameRateRange=[0, 0], implementationOptions=androidx.camera.camera2.impl.Camera2ImplConfig@ecdc390, zslDisabled=false})
+I/Surface (27892): Creating surface for consumer unnamed-27892-6 with slotExpansion=1 for 64 slots
+I/Surface (27892): Creating surface for consumer ImageReader-1920x1440f21m4-27892-4 with slotExpansion=1 for 64 slots
+D/DeferrableSurface(27892): Surface created[total_surfaces=3, used_surfaces=1](androidx.camera.core.impl.ImmediateSurface@925489}
+D/UseCase (27892): applyFeaturesToConfig: mFeatureGroup = null, this = ImageAnalysis:androidx.camera.core.ImageAnalysis-08ef9b19-66ca-4549-929b-5e4b41e60a33
+D/ImageAnalysis(27892): onSuggestedStreamSpecUpdated: primaryStreamSpec = StreamSpec{resolution=320x240, originalConfiguredResolution=320x240, dynamicRange=DynamicRange@2573b7f{encoding=SDR, bitDepth=8}, sessionType=0, expectedFrameRateRange=[0, 0], implementationOptions=androidx.camera.camera2.impl.Camera2ImplConfig@76d2caf, zslDisabled=false}, secondaryStreamSpec null
+I/Surface (27892): Creating surface for consumer unnamed-27892-7 with slotExpansion=1 for 64 slots
+I/Surface (27892): Creating surface for consumer ImageReader-320x240f23m4-27892-5 with slotExpansion=1 for 64 slots
+I/Surface (27892): Creating surface for consumer unnamed-27892-8 with slotExpansion=1 for 64 slots
+I/Surface (27892): Creating surface for consumer ImageReader-320x240f23m4-27892-6 with slotExpansion=1 for 64 slots
+D/DeferrableSurface(27892): Surface created[total_surfaces=4, used_surfaces=1](androidx.camera.core.impl.ImmediateSurface@b7388bc}
+D/CXCP    (27892): Attaching [Preview:androidx.camera.core.Preview-b35093c3-3801-4797-97ec-24cc05e08fc0, ImageCapture:androidx.camera.core.ImageCapture-49ac889a-c18c-4cf6-89f7-f8416298d744, ImageAnalysis:androidx.camera.core.ImageAnalysis-08ef9b19-66ca-4549-929b-5e4b41e60a33] from UseCaseManager<CameraGraphConfigProvider<CameraId-0>>
+D/CXCP    (27892): Prepared UseCaseGraphContext (Deferred)
+D/CXCP    (27892): Configured UseCaseCamera-2
+D/CXCP    (27892): setFlashAsync: flashMode = 2, requestControl = androidx.camera.camera2.impl.DeferredUseCaseCameraRequestControl@e86ff66
+D/CXCP    (27892): Notifying [] camera control ready
+D/ImageCapture(27892): onCameraControlReady
+D/CXCP    (27892): setFlashAsync: flashMode = 2, requestControl = androidx.camera.camera2.impl.DeferredUseCaseCameraRequestControl@e86ff66
+D/CXCP    (27892): populateSurfaceToStreamUseCaseMapping() - streamUseCaseMap = {androidx.camera.core.SurfaceRequest$2@54a3db7=1, androidx.camera.core.impl.ImmediateSurface@925489=2, androidx.camera.core.impl.ImmediateSurface@b7388bc=1}
+I/Surface (27892): Creating surface for consumer unnamed-27892-9 with slotExpansion=1 for 64 slots
+I/Surface (27892): Creating surface for consumer ImageReader-320x240f22m7-27892-7 with slotExpansion=1 for 64 slots
+D/CXCP    (27892): Camera 0 has become available
+D/CXCP    (27892): Camera2CameraController(CameraGraph-2) (CameraId-0) camera status changed: CameraAvailable(camera=CameraId-0)
+D/CXCP    (27892): Camera2CameraController(CameraGraph-2): Not restarting. Controller state = androidx.camera.camera2.pipe.CameraController$ControllerState$STOPPED@78f17ba, last camera error = null, camera availability = CameraAvailable(camera=CameraId-0), last camera priorities changed = null, current timestamp = TimestampNs(value=247271063591263).
+I/CXCP    (27892): CameraGraph-2 (Camera 0)
+I/CXCP    (27892):   Facing:    Back (Logical, Full)
+I/CXCP    (27892):   Mode:      Normal
+I/CXCP    (27892): Outputs:
+I/CXCP    (27892):   Stream-4    Output-4    320x240     PRIVATE          [DynamicRangeProfile(value=1)] [StreamUseCase(value=1)] [StreamUseHint(value=0)]
+I/CXCP    (27892):   Stream-6    Output-6    320x240     YUV_420_888      [DynamicRangeProfile(value=1)] [StreamUseCase(value=1)] [StreamUseHint(value=0)]
+I/CXCP    (27892):   Stream-5    Output-5    1920x1440   JPEG             [DynamicRangeProfile(value=1)] [StreamUseCase(value=2)] [StreamUseHint(value=0)]
+I/CXCP    (27892): Session Template: TEMPLATE_PREVIEW
+I/CXCP    (27892): Session Parameters: (None)
+I/CXCP    (27892): Default Template: TEMPLATE_PREVIEW
+I/CXCP    (27892): Default Parameters
+I/CXCP    (27892):   Metadata.Key(androidx.camera.camera2.pipe.captureRequestTag) android.hardware.camera2.CaptureRequest.setTag.CX
+I/CXCP    (27892): Required Parameters: (None)
+D/CXCP    (27892): Camera graph updated from CameraGraph-1 to CameraGraph-2
+I/CXCP    (27892): Starting CameraGraph-2
+D/CXCP    (27892): GraphProcessor(cameraGraph: CameraGraph-2) onGraphStarting
+D/CXCP    (27892): CameraGraph-2 state updated to GRAPH_STARTING
+D/CXCP    (27892): Updated current camera internal state to CombinedCameraState(state=OPENING, error=null)
+D/CXCP    (27892): PruningProcessingQueue: Pruning [RequestOpen(virtualCamera=VirtualCamera-2, sharedCameraIds=[], graphListener=GraphProcessor(cameraGraph: CameraGraph-2), isPrewarm=false, isForegroundObserver=androidx.camera.camera2.pipe.compat.Camera2CameraController$$ExternalSyntheticLambda1@61a4ab)]
+D/CXCP    (27892): Started Camera2CameraController(CameraGraph-2)
+D/CXCP    (27892): PruningProcessingQueue: Processing RequestOpen(virtualCamera=VirtualCamera-2, sharedCameraIds=[], graphListener=GraphProcessor(cameraGraph: CameraGraph-2), isPrewarm=false, isForegroundObserver=androidx.camera.camera2.pipe.compat.Camera2CameraController$$ExternalSyntheticLambda1@61a4ab)
+I/CXCP    (27892): PruningCamera2DeviceManager#processRequestOpen(CameraId-0)
+D/CXCP    (27892): Opening CameraId-0 with retries...
+D/CXCP    (27892): Setting up Surfaces with UseCaseSurfaceManager
+D/DeferrableSurface(27892): use count+1, useCount=2 androidx.camera.core.SurfaceRequest$2@54a3db7
+D/DeferrableSurface(27892): New surface in use[total_surfaces=4, used_surfaces=2](androidx.camera.core.impl.ImmediateSurface@925489}
+D/DeferrableSurface(27892): use count+1, useCount=1 androidx.camera.core.impl.ImmediateSurface@925489
+D/DeferrableSurface(27892): New surface in use[total_surfaces=4, used_surfaces=3](androidx.camera.core.impl.ImmediateSurface@b7388bc}
+I/CXCP    (27892): Opening CameraId-0
+D/DeferrableSurface(27892): use count+1, useCount=1 androidx.camera.core.impl.ImmediateSurface@b7388bc
+D/CXCP    (27892): Configured Surface(name=null mNativeObject=-5476376656218593664)/@0xf48e397 for Stream-4
+D/CXCP    (27892): Configured androidx.camera.camera2.impl.UseCaseCameraRequestControlImpl@40263dd
+I/CXCP    (27892): Configured Stream-4 with Surface(name=null mNativeObject=-5476376656218593664)/@0xf48e397
+D/CXCP    (27892): SurfaceActive androidx.camera.core.SurfaceRequest$2@54a3db7 in androidx.camera.camera2.impl.UseCaseSurfaceManager@3c9ebb4
+D/DeferrableSurface(27892): use count+1, useCount=3 androidx.camera.core.SurfaceRequest$2@54a3db7
+D/CXCP    (27892): Configured Surface(name=null mNativeObject=-5476376656218656288)/@0x87a28c6 for Stream-5
+I/CXCP    (27892): Configured Stream-5 with Surface(name=null mNativeObject=-5476376656218656288)/@0x87a28c6
+D/CXCP    (27892): SurfaceActive androidx.camera.core.impl.ImmediateSurface@925489 in androidx.camera.camera2.impl.UseCaseSurfaceManager@3c9ebb4
+D/DeferrableSurface(27892): use count+1, useCount=2 androidx.camera.core.impl.ImmediateSurface@925489
+D/CXCP    (27892): Configured Surface(name=null mNativeObject=-5476376656218857344)/@0x393e087 for Stream-6
+I/CXCP    (27892): Configured Stream-6 with Surface(name=null mNativeObject=-5476376656218857344)/@0x393e087
+D/CXCP    (27892): SurfaceActive androidx.camera.core.impl.ImmediateSurface@b7388bc in androidx.camera.camera2.impl.UseCaseSurfaceManager@3c9ebb4
+D/DeferrableSurface(27892): use count+1, useCount=2 androidx.camera.core.impl.ImmediateSurface@b7388bc
+D/CXCP    (27892): UseCaseCameraRequestControlImpl#setParametersAsync: [DEFAULT] values = {CaptureRequest.Key(android.control.zoomRatio)=1.0}, optionPriority = OPTIONAL
+I/CXCP    (27892): Surface setup complete
+D/DeferrableSurface(27892): use count-1,  useCount=2 closed=false androidx.camera.core.SurfaceRequest$2@54a3db7
+D/DeferrableSurface(27892): use count-1,  useCount=1 closed=false androidx.camera.core.impl.ImmediateSurface@925489
+D/DeferrableSurface(27892): use count-1,  useCount=1 closed=false androidx.camera.core.impl.ImmediateSurface@b7388bc
+D/CXCP    (27892): CameraId-0 has become available! Notifying listeners...
+D/CXCP    (27892): UseCaseCameraState#updateState: parameters = {CaptureRequest.Key(android.control.zoomRatio)=1.0}, internalParameters = {Metadata.Key(camerax.tag_bundle)=android.hardware.camera2.CaptureRequest.setTag.CX}, streams = null, template = RequestTemplate(value=1)
+I/CXCP    (27892): Unavailable camera 0 detected
+I/CXCP    (27892): Loaded CameraIdList [CameraId-0, CameraId-1]
+D/CXCP    (27892): Emitting camera ID list: [CameraId-0, CameraId-1]
+D/CXCP    (27892): UseCaseCameraRequestControlImpl#setParametersAsync: [DEFAULT] values = {CaptureRequest.Key(android.control.aeExposureCompensation)=0}, optionPriority = OPTIONAL
+D/CXCP    (27892): Camera 0 has become unavailable
+D/CXCP    (27892): Camera2CameraController(CameraGraph-2) (CameraId-0) camera status changed: CameraUnavailable(camera=CameraId-0)
+D/CXCP    (27892): Camera2CameraController(CameraGraph-2): Not restarting. Controller state = androidx.camera.camera2.pipe.CameraController$ControllerState$STARTED@e4c9737, last camera error = null, camera availability = CameraUnavailable(camera=CameraId-0), last camera priorities changed = null, current timestamp = TimestampNs(value=247271072368444).
+D/CXCP    (27892): UseCaseCameraState#updateState: parameters = {CaptureRequest.Key(android.control.aeExposureCompensation)=0, CaptureRequest.Key(android.control.zoomRatio)=1.0}, internalParameters = {Metadata.Key(camerax.tag_bundle)=android.hardware.camera2.CaptureRequest.setTag.CX}, streams = null, template = RequestTemplate(value=1)
+D/CXCP    (27892): UseCaseCameraRequestControlImpl#updateCamera2ConfigAsync
+D/CXCP    (27892): UseCaseCameraState#updateState: parameters = {CaptureRequest.Key(android.control.aeExposureCompensation)=0, CaptureRequest.Key(android.control.zoomRatio)=1.0}, internalParameters = {Metadata.Key(camerax.tag_bundle)=android.hardware.camera2.CaptureRequest.setTag.CX}, streams = null, template = RequestTemplate(value=1)
+D/CXCP    (27892): tryOpenCamera: openCamera() for CameraId-0 returned
+D/CXCP    (27892): UseCaseCameraRequestControlImpl: Building SessionConfig...
+I/CXCP    (27892): Opened CameraId-0 in 14.251 ms
+D/CXCP    (27892): UseCaseCameraRequestControlImpl: SessionConfig built. Updating state...
+D/CXCP    (27892): UseCaseCameraRequestControlImpl: State update processing.
+D/CXCP    (27892): tryOpenCamera: CameraId-0 opened
+D/CXCP    (27892): UseCaseCameraState#updateState: parameters = {CaptureRequest.Key(android.control.aeExposureCompensation)=0, CaptureRequest.Key(android.control.zoomRatio)=1.0}, internalParameters = {Metadata.Key(camerax.tag_bundle)=android.hardware.camera2.CaptureRequest.setTag.CX}, streams = [Stream-4], template = RequestTemplate(value=1)
+I/CXCP    (27892): Camera open completed: OpenCameraResult(cameraState=CameraState-2, errorCode=null)
+D/CXCP    (27892): Update RepeatingRequest: Request(streams=[Stream-4], template=RequestTemplate(value=1))@14e597f
+D/CXCP    (27892): State3AControl.getFinalPreferredAeMode: preferAeMode = 1
+D/CXCP    (27892): UseCaseCameraRequestControlImpl#setParametersAsync: [DEFAULT] values = {CaptureRequest.Key(android.control.aeMode)=1, CaptureRequest.Key(android.control.afMode)=4, CaptureRequest.Key(android.control.awbMode)=1}, optionPriority = OPTIONAL
+I/CXCP    (27892): PruningCameraDeviceManager: CameraId-0 opened successfully
+I/CXCP    (27892): Creating CameraCaptureSession from CameraId-0 using CaptureSessionState-2 with {Stream-4=Surface(name=null mNativeObject=-5476376656218593664)/@0xf48e397, Stream-6=Surface(name=null mNativeObject=-5476376656218857344)/@0x393e087, Stream-5=Surface(name=null mNativeObject=-5476376656218656288)/@0x87a28c6}
+D/CXCP    (27892): UseCaseCameraState#updateState: parameters = {CaptureRequest.Key(android.control.aeExposureCompensation)=0, CaptureRequest.Key(android.control.aeMode)=1, CaptureRequest.Key(android.control.afMode)=4, CaptureRequest.Key(android.control.awbMode)=1, CaptureRequest.Key(android.control.zoomRatio)=1.0}, internalParameters = {Metadata.Key(camerax.tag_bundle)=android.hardware.camera2.CaptureRequest.setTag.CX}, streams = null, template = RequestTemplate(value=1)
+D/CXCP    (27892): Update RepeatingRequest: Request(streams=[Stream-4], template=RequestTemplate(value=1))@f333195
+D/CXCP    (27892): UseCaseCameraState: Updating 3A modes: AE(AeMode(value=1), changed=true), AF(AfMode(value=4), changed=true), AWB(AwbMode(value=1), changed=true)
+D/CXCP    (27892): Controller3A#update3A: cancelling previous request null
+D/CXCP    (27892): UseCaseCameraRequestControlImpl#updateCamera2ConfigAsync
+D/CXCP    (27892): UseCaseCameraState#updateState: parameters = {CaptureRequest.Key(android.control.aeExposureCompensation)=0, CaptureRequest.Key(android.control.aeMode)=1, CaptureRequest.Key(android.control.afMode)=4, CaptureRequest.Key(android.control.awbMode)=1, CaptureRequest.Key(android.control.zoomRatio)=1.0}, internalParameters = {Metadata.Key(camerax.tag_bundle)=android.hardware.camera2.CaptureRequest.setTag.CX}, streams = null, template = RequestTemplate(value=1)
+D/CXCP    (27892): Update RepeatingRequest: Request(streams=[Stream-4], template=RequestTemplate(value=1))@25b2aa
+D/CXCP    (27892): CXCP#createCaptureSession-0 - 97.283 ms
+D/CXCP    (27892): CaptureSessionState-2 Configured
+I/CXCP    (27892): Configured CaptureSessionState-2 in 98.885 ms
+D/CXCP    (27892): GraphProcessor(cameraGraph: CameraGraph-2) onGraphStarted
+D/CXCP    (27892): CameraGraph-2 state updated to GRAPH_STARTED
+D/CXCP    (27892): Updated current camera internal state to CombinedCameraState(state=OPEN, error=null)
+D/CXCP    (27892): CaptureSessionState-2 Ready
+D/CXCP    (27892): Building CaptureRequest for Request(streams=[Stream-4], template=RequestTemplate(value=1))@25b2aa
+D/CXCP    (27892): CXCP#createCaptureRequest-0 - 0.428 ms
+D/CXCP    (27892): GraphRequestProcessor-2 submitting Camera2CaptureSequence-2
+D/CXCP    (27892): CXCP#setRepeatingRequest-0 - 1.178 ms
+D/CXCP    (27892): GraphRequestProcessor-2 submitted Camera2CaptureSequence-2
+D/CXCP    (27892): CaptureSessionState-2 Active
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/CXCP    (27892): Camera access priorities have changed
+D/CXCP    (27892): Camera2CameraController(CameraGraph-2) (CameraId-0) camera status changed: CameraPrioritiesChanged
+D/CXCP    (27892): Camera2CameraController(CameraGraph-2): Not restarting. Controller state = androidx.camera.camera2.pipe.CameraController$ControllerState$STARTED@e4c9737, last camera error = null, camera availability = CameraUnavailable(camera=CameraId-0), last camera priorities changed = TimestampNs(value=247365715867799), current timestamp = TimestampNs(value=247365715871868).
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+I/oshinobu_client(27892): Use dataspace 142671872as it is
+D/VRI[MainActivity](27892): visibilityChanged oldVisibility=true newVisibility=false
+D/CXCP    (27892): Camera access priorities have changed
+D/CXCP    (27892): Camera access priorities have changed
+D/CXCP    (27892): Camera2CameraController(CameraGraph-2) (CameraId-0) camera status changed: CameraPrioritiesChanged
+D/CXCP    (27892): Camera2CameraController(CameraGraph-2): Not restarting. Controller state = androidx.camera.camera2.pipe.CameraController$ControllerState$STARTED@e4c9737, last camera error = null, camera availability = CameraUnavailable(camera=CameraId-0), last camera priorities changed = TimestampNs(value=247366176967978), current timestamp = TimestampNs(value=247366176992026).
+D/CXCP    (27892): Camera2CameraController(CameraGraph-2) (CameraId-0) camera status changed: CameraPrioritiesChanged
+D/CXCP    (27892): Camera2CameraController(CameraGraph-2): Not restarting. Controller state = androidx.camera.camera2.pipe.CameraController$ControllerState$STARTED@e4c9737, last camera error = null, camera availability = CameraUnavailable(camera=CameraId-0), last camera priorities changed = TimestampNs(value=247366179884319), current timestamp = TimestampNs(value=247366179901491).
+D/CXCP    (27892): Detaching [Preview:androidx.camera.core.Preview-b35093c3-3801-4797-97ec-24cc05e08fc0, ImageCapture:androidx.camera.core.ImageCapture-49ac889a-c18c-4cf6-89f7-f8416298d744, ImageAnalysis:androidx.camera.core.ImageAnalysis-08ef9b19-66ca-4549-929b-5e4b41e60a33] from UseCaseManager<CameraGraphConfigProvider<CameraId-0>>
+W/ScreenFlashWrapper(27892): completePendingScreenFlashClear: none pending!
+D/CXCP    (27892): UseCaseCameraRequestControl: closed
+D/CXCP    (27892): reset: videoUsage = 0
+D/CXCP    (27892): Closing UseCaseCamera-2
+I/CXCP    (27892): Closing CameraGraph-2
+D/CXCP    (27892): Closed Camera2CameraController(CameraGraph-2)
+D/CXCP    (27892): Closing GraphRequestProcessor-2
+D/CXCP    (27892): Closing GraphRequestProcessor-2
+D/CXCP    (27892): setFlashAsync: flashMode = 2, requestControl = null
+D/CXCP    (27892): setFlashAsync: flashMode = 2, requestControl = null
+D/CXCP    (27892): LowLightBoostControl#setLowLightBoostAsync: lowLightBoost = false
+D/CXCP    (27892): GraphProcessor(cameraGraph: CameraGraph-2) onGraphStopping
+D/CXCP    (27892): CameraGraph-2 state updated to GRAPH_STOPPING
+D/CXCP    (27892): Updated current camera internal state to CombinedCameraState(state=CLOSING, error=null)
+D/CXCP    (27892): CaptureSessionState-2 Shutdown
+D/CXCP    (27892): Camera2CaptureSequenceProcessor-2#stopRepeating
+D/CXCP    (27892): CXCP#stopRepeating-0 - 0.997 ms
+D/CXCP    (27892): Camera2CaptureSequenceProcessor-2#abortCaptures
+I/AutofillManager(27892): onInvisibleForAutofill(): expiringResponse
+D/CXCP    (27892): CXCP#abortCaptures-0 - 14.523 ms
+D/CXCP    (27892): Closing capture session for CaptureSessionState-2
+D/CXCP    (27892): CaptureSessionState-2 Ready
+D/CXCP    (27892): CaptureSessionState-2 Closed
+D/CXCP    (27892): CaptureSessionState-2 session finalizing
+D/CXCP    (27892): Finalizing CaptureSessionState-2
+D/CXCP    (27892): SurfaceInactive androidx.camera.core.SurfaceRequest$2@54a3db7 in androidx.camera.camera2.impl.UseCaseSurfaceManager@3c9ebb4
+D/DeferrableSurface(27892): use count-1,  useCount=1 closed=false androidx.camera.core.SurfaceRequest$2@54a3db7
+D/CXCP    (27892): SurfaceInactive androidx.camera.core.impl.ImmediateSurface@b7388bc in androidx.camera.camera2.impl.UseCaseSurfaceManager@3c9ebb4
+D/DeferrableSurface(27892): use count-1,  useCount=0 closed=false androidx.camera.core.impl.ImmediateSurface@b7388bc
+D/DeferrableSurface(27892): Surface no longer in use[total_surfaces=4, used_surfaces=2](androidx.camera.core.impl.ImmediateSurface@b7388bc}
+D/CXCP    (27892): SurfaceInactive androidx.camera.core.impl.ImmediateSurface@925489 in androidx.camera.camera2.impl.UseCaseSurfaceManager@3c9ebb4
+D/DeferrableSurface(27892): use count-1,  useCount=0 closed=false androidx.camera.core.impl.ImmediateSurface@925489
+D/DeferrableSurface(27892): Surface no longer in use[total_surfaces=4, used_surfaces=1](androidx.camera.core.impl.ImmediateSurface@925489}
+D/CXCP    (27892): androidx.camera.camera2.impl.UseCaseSurfaceManager@3c9ebb4 remove surface listener
+D/CXCP    (27892): GraphProcessor(cameraGraph: CameraGraph-2) onGraphStopped
+D/CXCP    (27892): CameraGraph-2 state updated to GRAPH_STOPPED
+D/CXCP    (27892): Updated current camera internal state to CombinedCameraState(state=CLOSED, error=null)
+I/CXCP    (27892): Disconnecting VirtualCamera-2
+D/CXCP    (27892): Camera2CameraController(CameraGraph-2) is closed
+D/CXCP    (27892): Camera2CameraController(CameraGraph-2) finalized
+D/CXCP    (27892): PruningProcessingQueue: Pruning [RequestClose(activeCamera=ActiveCamera(cameraId=CameraId-0)@4dafd4c)]
+D/CXCP    (27892): PruningProcessingQueue: Processing RequestClose(activeCamera=ActiveCamera(cameraId=CameraId-0)@4dafd4c)
+I/CXCP    (27892): PruningCamera2DeviceManager#processRequestClose(CameraId-0)
+D/CXCP    (27892): handleQuirksBeforeClosing(android.hardware.camera2.impl.CameraDeviceImpl@90bf662)
+D/CXCP    (27892): CaptureSessionState-2 session disconnecting
+D/CXCP    (27892): closeCameraDevice(0)
+I/CXCP    (27892): Closing Camera 0
+D/CXCP    (27892): CXCP#CameraDevice-0#close - 109.647 ms
+D/CXCP    (27892): Emitting camera ID list: [CameraId-0, CameraId-1]
+D/CXCP    (27892): CameraId-0: onClosed
+D/CXCP    (27892): CameraState-2: onFinalized
+E/flutter (27892): [ERROR:flutter/runtime/dart_vm_initializer.cc(40)] Unhandled Exception: WebSocketChannelException: SocketException: Failed host lookup: 'ee2e.oshino.space' (OS Error: No address associated with hostname, errno = 7)
+E/flutter (27892): 
+E/flutter (27892): [ERROR:flutter/runtime/dart_vm_initializer.cc(40)] Unhandled Exception: WebSocketChannelException: SocketException: Failed host lookup: 'ee2e.oshino.space' (OS Error: No address associated with hostname, errno = 7)
+E/flutter (27892): 
+Lost connection to device.

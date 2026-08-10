@@ -5,7 +5,7 @@ import '../theme/app_theme.dart';
 import '../widgets/auth_text_field.dart';
 import 'chat_screen.dart';
 import '../storage/peer_account_store.dart';
-
+import 'notes_screen.dart';
 
 /// Экран поиска собеседника по логину. Показывает список его устройств.
 /// Пока это конечная точка — реальное начало X3DH-обмена с выбранным
@@ -36,11 +36,22 @@ String? _peerAccountId;
 // В _NewChatScreenState добавьте поле для хранения peerAccountId:
 
 Future<void> _search() async {
+  final query = _loginController.text.trim();
+  final myLogin = await Session.getLogin();
+
+  if (myLogin != null && query == myLogin) {
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const NotesScreen()),
+    );
+    return;
+  }
+
   setState(() {
     _isLoading = true;
     _errorText = null;
     _foundDevices = [];
-    _peerAccountId = null;
   });
 
   try {

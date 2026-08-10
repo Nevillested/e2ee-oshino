@@ -3,10 +3,6 @@ import 'package:uuid/uuid.dart';
 
 const _uuid = Uuid();
 
-/// То, что реально шифруется внутри конверта — не голый текст, а
-/// типизированный JSON. Пока единственный тип — "text", но структура
-/// готова для будущих "edit"/"delete"/"reaction" без изменения формата
-/// самого шифрования.
 class InnerMessage {
   final String messageId;
   final String type;
@@ -27,6 +23,35 @@ class InnerMessage {
         body: body,
       );
 
+factory InnerMessage.media({
+  String? messageId,
+  required String mediaId,
+  required String keyBase64,
+  String? nonceBase64,
+  String? macBase64,
+  required String fileName,
+  bool isFile = false,
+  int fileSize = 0,
+  bool chunked = false,
+}) {
+  final body = jsonEncode({
+    'media_id': mediaId,
+    'key': keyBase64,
+    'nonce': nonceBase64,
+    'mac': macBase64,
+    'file_name': fileName,
+    'is_file': isFile,
+    'file_size': fileSize,
+    'chunked': chunked,
+  });
+  return InnerMessage(
+    messageId: messageId ?? _uuid.v4(),
+    type: 'media',
+    sentAt: DateTime.now().millisecondsSinceEpoch,
+    body: body,
+  );
+}
+
   String encode() => jsonEncode({
         'message_id': messageId,
         'type': type,
@@ -43,26 +68,4 @@ class InnerMessage {
       body: json['body'] as String,
     );
   }
-
-factory InnerMessage.media({
-  required String mediaId,
-  required String keyBase64,
-  required String nonceBase64,
-  required String macBase64,
-  required String fileName,
-}) {
-  final body = jsonEncode({
-    'media_id': mediaId,
-    'key': keyBase64,
-    'nonce': nonceBase64,
-    'mac': macBase64,
-    'file_name': fileName,
-  });
-  return InnerMessage(
-    messageId: _uuid.v4(),
-    type: 'media',
-    sentAt: DateTime.now().millisecondsSinceEpoch,
-    body: body,
-  );
-}
 }

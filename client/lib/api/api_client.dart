@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config.dart';
 import 'dart:typed_data';
+import 'package:dio/dio.dart' as dio;
+import 'dart:io';
 
 /// Отдельный тип ошибки для сетевых/серверных проблем — так их удобно
 /// ловить в UI через try/catch и показывать пользователю e.toString().
@@ -45,6 +47,116 @@ class ApiClient {
       throw ApiException('Неверный код подтверждения');
     }
   }
+Future<String> uploadEncryptedMediaFileWithProgress(
+  String token,
+  String filePath,
+  String recipientAccountId, {
+  required void Function(double percent) onProgress,
+  dio.CancelToken? cancelToken,
+}) async {
+  final client = dio.Dio();
+  final length = await File(filePath).length();
+  final formData = dio.FormData.fromMap({
+    'recipient_account_id': recipientAccountId,
+    'file': await dio.MultipartFile.fromFile(filePath, filename: 'encrypted.bin'),
+  });
+
+  try {
+    final response = await client.post<String>(
+      '${ApiConfig.baseUrl}/upload-media',
+      data: formData,
+      options: dio.Options(
+        headers: {'Authorization': 'Bearer $token'},
+        responseType: dio.ResponseType.plain,
+      ),
+      cancelToken: cancelToken,
+      onSendProgress: (sent, total) {
+        final effectiveTotal = total > 0 ? total : length;
+        if (effectiveTotal > 0) onProgress(sent / effectiveTotal * 100);
+      },
+    );
+
+    if (response.statusCode != 200 || response.data == null) {
+      throw ApiException('Не удалось загрузить файл');
+    }
+    return response.data!;
+  } on dio.DioException catch (e) {
+    if (e.type == dio.DioExceptionType.cancel) {
+      throw ApiException('Отменено пользователем');
+    }
+    throw ApiException('Не удалось загрузить файл');
+  }
+}
+
+/// dio.download сам пишет ответ сервера прямо в файл по мере получения,
+/// не накапливая его целиком в памяти — критично для файлов до 500 МБ.
+Future<void> downloadEncryptedMediaToFile(
+  String token,
+  String mediaId,
+  File destFile, {
+  void Function(double percent)? onProgress,
+  dio.CancelToken? cancelToken,
+}) async {
+  final client = dio.Dio();
+  try {
+    await client.download(
+      '${ApiConfig.baseUrl}/media/$mediaId',
+      destFile.path,
+      options: dio.Options(headers: {'Authorization': 'Bearer $token'}),
+      cancelToken: cancelToken,
+      onReceiveProgress: (received, total) {
+        if (total > 0 && onProgress != null) onProgress(received / total * 100);
+      },
+    );
+  } on dio.DioException catch (e) {
+    if (e.type == dio.DioExceptionType.cancel) {
+      throw ApiException('Отменено пользователем');
+    }
+    throw ApiException('Не удалось скачать файл');
+  }
+}
+  /// То же самое, что uploadEncryptedMedia, но с колбэком прогресса —
+/// обычный http-клиент такого колбэка не даёт, поэтому здесь используется
+/// dio, только внутри этого одного метода.
+Future<String> uploadEncryptedMediaWithProgress(
+  String token,
+  Uint8List ciphertext,
+  String recipientAccountId, {
+  required void Function(double percent) onProgress,
+  dio.CancelToken? cancelToken,
+}) async {
+  final client = dio.Dio();
+  final formData = dio.FormData.fromMap({
+    'recipient_account_id': recipientAccountId,
+    'file': dio.MultipartFile.fromBytes(ciphertext, filename: 'encrypted.bin'),
+  });
+
+  try {
+    final response = await client.post<String>(
+      '${ApiConfig.baseUrl}/upload-media',
+      data: formData,
+      options: dio.Options(
+        headers: {'Authorization': 'Bearer $token'},
+        responseType: dio.ResponseType.plain,
+      ),
+      cancelToken: cancelToken,
+      onSendProgress: (sent, total) {
+        if (total > 0) onProgress(sent / total * 100);
+      },
+    );
+
+    if (response.statusCode != 200 || response.data == null) {
+      throw ApiException('Не удалось загрузить файл');
+    }
+    return response.data!;
+  } on dio.DioException catch (e) {
+    if (e.type == dio.DioExceptionType.cancel) {
+      throw ApiException('Отменено пользователем');
+    }
+    throw ApiException('Не удалось загрузить файл');
+  }
+}
+
 
   /// POST /login — вход. Возвращает сырой токен сессии.
   Future<String> login(
@@ -218,6 +330,57 @@ Future<({String accountId, String login})?> getDeviceOwnerInfo(
           Uri.parse('${ApiConfig.baseUrl}/devices/$deviceId/owner'),
           headers: {'Authorization': 'Bearer $token'},
         )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) return null;
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return (accountId: data['account_id'] as String, login: data['login'] as String);
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<bool?> checkSession(String token) async {
+  try {
+    final response = await http
+        .get(
+          Uri.parse('${ApiConfig.baseUrl}/session/check'),
+          headers: {'Authorization': 'Bearer $token'},
+        )
+        .timeout(const Duration(seconds: 8));
+    return response.statusCode == 200;
+  } catch (_) {
+    // null означает "не удалось узнать" — например, нет интернета.
+    // Это принципиально отличается от false ("сервер явно сказал: невалиден").
+    return null;
+  }
+}
+
+Future<Map<String, dynamic>?> getTurnCredentials(String token) async {
+  try {
+    final response = await http
+        .get(Uri.parse('${ApiConfig.baseUrl}/turn-credentials'), headers: {'Authorization': 'Bearer $token'})
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) return null;
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<bool> deleteAccount(String token) async {
+  final response = await http
+      .delete(
+        Uri.parse('${ApiConfig.baseUrl}/account'),
+        headers: {'Authorization': 'Bearer $token'},
+      )
+      .timeout(const Duration(seconds: 8));
+  return response.statusCode == 200;
+}
+
+Future<({String accountId, String login})?> getMyAccountInfo(String token) async {
+  try {
+    final response = await http
+        .get(Uri.parse('${ApiConfig.baseUrl}/account/me'), headers: {'Authorization': 'Bearer $token'})
         .timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) return null;
     final data = jsonDecode(response.body) as Map<String, dynamic>;
