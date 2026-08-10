@@ -51,6 +51,13 @@ type PendingMessage struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type PushToken struct {
+	ID        pgtype.UUID
+	DeviceID  pgtype.UUID
+	FcmToken  string
+	UpdatedAt pgtype.Timestamptz
+}
+
 type Session struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

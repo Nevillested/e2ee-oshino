@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"server/internal/db"
+	"server/internal/push"
 	"strings"
 	"time"
 
@@ -52,6 +53,14 @@ func queuePendingMessage(ctx context.Context, queries *db.Queries, toDeviceId st
 
 	if err := queries.SavePendingMessage(ctx, params); err != nil {
 		log.Printf("Ошибка добавления сообщения в очередь: %v", err)
+		return
+	}
+
+	// Будим получателя push-ом — сам он не содержит текста сообщения,
+	// только сигнал "подключись к серверу", сообщение уже лежит в
+	// pending_messages и придёт по обычному зашифрованному каналу.
+	if token, err := queries.GetPushTokenByDevice(ctx, toDeviceUUID); err == nil {
+		push.SendDataPush(ctx, token.FcmToken, push.TypeMessage)
 	}
 }
 
