@@ -103,6 +103,25 @@ func (r *PendingCallRegistry) Take(toDeviceID string) [][]byte {
 	return entry.frames
 }
 
+// Decline — получатель отклонил звонок с кнопки в push-уведомлении, минуя
+// WebSocket (приложение не обязательно открыто). В отличие от Cancel (его
+// вызывает звонящий) и Take (его вызывает WebSocket-подключение получателя),
+// сюда получатель приходит через отдельный HTTP-эндпоинт. Возвращает
+// device_id звонящего — чтобы вызывающий код сообщил ЕМУ, что звонок
+// отклонён (в реальном времени, а не по TTL).
+func (r *PendingCallRegistry) Decline(toDeviceID, callID string) (callerDeviceID string, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	entry, exists := r.calls[toDeviceID]
+	if !exists || entry.callID != callID {
+		return "", false
+	}
+	entry.timer.Stop()
+	delete(r.calls, toDeviceID)
+	return entry.callerDeviceID, true
+}
+
 // Expire удаляет запись ТОЛЬКО если она всё ещё та же самая (по callID) —
 // защита от гонки, когда таймер уже успел сработать в момент, когда
 // получатель как раз подключился и Take() либо Cancel() успели выполниться

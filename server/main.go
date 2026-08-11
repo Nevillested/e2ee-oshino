@@ -84,6 +84,7 @@ func main() {
 	mux.HandleFunc("GET /account/me", api.NewAccountMeHandler(queries))
 	mux.HandleFunc("GET /turn-credentials", api.NewTurnCredentialsHandler(queries))
 	mux.HandleFunc("POST /push/register", api.NewRegisterPushTokenHandler(queries))
+	mux.HandleFunc("POST /calls/decline", api.NewDeclineCallHandler(queries, registry, pendingCalls))
 
 	//сохраняем в переменную и запускаем HTTP-сервер на порту 8080. ListenAndServe - блокирующая функция, которая будет работать до тех пор, пока сервер не будет остановлен или не произойдет ошибка
 	//внутри запускается бесконечный цикл, который как раз через mux проверяет, какие запросы пришли и вызывает в горутине (параллельно) соответствующие функции-обработчики, а сам цикл продолжает работать и ждать новых запросов

@@ -86,7 +86,7 @@ func queuePendingMessage(ctx context.Context, queries *db.Queries, toDeviceId st
 	// только сигнал "подключись к серверу", сообщение уже лежит в
 	// pending_messages и придёт по обычному зашифрованному каналу.
 	if token, err := queries.GetPushTokenByDevice(ctx, toDeviceUUID); err == nil {
-		push.SendDataPush(ctx, token.FcmToken, push.TypeMessage)
+		push.SendDataPush(ctx, token.FcmToken, push.TypeMessage, nil)
 	}
 }
 
@@ -277,7 +277,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						var toDeviceUUID pgtype.UUID
 						if uuidErr := toDeviceUUID.Scan(toDeviceID); uuidErr == nil {
 							if token, err := queries.GetPushTokenByDevice(r.Context(), toDeviceUUID); err == nil {
-								push.SendDataPush(r.Context(), token.FcmToken, push.TypeCall)
+								push.SendDataPush(r.Context(), token.FcmToken, push.TypeCall, map[string]string{"call_id": callID})
 							}
 						}
 					}
@@ -309,7 +309,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 							var toDeviceUUID pgtype.UUID
 							if uuidErr := toDeviceUUID.Scan(NewWSMsgFrom.ToDeviceId); uuidErr == nil {
 								if token, err := queries.GetPushTokenByDevice(r.Context(), toDeviceUUID); err == nil {
-									push.SendDataPush(r.Context(), token.FcmToken, push.TypeCallCancel)
+									push.SendDataPush(r.Context(), token.FcmToken, push.TypeCallCancel, nil)
 								}
 							}
 						}

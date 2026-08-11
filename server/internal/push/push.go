@@ -66,10 +66,13 @@ func getClient(ctx context.Context) *messaging.Client {
 }
 
 // SendDataPush шлёт data-only push указанного типа на конкретный токен
-// устройства. Ошибки логируются, но никогда не возвращаются наружу —
-// недоставленный push не должен ронять основной поток (постановку
+// устройства. extra — дополнительные поля данных (например, call_id — сам
+// по себе он ничего не выдаёт о собеседнике/содержимом, зато позволяет
+// клиенту без подключения к WebSocket отклонить именно этот звонок с
+// кнопки в уведомлении). Ошибки логируются, но никогда не возвращаются
+// наружу — недоставленный push не должен ронять основной поток (постановку
 // сообщения в очередь, обработку сигнала звонка и т.д.).
-func SendDataPush(ctx context.Context, token string, pushType PushType) {
+func SendDataPush(ctx context.Context, token string, pushType PushType, extra map[string]string) {
 	if token == "" {
 		return
 	}
@@ -78,11 +81,14 @@ func SendDataPush(ctx context.Context, token string, pushType PushType) {
 		return
 	}
 
+	data := map[string]string{"type": string(pushType)}
+	for k, v := range extra {
+		data[k] = v
+	}
+
 	msg := &messaging.Message{
 		Token: token,
-		Data: map[string]string{
-			"type": string(pushType),
-		},
+		Data:  data,
 		Android: &messaging.AndroidConfig{
 			// high — чтобы система доставила и разбудила приложение как
 			// можно быстрее даже в Doze/App Standby; особенно важно для
