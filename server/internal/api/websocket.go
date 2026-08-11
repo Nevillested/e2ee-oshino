@@ -34,10 +34,36 @@ type WSMsgTo struct {
 	Type string `json:"Type"`
 }
 
+// CallSignalPayload — минимальный разбор содержимого поля Ciphertext у
+// call_*-кадров (для звонков оно не зашифровано, см. sendCallSignal на
+// клиенте) — нужен только чтобы вытащить call_id и звонящего для очереди
+// отложенных звонков, само содержимое (SDP и т.д.) сервер не трогает и
+// пересылает как есть.
+type CallSignalPayload struct {
+	SenderDeviceID string `json:"sender_device_id"`
+	CallID         string `json:"call_id"`
+}
+
+// Сколько ждать, прежде чем считать недозвонившийся вызов неотвеченным —
+// как обычный телефонный дозвон: пуш должен успеть разбудить получателя,
+// а сам получатель — успеть увидеть входящий вызов и среагировать.
+const callRingTTL = 45 * time.Second
+
 func generateDeliveryID() string {
 	buf := make([]byte, 16)
 	rand.Read(buf)
 	return hex.EncodeToString(buf)
+}
+
+func respondCallUnavailable(ctx context.Context, ws_object *websocket.Conn) error {
+	var NewWSMsgTo WSMsgTo
+	NewWSMsgTo.Type = "call_unavailable"
+	respBytes, marshalErr := json.Marshal(NewWSMsgTo)
+	if marshalErr != nil {
+		log.Printf("ошибка кодирования ответа: %v", marshalErr)
+		return marshalErr
+	}
+	return ws_object.Write(ctx, websocket.MessageText, respBytes)
 }
 
 func queuePendingMessage(ctx context.Context, queries *db.Queries, toDeviceId string, message []byte) {
@@ -64,7 +90,7 @@ func queuePendingMessage(ctx context.Context, queries *db.Queries, toDeviceId st
 	}
 }
 
-func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks *AckRegistry) func(http.ResponseWriter, *http.Request) {
+func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks *AckRegistry, pendingCalls *PendingCallRegistry) func(http.ResponseWriter, *http.Request) {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 
@@ -91,6 +117,15 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 		if ScanUuidErr != nil {
 			log.Printf("ошибка конвертации Device ID: %v", ScanUuidErr)
 			return
+		}
+
+		// Отложенные звонки доставляем первым делом, до обычных сообщений —
+		// это дозвон в реальном времени, задержка тут особенно чувствуется.
+		for _, frame := range pendingCalls.Take(DeviceID) {
+			if err := ws_object.Write(r.Context(), websocket.MessageText, frame); err != nil {
+				log.Printf("ошибка доставки отложенного звонка: %v", err)
+				break
+			}
 		}
 
 		var PendingMessages []db.PendingMessage
@@ -184,17 +219,50 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						break readLoop
 					}
 				} else {
-					var NewWSMsgTo WSMsgTo
-					NewWSMsgTo.Type = "call_unavailable"
-					respBytes, marshalErr := json.Marshal(NewWSMsgTo)
-					if marshalErr != nil {
-						log.Printf("ошибка кодирования ответа: %v", marshalErr)
-						continue
+					var callPayload CallSignalPayload
+					_ = json.Unmarshal([]byte(NewWSMsgFrom.Ciphertext), &callPayload)
+
+					var handled bool
+
+					switch MessageType {
+					case "call_offer":
+						if callPayload.CallID != "" {
+							toDeviceID := NewWSMsgFrom.ToDeviceId
+							callID := callPayload.CallID
+							pendingCalls.Start(toDeviceID, callID, DeviceID, message, callRingTTL, func() {
+								if callerConn, ok := registry.Get(DeviceID); ok {
+									if err := respondCallUnavailable(context.Background(), callerConn); err != nil {
+										log.Printf("ошибка отправки call_unavailable по истечении ожидания: %v", err)
+									}
+								}
+								pendingCalls.Expire(toDeviceID, callID)
+							})
+
+							var toDeviceUUID pgtype.UUID
+							if uuidErr := toDeviceUUID.Scan(toDeviceID); uuidErr == nil {
+								if token, err := queries.GetPushTokenByDevice(r.Context(), toDeviceUUID); err == nil {
+									push.SendDataPush(r.Context(), token.FcmToken, push.TypeCall)
+								}
+							}
+							handled = true
+						}
+
+					case "call_cancel", "call_end", "call_reject", "call_busy":
+						if pendingCalls.Cancel(NewWSMsgFrom.ToDeviceId, callPayload.CallID, DeviceID) {
+							handled = true
+						}
+
+					default: // call_ice, call_video_state и т.п. — буферизуем к уже ждущему звонку
+						if pendingCalls.Append(NewWSMsgFrom.ToDeviceId, callPayload.CallID, message) {
+							handled = true
+						}
 					}
-					var write_error = ws_object.Write(r.Context(), websocket.MessageText, respBytes)
-					if write_error != nil {
-						log.Printf("ошибка отправки ответа отправителю: %v", write_error)
-						break readLoop
+
+					if !handled {
+						if write_error := respondCallUnavailable(r.Context(), ws_object); write_error != nil {
+							log.Printf("ошибка отправки ответа отправителю: %v", write_error)
+							break readLoop
+						}
 					}
 				}
 

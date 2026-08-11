@@ -60,12 +60,15 @@ func main() {
 	//подтверждение доставки
 	var ackRegistry = api.NewAckRegistry()
 
+	//очередь отложенных (ещё не доставленных) звонков для оффлайн-получателей
+	var pendingCalls = api.NewPendingCallRegistry()
+
 	/*
 	  mux.HandleFunc - принимает на вход строку и функцию, тем самым сопоставляя моршрут.
 	  То есть если через http пришло что-то вроде /qwsdfg ты мы этому значению сопоставляем функцию, которую нужно вызвать
 	*/
 	mux.HandleFunc("GET /health", api.NewHealthHandler(queries))
-	mux.HandleFunc("GET /ws", api.NewWebSocketHandler(queries, registry, ackRegistry))
+	mux.HandleFunc("GET /ws", api.NewWebSocketHandler(queries, registry, ackRegistry, pendingCalls))
 	mux.HandleFunc("POST /register", api.NewRegisterHandler(queries))
 	mux.HandleFunc("POST /verify-totp", api.NewVerifyTOTPHandler(queries))
 	mux.HandleFunc("POST /login", api.NewLoginHandler(queries))
