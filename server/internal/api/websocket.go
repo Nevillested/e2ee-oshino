@@ -210,6 +210,79 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 					queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, message)
 				}
 
+			} else if MessageType == "call_offer" {
+
+				// call_offer — единственный кадр звонка, чья тихая потеря
+				// фатальна: без него звонок просто никогда не зазвонит, без
+				// единого сигнала кому-либо. Поэтому даже если получатель
+				// формально "в сети" (Status == true), одной успешной записи
+				// в сокет недостаточно — соединение может быть зомби (TCP ещё
+				// жив, но Android в фоне/Doze уже не доставляет по нему
+				// пакеты). Требуем настоящее подтверждение (ack) от клиента,
+				// как и для обычных сообщений; не дождались — считаем
+				// получателя офлайн и уходим в очередь отложенных звонков + push,
+				// точно так же, как для честно отключённого получателя.
+				var callPayload CallSignalPayload
+				_ = json.Unmarshal([]byte(NewWSMsgFrom.Ciphertext), &callPayload)
+
+				delivered := false
+
+				if Status == true {
+					deliveryID := generateDeliveryID()
+					relay := WSMsgRelay{
+						ToDeviceId: NewWSMsgFrom.ToDeviceId,
+						Ciphertext: NewWSMsgFrom.Ciphertext,
+						Type:       MessageType,
+						DeliveryId: deliveryID,
+					}
+					relayBytes, _ := json.Marshal(relay)
+
+					ackChan := acks.Wait(deliveryID)
+					write_error := ConnReceiver.Write(r.Context(), message_type, relayBytes)
+
+					if write_error != nil {
+						log.Printf("получатель считался онлайн, но запись звонка не удалась (зомби-соединение): %v", write_error)
+						acks.Cancel(deliveryID)
+						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
+					} else {
+						select {
+						case <-ackChan:
+							delivered = true
+						case <-time.After(5 * time.Second):
+							log.Printf("получатель не подтвердил звонок за 5с, считаем офлайн (зомби-соединение)")
+							acks.Cancel(deliveryID)
+							registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
+						}
+					}
+				}
+
+				if !delivered {
+					if callPayload.CallID == "" {
+						if write_error := respondCallUnavailable(r.Context(), ws_object); write_error != nil {
+							log.Printf("ошибка отправки ответа отправителю: %v", write_error)
+							break readLoop
+						}
+					} else {
+						toDeviceID := NewWSMsgFrom.ToDeviceId
+						callID := callPayload.CallID
+						pendingCalls.Start(toDeviceID, callID, DeviceID, message, callRingTTL, func() {
+							if callerConn, ok := registry.Get(DeviceID); ok {
+								if err := respondCallUnavailable(context.Background(), callerConn); err != nil {
+									log.Printf("ошибка отправки call_unavailable по истечении ожидания: %v", err)
+								}
+							}
+							pendingCalls.Expire(toDeviceID, callID)
+						})
+
+						var toDeviceUUID pgtype.UUID
+						if uuidErr := toDeviceUUID.Scan(toDeviceID); uuidErr == nil {
+							if token, err := queries.GetPushTokenByDevice(r.Context(), toDeviceUUID); err == nil {
+								push.SendDataPush(r.Context(), token.FcmToken, push.TypeCall)
+							}
+						}
+					}
+				}
+
 			} else if strings.HasPrefix(MessageType, "call_") {
 
 				if Status == true {
@@ -225,28 +298,6 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 					var handled bool
 
 					switch MessageType {
-					case "call_offer":
-						if callPayload.CallID != "" {
-							toDeviceID := NewWSMsgFrom.ToDeviceId
-							callID := callPayload.CallID
-							pendingCalls.Start(toDeviceID, callID, DeviceID, message, callRingTTL, func() {
-								if callerConn, ok := registry.Get(DeviceID); ok {
-									if err := respondCallUnavailable(context.Background(), callerConn); err != nil {
-										log.Printf("ошибка отправки call_unavailable по истечении ожидания: %v", err)
-									}
-								}
-								pendingCalls.Expire(toDeviceID, callID)
-							})
-
-							var toDeviceUUID pgtype.UUID
-							if uuidErr := toDeviceUUID.Scan(toDeviceID); uuidErr == nil {
-								if token, err := queries.GetPushTokenByDevice(r.Context(), toDeviceUUID); err == nil {
-									push.SendDataPush(r.Context(), token.FcmToken, push.TypeCall)
-								}
-							}
-							handled = true
-						}
-
 					case "call_cancel", "call_end", "call_reject", "call_busy":
 						if pendingCalls.Cancel(NewWSMsgFrom.ToDeviceId, callPayload.CallID, DeviceID) {
 							handled = true
