@@ -21,7 +21,12 @@ type PushType string
 
 const (
 	TypeMessage PushType = "message"
-	TypeCall    PushType = "call"
+	// TypeCallCancel — звонящий передумал ждать до того, как получатель
+	// успел подключиться (см. PendingCallRegistry.Cancel). Получатель к
+	// этому моменту уже мог показать нативный экран/рингтон по TypeCall —
+	// этот пуш просит его остановиться, не дожидаясь TTL.
+	TypeCallCancel PushType = "call_cancel"
+	TypeCall       PushType = "call"
 )
 
 var (

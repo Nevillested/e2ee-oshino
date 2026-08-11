@@ -301,6 +301,17 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 					case "call_cancel", "call_end", "call_reject", "call_busy":
 						if pendingCalls.Cancel(NewWSMsgFrom.ToDeviceId, callPayload.CallID, DeviceID) {
 							handled = true
+
+							// Получатель мог уже звонить нативным
+							// foreground-service (см. TypeCall) — не
+							// дожидаясь TTL, просим его остановиться прямо
+							// сейчас.
+							var toDeviceUUID pgtype.UUID
+							if uuidErr := toDeviceUUID.Scan(NewWSMsgFrom.ToDeviceId); uuidErr == nil {
+								if token, err := queries.GetPushTokenByDevice(r.Context(), toDeviceUUID); err == nil {
+									push.SendDataPush(r.Context(), token.FcmToken, push.TypeCallCancel)
+								}
+							}
 						}
 
 					default: // call_ice, call_video_state и т.п. — буферизуем к уже ждущему звонку
