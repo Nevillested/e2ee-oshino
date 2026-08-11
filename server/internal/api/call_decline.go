@@ -35,14 +35,19 @@ func NewDeclineCallHandler(queries *db.Queries, registry *ConnectionRegistry, pe
 			return
 		}
 
+		log.Printf("calls/decline: запрос device_id=%s call_id=%s", req.DeviceID, req.CallID)
+
 		callerDeviceID, ok := pendingCalls.Decline(req.DeviceID, req.CallID)
 		if !ok {
 			// Звонок уже не ждёт (например, звонящий сам отменил, случился
 			// таймаут, или это устаревшее нажатие) — отклонять нечего,
 			// это не ошибка.
+			log.Printf("calls/decline: для device_id=%s call_id=%s нет отложенного звонка (уже снят/устарел)", req.DeviceID, req.CallID)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+
+		log.Printf("calls/decline: звонок %s снят с ожидания, звонящий=%s", req.CallID, callerDeviceID)
 
 		if callerConn, connected := registry.Get(callerDeviceID); connected {
 			reject := WSMsgRelay{
@@ -55,7 +60,11 @@ func NewDeclineCallHandler(queries *db.Queries, registry *ConnectionRegistry, pe
 				log.Printf("calls/decline: ошибка кодирования сигнала звонящему: %v", marshalErr)
 			} else if writeErr := callerConn.Write(r.Context(), websocket.MessageText, payload); writeErr != nil {
 				log.Printf("calls/decline: не удалось уведомить звонящего: %v", writeErr)
+			} else {
+				log.Printf("calls/decline: звонящему %s отправлен call_reject", callerDeviceID)
 			}
+		} else {
+			log.Printf("calls/decline: звонящий %s не в сети, уведомить не удалось", callerDeviceID)
 		}
 
 		log.Printf("calls/decline: звонок %s отклонён устройством %s", req.CallID, req.DeviceID)
