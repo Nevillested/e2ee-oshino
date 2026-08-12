@@ -277,7 +277,16 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						var toDeviceUUID pgtype.UUID
 						if uuidErr := toDeviceUUID.Scan(toDeviceID); uuidErr == nil {
 							if token, err := queries.GetPushTokenByDevice(r.Context(), toDeviceUUID); err == nil {
-								push.SendDataPush(r.Context(), token.FcmToken, push.TypeCall, map[string]string{"call_id": callID})
+								// caller_device_id — тот же класс данных, что и call_id: непрозрачный
+								// UUID, ничего не раскрывающий без отдельного авторизованного запроса
+								// (см. GetDeviceOwnerInfo на клиенте). Нужен нативной стороне клиента
+								// (CallDeclineReceiver), чтобы при отклонении звонка из полностью
+								// закрытого приложения было о ком записать пропущенный звонок в
+								// локальную историю чата при следующем запуске.
+								push.SendDataPush(r.Context(), token.FcmToken, push.TypeCall, map[string]string{
+									"call_id":          callID,
+									"caller_device_id": DeviceID,
+								})
 							}
 						}
 					}
