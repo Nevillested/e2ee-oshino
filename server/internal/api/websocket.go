@@ -21,6 +21,14 @@ type WSMsgFrom struct {
 	Ciphertext string `json:"Ciphertext"`
 	Type       string `json:"Type"`
 	DeliveryId string `json:"DeliveryId"`
+	// Silent — служебное control-сообщение (реакция/пин/правка/удаление),
+	// не самостоятельное сообщение от пользователя. Сервер не заглядывает
+	// в Ciphertext и поэтому физически не может сам отличить его от
+	// обычного текста — клиент помечает это открытым текстом, чтобы
+	// офлайн-получателю не слался будящий push (реакция подождёт, пока он
+	// сам откроет чат — будить его ради неё незачем). Само сообщение
+	// всё равно встаёт в очередь и будет доставлено как обычно.
+	Silent bool `json:"Silent"`
 }
 
 type WSMsgRelay struct {
@@ -66,7 +74,7 @@ func respondCallUnavailable(ctx context.Context, ws_object *websocket.Conn) erro
 	return ws_object.Write(ctx, websocket.MessageText, respBytes)
 }
 
-func queuePendingMessage(ctx context.Context, queries *db.Queries, toDeviceId string, message []byte) {
+func queuePendingMessage(ctx context.Context, queries *db.Queries, toDeviceId string, message []byte, silent bool) {
 	var toDeviceUUID pgtype.UUID
 	if err := toDeviceUUID.Scan(toDeviceId); err != nil {
 		log.Printf("Ошибка конвертации Device ID при постановке в очередь: %v", err)
@@ -79,6 +87,10 @@ func queuePendingMessage(ctx context.Context, queries *db.Queries, toDeviceId st
 
 	if err := queries.SavePendingMessage(ctx, params); err != nil {
 		log.Printf("Ошибка добавления сообщения в очередь: %v", err)
+		return
+	}
+
+	if silent {
 		return
 	}
 
@@ -191,7 +203,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						log.Printf("получатель считался онлайн, но запись не удалась (зомби-соединение): %v", write_error)
 						acks.Cancel(deliveryID)
 						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
-						queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, message)
+						queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, message, NewWSMsgFrom.Silent)
 						continue
 					}
 
@@ -202,12 +214,12 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						log.Printf("получатель не подтвердил доставку за 5с, ставим в очередь")
 						acks.Cancel(deliveryID)
 						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
-						queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, message)
+						queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, message, NewWSMsgFrom.Silent)
 					}
 
 				} else {
 					log.Printf("Сообщение поставлено в очередь до тех пор, пока устройство не будет в сети")
-					queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, message)
+					queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, message, NewWSMsgFrom.Silent)
 				}
 
 			} else if MessageType == "call_offer" {
