@@ -1,11 +1,66 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../services/call_service.dart';
 import '../theme/app_theme.dart';
 import 'call_screen.dart';
 
-class IncomingCallScreen extends StatelessWidget {
+class IncomingCallScreen extends StatefulWidget {
   final String peerLogin;
   const IncomingCallScreen({super.key, required this.peerLogin});
+
+  @override
+  State<IncomingCallScreen> createState() => _IncomingCallScreenState();
+}
+
+class _IncomingCallScreenState extends State<IncomingCallScreen> {
+  StreamSubscription<CallState>? _stateSub;
+  bool _navigatedAway = false;
+
+  @override
+  void initState() {
+    super.initState();
+    debugPrint('IncomingCallScreen: initState (peerLogin=${widget.peerLogin})');
+    // Звонящий мог сбросить вызов (или он сам оборвался) до того, как мы
+    // ответили/отклонили — CallService в этом случае сам уходит в idle
+    // (и останавливает мелодию), но экран "кто звонит" без этой подписки
+    // остаётся висеть на месте. Та же подписка ловит и автопринятие
+    // (кнопка "Ответить" в push-уведомлении, см. CallService._autoAcceptAndOpenScreen) —
+    // состояние меняется на connected, этот экран должен САМ убраться,
+    // открывая дорогу CallScreen, который в это время пушится поверх.
+    //
+    // ВАЖНО: НЕ Navigator.pop() — при автопринятии CallService независимо
+    // ПУШИТ CallScreen поверх этого экрана в реакции на тот же самый переход
+    // состояния, и порядок между этими двумя обработчиками не гарантирован.
+    // Если наш pop() срабатывает уже ПОСЛЕ того как CallScreen успел
+    // запушиться, pop() убирает верхний элемент стека — то есть свежий
+    // CallScreen, а не себя! Экран внешне "не переключался" именно поэтому:
+    // CallScreen пушился и тут же выкидывался обратно. removeRoute() убирает
+    // именно СВОЙ маршрут, независимо от того, где он сейчас в стеке.
+    _stateSub = CallService.instance.stateStream.listen((state) {
+      debugPrint(
+        'IncomingCallScreen: stateStream -> $state (navigatedAway=$_navigatedAway, mounted=$mounted)',
+      );
+      if (_navigatedAway || !mounted) return;
+      if (state != CallState.incomingRinging) {
+        _navigatedAway = true;
+        final route = ModalRoute.of(context);
+        debugPrint('IncomingCallScreen: ухожу с экрана сам (removeRoute), route=$route');
+        if (route != null) {
+          Navigator.of(context).removeRoute(route);
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    debugPrint('IncomingCallScreen: dispose');
+    _stateSub?.cancel();
+    super.dispose();
+  }
+
+  String get peerLogin => widget.peerLogin;
 
   @override
   Widget build(BuildContext context) {
@@ -30,6 +85,7 @@ class IncomingCallScreen extends StatelessWidget {
                     icon: Icons.call_end,
                     color: Colors.red,
                     onTap: () {
+                      _navigatedAway = true;
                       CallService.instance.declineCall();
                       Navigator.pop(context);
                     },
@@ -37,14 +93,15 @@ class IncomingCallScreen extends StatelessWidget {
                   _actionButton(
                     icon: Icons.call,
                     color: Colors.green,
-                    onTap: () async {
-                      await CallService.instance.acceptCall();
-                      if (context.mounted) {
-                        Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(builder: (context) => CallScreen(peerLogin: peerLogin)),
-                        );
-                      }
+                    onTap: () {
+                      _navigatedAway = true;
+                      // Не ждём — экран разговора открывается сразу, а сам
+                      // обмен WebRTC идёт уже на нём (см. CallService.statusUpdates).
+                      CallService.instance.acceptCall();
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(builder: (context) => CallScreen(peerLogin: peerLogin)),
+                      );
                     },
                   ),
                 ],

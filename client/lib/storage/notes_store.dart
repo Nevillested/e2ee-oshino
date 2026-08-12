@@ -19,6 +19,7 @@ class NoteMessage {
   final String status;
   final String? processingStep;
   final String? localPreviewPath;
+  final String? groupId;
 
   NoteMessage(
     this.id,
@@ -36,6 +37,7 @@ class NoteMessage {
     this.status = 'sent',
     this.processingStep,
     this.localPreviewPath,
+    this.groupId,
   });
 
   Map<String, dynamic> toJson() => {
@@ -54,6 +56,7 @@ class NoteMessage {
         'status': status,
         'step': processingStep,
         'local_preview': localPreviewPath,
+        'group_id': groupId,
       };
 
   static NoteMessage fromJson(Map<String, dynamic> j) => NoteMessage(
@@ -72,6 +75,7 @@ class NoteMessage {
         status: j['status'] as String? ?? 'sent',
         processingStep: j['step'] as String?,
         localPreviewPath: j['local_preview'] as String?,
+        groupId: j['group_id'] as String?,
       );
 }
 
@@ -142,12 +146,13 @@ class NotesStore {
     );
   }
 
-  static Future<void> addText(String text) async {
+  static Future<void> addText(String text, {String? groupId}) async {
     final notes = await getAll();
     notes.add(NoteMessage(
       DateTime.now().microsecondsSinceEpoch.toString(),
       text,
       DateTime.now().millisecondsSinceEpoch,
+      groupId: groupId,
     ));
     await _saveAll(notes);
   }
@@ -176,6 +181,7 @@ class NotesStore {
           mediaMacBase64: old.mediaMacBase64, fileName: old.fileName, status: newStatus,
           processingStep: (newStatus == 'sent' || newStatus == 'failed') ? null : old.processingStep,
           localPreviewPath: old.localPreviewPath,
+          groupId: old.groupId,
         ));
   }
 
@@ -187,6 +193,7 @@ class NotesStore {
           mediaMacBase64: old.mediaMacBase64, fileName: old.fileName, status: old.status,
           processingStep: step,
           localPreviewPath: old.localPreviewPath,
+          groupId: old.groupId,
         ));
   }
 
@@ -204,6 +211,7 @@ class NotesStore {
           mediaMacBase64: macBase64, fileName: old.fileName, status: old.status,
           processingStep: old.processingStep,
           localPreviewPath: old.localPreviewPath,
+          groupId: old.groupId,
         ));
   }
 }

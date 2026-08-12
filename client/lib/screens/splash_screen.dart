@@ -1,3 +1,4 @@
+import 'package:call_ring_plugin/call_ring_plugin.dart';
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../crypto/key_store.dart';
@@ -36,6 +37,7 @@ class _SplashScreenState extends State<SplashScreen> {
     if (!valid!) {
       await Session.clearToken();
       await KeyStore.clearAll();
+      await CallRingPlugin.clearCredentials();
       _goTo(const WelcomeScreen());
       return;
     }

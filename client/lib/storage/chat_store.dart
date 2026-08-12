@@ -19,6 +19,15 @@ class StoredMessage {
   final String status;
   final String? processingStep;
   final String? localPreviewPath;
+  final String? groupId;
+
+  /// Запись о звонке — чисто локальная (звонки не идут через серверную
+  /// доставку сообщений), каждое устройство пишет её на основе того, что
+  /// само наблюдало во время звонка.
+  final bool isCallLog;
+  final String? callDirection; // 'outgoing' | 'incoming'
+  final String? callOutcome; // 'answered' | 'no_answer' | 'missed'
+  final int? callDurationSeconds;
 
   StoredMessage(
     this.messageId,
@@ -37,6 +46,11 @@ class StoredMessage {
     this.status = 'sent',
     this.processingStep,
     this.localPreviewPath,
+    this.groupId,
+    this.isCallLog = false,
+    this.callDirection,
+    this.callOutcome,
+    this.callDurationSeconds,
   });
 
   Map<String, dynamic> toJson() => {
@@ -56,6 +70,11 @@ class StoredMessage {
         'status': status,
         'step': processingStep,
         'local_preview': localPreviewPath,
+        'group_id': groupId,
+        'is_call_log': isCallLog,
+        'call_direction': callDirection,
+        'call_outcome': callOutcome,
+        'call_duration': callDurationSeconds,
       };
 
   static StoredMessage fromJson(Map<String, dynamic> j) => StoredMessage(
@@ -75,6 +94,11 @@ class StoredMessage {
         status: j['status'] as String? ?? 'sent',
         processingStep: j['step'] as String?,
         localPreviewPath: j['local_preview'] as String?,
+        groupId: j['group_id'] as String?,
+        isCallLog: j['is_call_log'] as bool? ?? false,
+        callDirection: j['call_direction'] as String?,
+        callOutcome: j['call_outcome'] as String?,
+        callDurationSeconds: j['call_duration'] as int?,
       );
 }
 
@@ -134,6 +158,66 @@ class ChatStore {
     );
   }
 
+  /// Добавляет сразу несколько сообщений одной записью в хранилище и
+  /// ОДНИМ уведомлением об изменениях — используется для группы файлов,
+  /// которая должна появиться в чате разом, а не по одному сообщению.
+  static Future<void> addMessages(
+    String peerLogin,
+    List<StoredMessage> newMessages, {
+    String? accountId,
+    bool incrementUnread = false,
+  }) async {
+    if (newMessages.isEmpty) return;
+    final messages = await getMessages(peerLogin);
+    messages.addAll(newMessages);
+    await _storage.write(
+      key: _messagesKey(peerLogin),
+      value: jsonEncode(messages.map((m) => m.toJson()).toList()),
+    );
+    final last = newMessages.reduce((a, b) => a.timestamp >= b.timestamp ? a : b);
+    await _touchPeer(
+      peerLogin,
+      last.isMedia ? (last.isFile ? (last.fileName ?? '📎 Файл') : '📷 Фото') : last.text,
+      last.timestamp,
+      accountId: accountId,
+      incrementUnread: incrementUnread,
+    );
+  }
+
+  /// Пишет запись о завершённом звонке — тем же путём, что и обычное
+  /// сообщение (одна запись + одно уведомление об изменениях).
+  static Future<void> addCallLog(
+    String peerLogin, {
+    required String direction,
+    required String outcome,
+    required int timestamp,
+    int? durationSeconds,
+    String? accountId,
+    bool incrementUnread = false,
+  }) {
+    final id = 'call_${timestamp}_$direction';
+    // text используется только как превью последнего сообщения в списке
+    // чатов (ChatSummary) — сам пузырь звонка в чате рендерится отдельно
+    // и это поле не читает.
+    final preview = switch (outcome) {
+      'answered' => '📞 Звонок',
+      'missed' => '📞 Пропущенный звонок',
+      _ => '📞 Не отвечает',
+    };
+    return addMessage(
+      peerLogin,
+      StoredMessage(
+        id, preview, direction == 'outgoing', timestamp,
+        isCallLog: true,
+        callDirection: direction,
+        callOutcome: outcome,
+        callDurationSeconds: durationSeconds,
+      ),
+      accountId: accountId,
+      incrementUnread: incrementUnread,
+    );
+  }
+
   static Future<void> _replace(String peerLogin, String messageId, StoredMessage Function(StoredMessage old) update) async {
     final messages = await getMessages(peerLogin);
     final index = messages.indexWhere((m) => m.messageId == messageId);
@@ -154,6 +238,7 @@ class ChatStore {
           mediaMacBase64: old.mediaMacBase64, fileName: old.fileName, status: newStatus,
           processingStep: (newStatus == 'sent' || newStatus == 'failed' || newStatus == 'queued') ? null : old.processingStep,
           localPreviewPath: old.localPreviewPath,
+          groupId: old.groupId,
         ));
   }
 
@@ -165,6 +250,7 @@ class ChatStore {
           mediaMacBase64: old.mediaMacBase64, fileName: old.fileName, status: old.status,
           processingStep: step,
           localPreviewPath: old.localPreviewPath,
+          groupId: old.groupId,
         ));
   }
 
@@ -186,6 +272,7 @@ class ChatStore {
           mediaMacBase64: macBase64, fileName: old.fileName, status: old.status,
           processingStep: old.processingStep,
           localPreviewPath: old.localPreviewPath,
+          groupId: old.groupId,
         ));
   }
 

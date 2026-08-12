@@ -11,6 +11,7 @@ import '../crypto/media_cipher.dart';
 import '../crypto/streaming_file_cipher.dart';
 import '../models/picked_media.dart';
 import '../screens/camera_capture_screen.dart';
+import '../screens/media_viewer_screen.dart';
 import '../services/keyboard_height_store.dart';
 import '../session.dart';
 import '../storage/media_cache.dart';
@@ -134,8 +135,13 @@ class _NotesScreenState extends State<NotesScreen> {
   }
 
   Future<void> _sendPickedMedia(List<PickedMedia> media, String caption) async {
-    if (caption.isNotEmpty) {
-      await NotesStore.addText(caption);
+    final hasCaption = caption.isNotEmpty;
+    final groupId = (media.length + (hasCaption ? 1 : 0)) > 1
+        ? 'grp_${DateTime.now().microsecondsSinceEpoch}'
+        : null;
+
+    if (hasCaption) {
+      await NotesStore.addText(caption, groupId: groupId);
     }
 
     for (var i = 0; i < media.length; i++) {
@@ -166,6 +172,7 @@ class _NotesScreenState extends State<NotesScreen> {
         status: 'sending',
         processingStep: 'В очереди',
         localPreviewPath: item.isVideo ? null : item.file.path,
+        groupId: groupId,
       ));
 
       await _uploadNoteMedia(item, id, size, fileName, chunked);
@@ -296,7 +303,7 @@ class _NotesScreenState extends State<NotesScreen> {
     }
   }
 
-  Widget _buildAttachmentBubble(NoteMessage note) {
+  Widget _buildAttachmentBubble(NoteMessage note, {double size = 220}) {
     if (note.status == 'sending') {
       return Stack(
         children: [
@@ -304,20 +311,20 @@ class _NotesScreenState extends State<NotesScreen> {
             ClipRRect(
               borderRadius: BorderRadius.circular(14),
               child: SizedBox(
-                width: 220,
-                height: 220,
+                width: size,
+                height: size,
                 child: Image.file(File(note.localPreviewPath!), fit: BoxFit.cover),
               ),
             )
           else
             Container(
-              width: 220,
-              height: 220,
+              width: size,
+              height: size,
               decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(14)),
               alignment: Alignment.center,
               child: const Icon(Icons.insert_drive_file, color: Colors.white70, size: 40),
             ),
-          if (note.processingStep != null)
+          if (note.processingStep != null && size >= 150)
             Positioned(
               left: 0,
               right: 0,
@@ -337,6 +344,12 @@ class _NotesScreenState extends State<NotesScreen> {
                   ],
                 ),
               ),
+            )
+          else if (note.processingStep != null)
+            const Positioned(
+              right: 4,
+              bottom: 4,
+              child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
             ),
         ],
       );
@@ -349,8 +362,8 @@ class _NotesScreenState extends State<NotesScreen> {
             ClipRRect(
               borderRadius: BorderRadius.circular(14),
               child: SizedBox(
-                width: 220,
-                height: 220,
+                width: size,
+                height: size,
                 child: Opacity(
                   opacity: 0.5,
                   child: Image.file(File(note.localPreviewPath!), fit: BoxFit.cover),
@@ -359,8 +372,8 @@ class _NotesScreenState extends State<NotesScreen> {
             )
           else
             Container(
-              width: 220,
-              height: 220,
+              width: size,
+              height: size,
               decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(14)),
             ),
           const Center(child: Icon(Icons.error_outline, color: Colors.redAccent, size: 40)),
@@ -370,7 +383,7 @@ class _NotesScreenState extends State<NotesScreen> {
 
     final isLarge = note.fileSize >= _autoDownloadLimitBytes;
     if (!isLarge) {
-      return note.isFile ? _clickableFileRow(note) : _photoPreview(note);
+      return note.isFile ? _clickableFileRow(note, size: size) : _photoPreview(note, size: size);
     }
 
     final existsFuture = _existsChecks.putIfAbsent(note.mediaId!, () => MediaCache.exists(note.mediaId!));
@@ -381,7 +394,7 @@ class _NotesScreenState extends State<NotesScreen> {
           return const SizedBox(height: 40, child: Center(child: CircularProgressIndicator(strokeWidth: 2)));
         }
         if (snapshot.data == true) {
-          return note.isFile ? _clickableFileRow(note) : _photoPreview(note);
+          return note.isFile ? _clickableFileRow(note, size: size) : _photoPreview(note, size: size);
         }
         return _downloadPromptRow(note);
       },
@@ -437,7 +450,19 @@ class _NotesScreenState extends State<NotesScreen> {
     );
   }
 
-  Widget _clickableFileRow(NoteMessage note) {
+  Widget _clickableFileRow(NoteMessage note, {double size = 220}) {
+    if (size < 200) {
+      return InkWell(
+        onTap: () => _openFile(note),
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(10)),
+          alignment: Alignment.center,
+          child: const Icon(Icons.insert_drive_file, color: Colors.white70, size: 32),
+        ),
+      );
+    }
     return InkWell(
       onTap: () => _openFile(note),
       child: Row(
@@ -451,13 +476,37 @@ class _NotesScreenState extends State<NotesScreen> {
     );
   }
 
-  Widget _photoPreview(NoteMessage note) {
-    const double side = 220;
+  /// Список всех фото в заметках (то, что реально может показать
+  /// просмотрщик) в порядке появления — используется и для определения
+  /// стартового индекса, и как набор страниц для листания.
+  List<NoteMessage> _viewablePhotos() => _notes.where((n) => n.isMedia && !n.isFile).toList();
+
+  void _openMediaViewer(NoteMessage note) {
+    final photos = _viewablePhotos();
+    final index = photos.indexWhere((n) => n.id == note.id);
+    if (index == -1) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MediaViewerScreen<NoteMessage>(
+          items: photos,
+          initialIndex: index,
+          resolveBytes: _resolvePhotoBytes,
+        ),
+      ),
+    );
+  }
+
+  Widget _photoPreview(NoteMessage note, {double size = 220}) {
+    final double side = size;
     final cached = _resolvedMedia[note.mediaId!];
     if (cached != null) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: SizedBox(width: side, height: side, child: Image.memory(cached, fit: BoxFit.cover, cacheWidth: 440)),
+      return GestureDetector(
+        onTap: () => _openMediaViewer(note),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: SizedBox(width: side, height: side, child: Image.memory(cached, fit: BoxFit.cover, cacheWidth: (side * 2).round())),
+        ),
       );
     }
     final future = _mediaFutures.putIfAbsent(note.mediaId!, () => _resolvePhotoBytes(note));
@@ -465,15 +514,18 @@ class _NotesScreenState extends State<NotesScreen> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const SizedBox(width: side, height: side, child: Center(child: CircularProgressIndicator()));
+          return SizedBox(width: side, height: side, child: const Center(child: CircularProgressIndicator()));
         }
         if (snapshot.hasError || snapshot.data == null) {
-          return const SizedBox(width: side, height: side, child: Center(child: Icon(Icons.broken_image, color: Colors.red)));
+          return SizedBox(width: side, height: side, child: const Center(child: Icon(Icons.broken_image, color: Colors.red)));
         }
         _resolvedMedia[note.mediaId!] = snapshot.data!;
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: SizedBox(width: side, height: side, child: Image.memory(snapshot.data!, fit: BoxFit.cover, cacheWidth: 440)),
+        return GestureDetector(
+          onTap: () => _openMediaViewer(note),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: SizedBox(width: side, height: side, child: Image.memory(snapshot.data!, fit: BoxFit.cover, cacheWidth: (side * 2).round())),
+          ),
         );
       },
     );
@@ -494,6 +546,130 @@ class _NotesScreenState extends State<NotesScreen> {
     if (bytes < 1024) return '$bytes Б';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} КБ';
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} МБ';
+  }
+
+  /// Группирует подряд идущие заметки с одинаковым непустым groupId —
+  /// такие заметки были добавлены одним действием (несколько файлов
+  /// и/или файлы с общей подписью) и рендерятся как один визуальный
+  /// альбом, хотя по факту остаются разными заметками.
+  List<List<NoteMessage>> _groupedNotes() {
+    final result = <List<NoteMessage>>[];
+    var i = 0;
+    while (i < _notes.length) {
+      final groupId = _notes[i].groupId;
+      if (groupId == null) {
+        result.add([_notes[i]]);
+        i++;
+        continue;
+      }
+      final cluster = <NoteMessage>[];
+      while (i < _notes.length && _notes[i].groupId == groupId) {
+        cluster.add(_notes[i]);
+        i++;
+      }
+      result.add(cluster);
+    }
+    return result;
+  }
+
+  Widget _buildMediaGrid(List<NoteMessage> mediaNotes) {
+    if (mediaNotes.length == 1) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: _buildAttachmentBubble(mediaNotes.first, size: 180),
+      );
+    }
+    const spacing = 3.0;
+    final columns = mediaNotes.length >= 3 ? 3 : 2;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = constraints.maxWidth.isFinite ? constraints.maxWidth : columns * 110.0;
+        final tileSize = ((availableWidth - spacing * (columns - 1)) / columns).clamp(70.0, 130.0);
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: mediaNotes
+              .map((n) => ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: _buildAttachmentBubble(n, size: tileSize),
+                  ))
+              .toList(),
+        );
+      },
+    );
+  }
+
+  Widget _buildGroupBubble(List<NoteMessage> group) {
+    final mediaNotes = group.where((n) => n.isMedia).toList();
+    final textNotes = group.where((n) => !n.isMedia).toList();
+    final last = group.reduce((a, b) => a.timestamp >= b.timestamp ? a : b);
+    final maxWidth = MediaQuery.of(context).size.width * 0.72;
+
+    return KeyedSubtree(
+      key: ValueKey(group.first.groupId),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(6),
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          decoration: BoxDecoration(color: AppColors.primary, borderRadius: BorderRadius.circular(14)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (mediaNotes.isNotEmpty) _buildMediaGrid(mediaNotes),
+                  if (textNotes.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
+                      child: Text(textNotes.first.text, style: const TextStyle(color: Colors.white)),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(formatChatTime(last.timestamp), style: const TextStyle(color: Colors.white70, fontSize: 10)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoteBubble(NoteMessage note) {
+    return KeyedSubtree(
+      key: ValueKey(note.id),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(color: AppColors.primary, borderRadius: BorderRadius.circular(14)),
+          child: note.isMedia
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildAttachmentBubble(note),
+                    const SizedBox(height: 4),
+                    Text(formatChatTime(note.timestamp), style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                  ],
+                )
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Flexible(child: Text(note.text, style: const TextStyle(color: Colors.white))),
+                    const SizedBox(width: 6),
+                    Text(formatChatTime(note.timestamp), style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                  ],
+                ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -518,8 +694,22 @@ class _NotesScreenState extends State<NotesScreen> {
       });
     }
 
+    // Once realInset catches up to our held target — the real keyboard has
+    // fully replaced the emoji panel we were holding space for — release the
+    // hold and go back to live-tracking realInset directly.
+    if (_switchingMode && !_emojiMode && realInset >= _targetReserve - 4) {
+      _switchingMode = false;
+    }
+
+    // Резерв места либо ЖИВЬЁМ зеркалит настоящую клавиатуру (обычная печать,
+    // системный back и т.п. — realInset уже несёт в себе анимацию самой ОС,
+    // повторно анимировать поверх неё не нужно и вредно — именно это давало
+    // эффект "резинки"/отставания), либо, во время наших СОБСТВЕННЫХ
+    // переключений на эмодзи-панель и обратно (когда реальной анимации ОС,
+    // на которую можно опереться, нет), держится на зафиксированной высоте.
+    final isLiveTracking = !_emojiMode && !_switchingMode;
     final emojiPanelOnlyVisible = !keyboardVisible && _emojiMode;
-    final reserved = realInset > _targetReserve ? realInset : _targetReserve;
+    final reserved = isLiveTracking ? realInset : _targetReserve;
 
     return PopScope(
       canPop: !emojiPanelOnlyVisible,
@@ -537,41 +727,18 @@ class _NotesScreenState extends State<NotesScreen> {
         body: Column(
           children: [
             Expanded(
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.all(16),
-                itemCount: _notes.length,
-                itemBuilder: (context, index) {
-                  final note = _notes[index];
-                  return Align(
-                    alignment: Alignment.centerRight,
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(vertical: 4),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      decoration: BoxDecoration(color: AppColors.primary, borderRadius: BorderRadius.circular(14)),
-                      child: note.isMedia
-                          ? Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                _buildAttachmentBubble(note),
-                                const SizedBox(height: 4),
-                                Text(formatChatTime(note.timestamp), style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                              ],
-                            )
-                          : Row(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Flexible(child: Text(note.text, style: const TextStyle(color: Colors.white))),
-                                const SizedBox(width: 6),
-                                Text(formatChatTime(note.timestamp), style: const TextStyle(color: Colors.white70, fontSize: 10)),
-                              ],
-                            ),
-                    ),
-                  );
-                },
-              ),
+              child: Builder(builder: (context) {
+                final groups = _groupedNotes();
+                return ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(16),
+                  itemCount: groups.length,
+                  itemBuilder: (context, index) {
+                    final group = groups[index];
+                    return group.length == 1 ? _buildNoteBubble(group.first) : _buildGroupBubble(group);
+                  },
+                );
+              }),
             ),
             SafeArea(
               top: false,
@@ -590,6 +757,7 @@ class _NotesScreenState extends State<NotesScreen> {
                         icon: Icon(emojiPanelOnlyVisible ? Icons.keyboard : Icons.emoji_emotions_outlined, color: AppColors.textMuted),
                         onPressed: () {
                           if (emojiPanelOnlyVisible) {
+                            _switchingMode = true;
                             setState(() => _emojiMode = false);
                             _textFocusNode.requestFocus();
                           } else {
@@ -651,7 +819,7 @@ class _NotesScreenState extends State<NotesScreen> {
               ),
             ),
             AnimatedContainer(
-              duration: const Duration(milliseconds: 220),
+              duration: isLiveTracking ? Duration.zero : const Duration(milliseconds: 220),
               curve: Curves.easeOut,
               height: reserved,
               color: AppColors.surface,

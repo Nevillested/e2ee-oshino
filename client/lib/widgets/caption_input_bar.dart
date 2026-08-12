@@ -73,11 +73,22 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
       });
     }
 
+    // Once realInset catches up to our held target — the real keyboard has
+    // fully replaced the emoji panel we were holding space for — release the
+    // hold and go back to live-tracking realInset directly.
+    if (_switchingMode && !_emojiMode && realInset >= _targetReserve - 4) {
+      _switchingMode = false;
+    }
+
+    // Резерв места либо ЖИВЬЁМ зеркалит настоящую клавиатуру (обычная печать,
+    // системный back и т.п. — realInset уже несёт в себе анимацию самой ОС,
+    // повторно анимировать поверх неё не нужно и вредно — именно это давало
+    // эффект "резинки"/отставания), либо, во время наших СОБСТВЕННЫХ
+    // переключений на эмодзи-панель и обратно (когда реальной анимации ОС,
+    // на которую можно опереться, нет), держится на зафиксированной высоте.
+    final isLiveTracking = !_emojiMode && !_switchingMode;
     final emojiPanelOnlyVisible = !keyboardVisible && _emojiMode;
-    // max, а не прямое следование realInset — гарантирует, что во время
-    // ПЕРЕХОДА (клавиатура ещё анимированно закрывается) высота никогда
-    // не проседает ниже цели, к которой мы стремимся.
-    final reserved = realInset > _targetReserve ? realInset : _targetReserve;
+    final reserved = isLiveTracking ? realInset : _targetReserve;
 
     return PopScope(
       canPop: !emojiPanelOnlyVisible,
@@ -112,6 +123,7 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
                     ),
                     onPressed: () {
                       if (emojiPanelOnlyVisible) {
+                        _switchingMode = true;
                         setState(() => _emojiMode = false);
                         _focusNode.requestFocus();
                       } else {
@@ -155,7 +167,7 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
             ),
           ),
           AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
+            duration: isLiveTracking ? Duration.zero : const Duration(milliseconds: 220),
             curve: Curves.easeOut,
             height: reserved,
             color: AppColors.surface,

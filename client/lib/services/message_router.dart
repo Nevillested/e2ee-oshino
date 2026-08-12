@@ -66,7 +66,7 @@ class MessageRouter {
       if (inner.type == 'text') {
         await ChatStore.addMessage(
           ownerInfo.login,
-          StoredMessage(inner.messageId, inner.body, false, inner.sentAt),
+          StoredMessage(inner.messageId, inner.body, false, inner.sentAt, groupId: inner.groupId),
           accountId: ownerInfo.accountId,
           incrementUnread: !chatIsOpen,
         );
@@ -93,7 +93,59 @@ class MessageRouter {
       mediaNonceBase64: mediaInfo['nonce'] as String?,
       mediaMacBase64: mediaInfo['mac'] as String?,
       fileName: fileName,
+      groupId: inner.groupId,
     ),
+    accountId: ownerInfo.accountId,
+    incrementUnread: !chatIsOpen,
+  );
+} else if (inner.type == 'media_group') {
+  final groupInfo = jsonDecode(inner.body) as Map<String, dynamic>;
+  final caption = groupInfo['caption'] as String?;
+  final textMessageId = groupInfo['text_message_id'] as String?;
+  final filesRaw = (groupInfo['files'] as List<dynamic>).cast<Map<String, dynamic>>();
+
+  final newMessages = <StoredMessage>[];
+  if (caption != null && caption.isNotEmpty && textMessageId != null) {
+    newMessages.add(StoredMessage(textMessageId, caption, false, inner.sentAt, groupId: inner.groupId));
+  }
+  for (final f in filesRaw) {
+    final isFile = f['is_file'] as bool? ?? false;
+    final fileName = f['file_name'] as String;
+    newMessages.add(StoredMessage(
+      f['message_id'] as String,
+      isFile ? fileName : '📷 Фото',
+      false,
+      inner.sentAt,
+      isMedia: true,
+      isFile: isFile,
+      fileSize: f['file_size'] as int? ?? 0,
+      chunked: f['chunked'] as bool? ?? false,
+      mediaId: f['media_id'] as String,
+      mediaKeyBase64: f['key'] as String,
+      mediaNonceBase64: f['nonce'] as String?,
+      mediaMacBase64: f['mac'] as String?,
+      fileName: fileName,
+      groupId: inner.groupId,
+    ));
+  }
+
+  await ChatStore.addMessages(
+    ownerInfo.login,
+    newMessages,
+    accountId: ownerInfo.accountId,
+    incrementUnread: !chatIsOpen,
+  );
+} else if (inner.type == 'call_missed') {
+  // Собеседник звонил, пока мы были офлайн, и call_offer до нас в
+  // реальном времени не дошёл — это подстраховочное уведомление, дошедшее
+  // через обычную очередь offline-доставки, а не через сигналы звонка.
+  final callInfo = jsonDecode(inner.body) as Map<String, dynamic>;
+  final calledAt = callInfo['called_at'] as int? ?? inner.sentAt;
+  await ChatStore.addCallLog(
+    ownerInfo.login,
+    direction: 'incoming',
+    outcome: 'missed',
+    timestamp: calledAt,
     accountId: ownerInfo.accountId,
     incrementUnread: !chatIsOpen,
   );

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../config.dart';
@@ -66,6 +67,17 @@ Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
       headers: {'Authorization': 'Bearer $_token'},
     );
 
+    // connect() возвращает канал сразу, а само подключение (включая DNS)
+    // происходит асинхронно — если сети нет ("Failed host lookup" и т.п.),
+    // ошибка приходит именно через .ready и, если её не поймать явно, летит
+    // как необработанное исключение (просто шум в логах, а не крэш —
+    // .listen(onError:) ниже слушает уже установленное соединение и здесь
+    // не участвует). Ловим и тихо уходим в обычный цикл переподключения.
+    _channel!.ready.catchError((Object e) {
+      debugPrint('WebSocketService: не удалось подключиться ($e), повтор через reconnect');
+      _scheduleReconnect();
+    });
+
     flushOutbox();
 
     _subscription = _channel!.stream.listen(
@@ -75,6 +87,16 @@ Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
           final type = outer['Type'] as String?;
 
           if (type != null && type.startsWith('call_')) {
+            // Только call_offer приходит с DeliveryId (сервер ждёт от нас
+            // подтверждения именно для него — если не дождётся, посчитает
+            // соединение "зомби" и обработает как офлайн, с push и очередью
+            // отложенного звонка). Для остальных call_* кадров DeliveryId
+            // нет, и это просто безопасный no-op.
+            final deliveryId = outer['DeliveryId'];
+            if (deliveryId is String && deliveryId.isNotEmpty) {
+              _channel?.sink.add(jsonEncode({'Type': 'ack', 'DeliveryId': deliveryId}));
+            }
+
             final ciphertext = outer['Ciphertext'] as String?;
             final payload = ciphertext != null
                 ? jsonDecode(ciphertext) as Map<String, dynamic>

@@ -29,19 +29,7 @@ class SoundService {
     await _loopPlayer.play(AssetSource('sounds/ringback.mp3'));
   }
 
-  static Future<void> startRingtone() async {
-    // У принимающего микрофон ещё не открыт — можно проигрывать обычным
-    // способом, по умолчанию.
-    await _loopPlayer.setReleaseMode(ReleaseMode.loop);
-    await _loopPlayer.setVolume(1.0);
-    await _loopPlayer.play(AssetSource('sounds/ringtone.mp3'));
-  }
-
   static Future<void> stopRingback() async {
-    await _loopPlayer.stop();
-  }
-
-  static Future<void> stopRingtone() async {
     await _loopPlayer.stop();
   }
 

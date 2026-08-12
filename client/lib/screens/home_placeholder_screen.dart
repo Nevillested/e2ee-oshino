@@ -1,8 +1,11 @@
+import 'package:call_ring_plugin/call_ring_plugin.dart';
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../crypto/key_store.dart';
 import '../services/call_service.dart';
 import '../services/message_router.dart';
+import '../services/pip_service.dart';
+import '../services/push_service.dart';
 import '../services/websocket_service.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
@@ -51,8 +54,21 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
     MessageRouter.start();
     ChatStore.changes.listen((_) => _refreshChats());
     NotesStore.changes.listen((_) => _refreshChats());
+    PushService.init();
 
     CallService.instance.startListening();
+
+    // Приложение могло быть запущено именно кнопкой "Ответить" из
+    // уведомления о звонке (см. CallRingService) — тогда ближайший (или
+    // уже идущий) входящий звонок нужно принять автоматически.
+    if (await PipService.consumeAutoAccept()) {
+      CallService.instance.requestAutoAcceptNextCall();
+    }
+
+    // Автопринятые звонки (кнопка "Ответить" в push-уведомлении) CallService
+    // открывает сам, напрямую через глобальный rootNavigatorKey — этот
+    // листенер эмитится только для звонков, требующих ручного выбора
+    // "принять/отклонить".
     CallService.instance.incomingCalls.listen((info) async {
       final currentToken = await Session.getToken();
       String peerLogin = 'Неизвестный';
@@ -60,17 +76,17 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
         final owner = await ApiClient().getDeviceOwnerInfo(currentToken, info.peerDeviceId);
         if (owner != null) peerLogin = owner.login;
       }
-      if (mounted) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => IncomingCallScreen(peerLogin: peerLogin)),
-        );
-      }
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => IncomingCallScreen(peerLogin: peerLogin)),
+      );
     });
 
     _webSocketService.sessionInvalidated.listen((_) async {
       await Session.clearToken();
       await KeyStore.clearAll();
+      await CallRingPlugin.clearCredentials();
       if (mounted) {
         Navigator.pushAndRemoveUntil(
           context,

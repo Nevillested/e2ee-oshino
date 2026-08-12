@@ -1,3 +1,4 @@
+import 'package:call_ring_plugin/call_ring_plugin.dart';
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../crypto/key_store.dart';
@@ -10,6 +11,7 @@ Future<void> _wipeLocalDataAndGoToWelcome(BuildContext context) async {
   WebSocketService.instance.disconnect();
   await Session.clearToken();
   await KeyStore.clearAll();
+  await CallRingPlugin.clearCredentials();
   if (!context.mounted) return;
   Navigator.pushAndRemoveUntil(
     context,

@@ -1,0 +1,23 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  package="com.oshinobu.call_ring_plugin">
+
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <application>
+        <service
+            android:name="com.oshinobu.call_ring_plugin.CallRingService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <receiver
+            android:name="com.oshinobu.call_ring_plugin.CallDeclineReceiver"
+            android:exported="false" />
+        <receiver
+            android:name="com.oshinobu.call_ring_plugin.EndCallReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

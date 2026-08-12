@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/luck/**)",
+      "Bash(flutter --version --machine)",
+      "Bash(grep -n \"onPopInvokedWithPop\\\\|class PopScope\" /home/luck/flutter/packages/flutter/lib/src/widgets/navigator.dart | head -10)",
+      "Read(//home/luck/flutter/packages/flutter/lib/src/widgets/**)",
+      "Bash(grep -rln \"class PopScope\" /home/luck/flutter/packages/flutter/lib/src/ 2>/dev/null)",
+      "Read(//home/luck/flutter/packages/flutter/lib/src/**)",
+      "Bash(grep -n \"onPopInvoked\\\\|canPop\" /home/luck/flutter/packages/flutter/lib/src/widgets/pop_scope.dart | head -20)",
+      "Bash(find /home/luck -maxdepth 6 -iname \"*.pub-cache*\" -o -iname \"pub-cache\" 2>/dev/null | head -5)",
+      "Bash(find /home/luck/.pub-cache -maxdepth 3 -iname \"flutter_local_notifications*\" 2>/dev/null)",
+      "Read(//home/luck/.pub-cache/**)",
+      "Bash(git -C /home/luck/Documents/Github/e2ee-oshino/client status --porcelain android/app/src/main/res)",
+      "Bash(git -C /home/luck/Documents/Github/e2ee-oshino/client diff pubspec.yaml)",
+      "Bash(./gradlew :app:compileDebugKotlin :call_ring_plugin:compileDebugKotlin)",
+      "Bash(./gradlew :app:compileDebugKotlin)",
+      "Bash(adb -s 192.168.40.4:45047 logcat -d -s MainActivity:D CallRingService:D EndCallReceiver:D OngoingCallNotifier:D CallRingPlugin:D flutter:D *:S)"
+    ],
+    "additionalDirectories": [
+      "/home/luck/Documents/Github/e2ee-oshino/server"
+    ]
+  }
+}

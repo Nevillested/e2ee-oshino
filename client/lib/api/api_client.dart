@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 import '../config.dart';
 import 'dart:typed_data';
 import 'package:dio/dio.dart' as dio;
@@ -364,6 +365,27 @@ Future<Map<String, dynamic>?> getTurnCredentials(String token) async {
     return jsonDecode(response.body) as Map<String, dynamic>;
   } catch (_) {
     return null;
+  }
+}
+
+/// POST /push/register — привязывает FCM-токен к устройству, чтобы
+/// сервер мог разбудить его push-ом, когда WebSocket не подключён.
+Future<bool> registerPushToken(String token, String deviceId, String fcmToken) async {
+  try {
+    final response = await http
+        .post(
+          Uri.parse('${ApiConfig.baseUrl}/push/register'),
+          headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+          body: jsonEncode({'device_id': deviceId, 'fcm_token': fcmToken}),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      debugPrint('registerPushToken: HTTP ${response.statusCode}: ${response.body}');
+    }
+    return response.statusCode == 200;
+  } catch (e) {
+    debugPrint('registerPushToken: exception: $e');
+    return false;
   }
 }
 
