@@ -59,10 +59,18 @@ class CallRingPlugin {
   /// callId нужен для кнопки "Отклонить" в уведомлении — с его помощью
   /// сервер понимает, какой именно отложенный звонок отклоняют, и может
   /// мгновенно сообщить об этом звонящему (см. CallDeclineReceiver).
-  static Future<void> startRinging({String? callId}) async {
+  /// callerDeviceId нужен на случай, если звонок отклонят прямо оттуда,
+  /// пока приложение полностью закрыто — тогда некому сразу записать его
+  /// в локальную историю чата (см. PendingMissedCallStore/
+  /// consumePendingMissedCall), и это единственный момент, когда родная
+  /// сторона вообще узнаёт, от кого был звонок.
+  static Future<void> startRinging({String? callId, String? callerDeviceId}) async {
     _ensureHandler();
     try {
-      await _channel.invokeMethod('startRinging', {'callId': callId});
+      await _channel.invokeMethod('startRinging', {
+        'callId': callId,
+        'callerDeviceId': callerDeviceId,
+      });
     } catch (_) {
       // Не критично — в худшем случае просто не будет полноэкранного звонка.
     }
@@ -135,4 +143,32 @@ class CallRingPlugin {
       debugPrint('CallRingPlugin: hideOngoingCallNotification failed: $e');
     }
   }
+
+  /// Однократно читает и стирает отложенный пропущенный звонок — если
+  /// пользователь отклонил звонок кнопкой в уведомлении, ПОКА приложение
+  /// было полностью закрыто (см. PendingMissedCallStore.kt). Вызывать
+  /// один раз при холодном старте, чтобы дописать его в локальную историю
+  /// чата — до этого момента о нём просто негде было записать.
+  static Future<PendingMissedCall?> consumePendingMissedCall() async {
+    _ensureHandler();
+    try {
+      final result = await _channel.invokeMethod('consumePendingMissedCall');
+      if (result == null) return null;
+      final map = (result as Map).cast<String, dynamic>();
+      final callerDeviceId = map['callerDeviceId'] as String?;
+      final timestamp = map['timestamp'] as int?;
+      if (callerDeviceId == null || timestamp == null) return null;
+      debugPrint('CallRingPlugin: consumePendingMissedCall -> $callerDeviceId, $timestamp');
+      return PendingMissedCall(callerDeviceId: callerDeviceId, timestamp: timestamp);
+    } catch (e) {
+      debugPrint('CallRingPlugin: consumePendingMissedCall failed: $e');
+      return null;
+    }
+  }
+}
+
+class PendingMissedCall {
+  final String callerDeviceId;
+  final int timestamp;
+  PendingMissedCall({required this.callerDeviceId, required this.timestamp});
 }

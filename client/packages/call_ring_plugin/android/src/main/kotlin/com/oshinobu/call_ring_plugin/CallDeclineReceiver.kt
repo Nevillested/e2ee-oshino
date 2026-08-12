@@ -71,6 +71,20 @@ class CallDeclineReceiver : BroadcastReceiver() {
             return
         }
 
+        // Записываем заметку "от кого был звонок" ЛОКАЛЬНО и сразу, до
+        // сетевого запроса и независимо от его исхода — это отдельная,
+        // чисто локальная задача (при следующем запуске приложение само
+        // допишет пропущенный звонок в историю чата, см.
+        // PendingMissedCallStore/consumePendingMissedCall), сетевой сбой
+        // уведомления звонящего на неё никак не должен влиять.
+        val callerDeviceId = intent.getStringExtra(CallRingService.EXTRA_CALLER_DEVICE_ID)
+        if (callerDeviceId != null) {
+            PendingMissedCallStore.save(context, callerDeviceId, System.currentTimeMillis())
+            Log.d(TAG, "onReceive: сохранил отложенный пропущенный звонок от $callerDeviceId")
+        } else {
+            Log.e(TAG, "onReceive: нет callerDeviceId — пропущенный звонок не будет записан в историю")
+        }
+
         val creds = CallCredentials.read(context)
         if (creds == null) {
             Log.e(TAG, "decline: нет сохранённых учётных данных, звонящий узнает по таймауту")

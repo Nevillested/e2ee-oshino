@@ -29,6 +29,19 @@ class StoredMessage {
   final String? callOutcome; // 'answered' | 'no_answer' | 'missed'
   final int? callDurationSeconds;
 
+  /// Ответ на другое сообщение — превью снимается в момент отправки (см.
+  /// InnerMessage.text/.media), поэтому переживает последующее
+  /// редактирование/удаление оригинала.
+  final String? replyToMessageId;
+  final String? replyToPreview;
+
+  final bool edited;
+
+  /// До 2 реакций на сообщение — это 1:1 переписка, реагировать может
+  /// только каждая из двух сторон, по одной реакции на человека.
+  final String? myReaction;
+  final String? peerReaction;
+
   StoredMessage(
     this.messageId,
     this.text,
@@ -51,7 +64,67 @@ class StoredMessage {
     this.callDirection,
     this.callOutcome,
     this.callDurationSeconds,
+    this.replyToMessageId,
+    this.replyToPreview,
+    this.edited = false,
+    this.myReaction,
+    this.peerReaction,
   });
+
+  /// Единая точка "поменять несколько полей, остальное скопировать как
+  /// есть" — раньше каждое обновление (updateMessageStatus и т.п.) вручную
+  /// пересобирало StoredMessage, перечисляя ВСЕ поля по отдельности; любое
+  /// новое поле, забытое хоть в одном таком месте, тихо обнулялось бы при
+  /// первом же вызове этой функции. copyWith исключает этот класс ошибок.
+  ///
+  /// Поля со значением null-по-умолчанию, которые нужно уметь явно
+  /// СБРОСИТЬ в null (реакции, превью ответа), принимают отдельный
+  /// clearX-флаг — просто передать null в обычный параметр означало бы
+  /// "не меняй", а не "сотри".
+  StoredMessage copyWith({
+    String? text,
+    String? status,
+    String? processingStep,
+    bool clearProcessingStep = false,
+    String? mediaId,
+    String? mediaKeyBase64,
+    String? mediaNonceBase64,
+    String? mediaMacBase64,
+    bool? edited,
+    String? myReaction,
+    bool clearMyReaction = false,
+    String? peerReaction,
+    bool clearPeerReaction = false,
+  }) {
+    return StoredMessage(
+      messageId,
+      text ?? this.text,
+      isMine,
+      timestamp,
+      isMedia: isMedia,
+      isFile: isFile,
+      fileSize: fileSize,
+      chunked: chunked,
+      mediaId: mediaId ?? this.mediaId,
+      mediaKeyBase64: mediaKeyBase64 ?? this.mediaKeyBase64,
+      mediaNonceBase64: mediaNonceBase64 ?? this.mediaNonceBase64,
+      mediaMacBase64: mediaMacBase64 ?? this.mediaMacBase64,
+      fileName: fileName,
+      status: status ?? this.status,
+      processingStep: clearProcessingStep ? null : (processingStep ?? this.processingStep),
+      localPreviewPath: localPreviewPath,
+      groupId: groupId,
+      isCallLog: isCallLog,
+      callDirection: callDirection,
+      callOutcome: callOutcome,
+      callDurationSeconds: callDurationSeconds,
+      replyToMessageId: replyToMessageId,
+      replyToPreview: replyToPreview,
+      edited: edited ?? this.edited,
+      myReaction: clearMyReaction ? null : (myReaction ?? this.myReaction),
+      peerReaction: clearPeerReaction ? null : (peerReaction ?? this.peerReaction),
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'id': messageId,
@@ -75,6 +148,11 @@ class StoredMessage {
         'call_direction': callDirection,
         'call_outcome': callOutcome,
         'call_duration': callDurationSeconds,
+        'reply_to_id': replyToMessageId,
+        'reply_to_preview': replyToPreview,
+        'edited': edited,
+        'my_reaction': myReaction,
+        'peer_reaction': peerReaction,
       };
 
   static StoredMessage fromJson(Map<String, dynamic> j) => StoredMessage(
@@ -99,6 +177,11 @@ class StoredMessage {
         callDirection: j['call_direction'] as String?,
         callOutcome: j['call_outcome'] as String?,
         callDurationSeconds: j['call_duration'] as int?,
+        replyToMessageId: j['reply_to_id'] as String?,
+        replyToPreview: j['reply_to_preview'] as String?,
+        edited: j['edited'] as bool? ?? false,
+        myReaction: j['my_reaction'] as String?,
+        peerReaction: j['peer_reaction'] as String?,
       );
 }
 
@@ -110,6 +193,7 @@ class ChatSummary {
   int lastTimestamp;
   bool isDeleted;
   int unreadCount;
+  String? pinnedMessageId;
 
   ChatSummary(
     this.peerLogin,
@@ -119,6 +203,7 @@ class ChatSummary {
     this.lastKnownDeviceId,
     this.isDeleted = false,
     this.unreadCount = 0,
+    this.pinnedMessageId,
   });
 }
 
@@ -137,6 +222,13 @@ class ChatStore {
     return list.map((e) => StoredMessage.fromJson(e as Map<String, dynamic>)).toList();
   }
 
+  static Future<void> _writeMessages(String peerLogin, List<StoredMessage> messages) {
+    return _storage.write(
+      key: _messagesKey(peerLogin),
+      value: jsonEncode(messages.map((m) => m.toJson()).toList()),
+    );
+  }
+
   static Future<void> addMessage(
     String peerLogin,
     StoredMessage message, {
@@ -145,10 +237,7 @@ class ChatStore {
   }) async {
     final messages = await getMessages(peerLogin);
     messages.add(message);
-    await _storage.write(
-      key: _messagesKey(peerLogin),
-      value: jsonEncode(messages.map((m) => m.toJson()).toList()),
-    );
+    await _writeMessages(peerLogin, messages);
     await _touchPeer(
       peerLogin,
       message.text,
@@ -170,10 +259,7 @@ class ChatStore {
     if (newMessages.isEmpty) return;
     final messages = await getMessages(peerLogin);
     messages.addAll(newMessages);
-    await _storage.write(
-      key: _messagesKey(peerLogin),
-      value: jsonEncode(messages.map((m) => m.toJson()).toList()),
-    );
+    await _writeMessages(peerLogin, messages);
     final last = newMessages.reduce((a, b) => a.timestamp >= b.timestamp ? a : b);
     await _touchPeer(
       peerLogin,
@@ -223,35 +309,19 @@ class ChatStore {
     final index = messages.indexWhere((m) => m.messageId == messageId);
     if (index == -1) return;
     messages[index] = update(messages[index]);
-    await _storage.write(
-      key: _messagesKey(peerLogin),
-      value: jsonEncode(messages.map((m) => m.toJson()).toList()),
-    );
+    await _writeMessages(peerLogin, messages);
     _changesController.add(null);
   }
 
   static Future<void> updateMessageStatus(String peerLogin, String messageId, String newStatus) {
-    return _replace(peerLogin, messageId, (old) => StoredMessage(
-          old.messageId, old.text, old.isMine, old.timestamp,
-          isMedia: old.isMedia, isFile: old.isFile, fileSize: old.fileSize, chunked: old.chunked,
-          mediaId: old.mediaId, mediaKeyBase64: old.mediaKeyBase64, mediaNonceBase64: old.mediaNonceBase64,
-          mediaMacBase64: old.mediaMacBase64, fileName: old.fileName, status: newStatus,
-          processingStep: (newStatus == 'sent' || newStatus == 'failed' || newStatus == 'queued') ? null : old.processingStep,
-          localPreviewPath: old.localPreviewPath,
-          groupId: old.groupId,
+    return _replace(peerLogin, messageId, (old) => old.copyWith(
+          status: newStatus,
+          clearProcessingStep: newStatus == 'sent' || newStatus == 'failed' || newStatus == 'queued',
         ));
   }
 
   static Future<void> updateProcessingStep(String peerLogin, String messageId, String step) {
-    return _replace(peerLogin, messageId, (old) => StoredMessage(
-          old.messageId, old.text, old.isMine, old.timestamp,
-          isMedia: old.isMedia, isFile: old.isFile, fileSize: old.fileSize, chunked: old.chunked,
-          mediaId: old.mediaId, mediaKeyBase64: old.mediaKeyBase64, mediaNonceBase64: old.mediaNonceBase64,
-          mediaMacBase64: old.mediaMacBase64, fileName: old.fileName, status: old.status,
-          processingStep: step,
-          localPreviewPath: old.localPreviewPath,
-          groupId: old.groupId,
-        ));
+    return _replace(peerLogin, messageId, (old) => old.copyWith(processingStep: step));
   }
 
   /// Сохраняет реальный mediaId и ключи ПОСЛЕ успешной загрузки на
@@ -265,15 +335,59 @@ class ChatStore {
     String? nonceBase64,
     String? macBase64,
   }) {
-    return _replace(peerLogin, messageId, (old) => StoredMessage(
-          old.messageId, old.text, old.isMine, old.timestamp,
-          isMedia: old.isMedia, isFile: old.isFile, fileSize: old.fileSize, chunked: old.chunked,
-          mediaId: mediaId, mediaKeyBase64: keyBase64, mediaNonceBase64: nonceBase64,
-          mediaMacBase64: macBase64, fileName: old.fileName, status: old.status,
-          processingStep: old.processingStep,
-          localPreviewPath: old.localPreviewPath,
-          groupId: old.groupId,
+    return _replace(peerLogin, messageId, (old) => old.copyWith(
+          mediaId: mediaId,
+          mediaKeyBase64: keyBase64,
+          mediaNonceBase64: nonceBase64,
+          mediaMacBase64: macBase64,
         ));
+  }
+
+  /// isMine=true — это МОЯ реакция (я тапнул эмодзи); false — реакция
+  /// пришла от собеседника (получена через message_router). emoji=null
+  /// снимает реакцию этой стороны.
+  static Future<void> setReaction(
+    String peerLogin,
+    String messageId, {
+    required bool isMine,
+    String? emoji,
+  }) {
+    return _replace(peerLogin, messageId, (old) => old.copyWith(
+          myReaction: isMine ? emoji : null,
+          clearMyReaction: isMine && emoji == null,
+          peerReaction: !isMine ? emoji : null,
+          clearPeerReaction: !isMine && emoji == null,
+        ));
+  }
+
+  static Future<void> editMessageText(String peerLogin, String messageId, String newText) {
+    return _replace(peerLogin, messageId, (old) => old.copyWith(text: newText, edited: true));
+  }
+
+  /// Удаляет ЛОКАЛЬНО (и у себя при "у меня", и здесь же — при "у
+  /// обоих", после того как control-сообщение уже отправлено собеседнику;
+  /// сам факт отправки — забота вызывающего кода, не этой функции).
+  static Future<void> deleteMessages(String peerLogin, List<String> messageIds) async {
+    if (messageIds.isEmpty) return;
+    final ids = messageIds.toSet();
+    final messages = await getMessages(peerLogin);
+    messages.removeWhere((m) => ids.contains(m.messageId));
+    await _writeMessages(peerLogin, messages);
+    _changesController.add(null);
+  }
+
+  /// null — открепить. Один закреп на чат; новый вызов просто заменяет
+  /// старый идентификатор.
+  static Future<void> setPinned(String peerLogin, String? messageId) async {
+    final peers = await getKnownPeers();
+    final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
+    if (existing.isEmpty) {
+      if (messageId == null) return;
+      peers.add(ChatSummary(peerLogin, '', 0, pinnedMessageId: messageId));
+    } else {
+      existing.first.pinnedMessageId = messageId;
+    }
+    await _writePeers(peers);
   }
 
   static Future<void> _touchPeer(
@@ -339,6 +453,7 @@ class ChatStore {
                 'last_ts': p.lastTimestamp,
                 'is_deleted': p.isDeleted,
                 'unread': p.unreadCount,
+                'pinned_message_id': p.pinnedMessageId,
               })
           .toList()),
     );
@@ -358,6 +473,7 @@ class ChatStore {
               lastKnownDeviceId: e['device_id'] as String?,
               isDeleted: e['is_deleted'] as bool? ?? false,
               unreadCount: e['unread'] as int? ?? 0,
+              pinnedMessageId: e['pinned_message_id'] as String?,
             ))
         .toList()
       ..sort((a, b) => b.lastTimestamp.compareTo(a.lastTimestamp));

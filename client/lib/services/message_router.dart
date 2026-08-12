@@ -15,6 +15,10 @@ import 'send_lock.dart';
 import 'sound_service.dart';
 import 'websocket_service.dart';
 
+/// Служебные типы control-сообщений — синхронизируются как обычно, но не
+/// считаются "сообщением" для звукового уведомления (см. _processIncoming).
+const _silentTypes = {'reaction', 'pin', 'edit', 'delete'};
+
 class MessageRouter {
   static bool _started = false;
 
@@ -66,7 +70,12 @@ class MessageRouter {
       if (inner.type == 'text') {
         await ChatStore.addMessage(
           ownerInfo.login,
-          StoredMessage(inner.messageId, inner.body, false, inner.sentAt, groupId: inner.groupId),
+          StoredMessage(
+            inner.messageId, inner.body, false, inner.sentAt,
+            groupId: inner.groupId,
+            replyToMessageId: inner.replyToMessageId,
+            replyToPreview: inner.replyToPreview,
+          ),
           accountId: ownerInfo.accountId,
           incrementUnread: !chatIsOpen,
         );
@@ -94,6 +103,8 @@ class MessageRouter {
       mediaMacBase64: mediaInfo['mac'] as String?,
       fileName: fileName,
       groupId: inner.groupId,
+      replyToMessageId: inner.replyToMessageId,
+      replyToPreview: inner.replyToPreview,
     ),
     accountId: ownerInfo.accountId,
     incrementUnread: !chatIsOpen,
@@ -149,9 +160,42 @@ class MessageRouter {
     accountId: ownerInfo.accountId,
     incrementUnread: !chatIsOpen,
   );
+} else if (inner.type == 'reaction') {
+  // Реакция от собеседника — с НАШЕЙ стороны это всегда "peer"-реакция,
+  // независимо от того, кто автор самого сообщения, на которое она стоит.
+  final data = jsonDecode(inner.body) as Map<String, dynamic>;
+  final targetId = data['target_id'] as String?;
+  if (targetId != null) {
+    await ChatStore.setReaction(
+      ownerInfo.login,
+      targetId,
+      isMine: false,
+      emoji: data['emoji'] as String?,
+    );
+  }
+} else if (inner.type == 'pin') {
+  final data = jsonDecode(inner.body) as Map<String, dynamic>;
+  final targetId = data['target_id'] as String?;
+  final pinned = data['pinned'] as bool? ?? false;
+  await ChatStore.setPinned(ownerInfo.login, pinned ? targetId : null);
+} else if (inner.type == 'edit') {
+  final data = jsonDecode(inner.body) as Map<String, dynamic>;
+  final targetId = data['target_id'] as String?;
+  final newText = data['text'] as String?;
+  if (targetId != null && newText != null) {
+    await ChatStore.editMessageText(ownerInfo.login, targetId, newText);
+  }
+} else if (inner.type == 'delete') {
+  final data = jsonDecode(inner.body) as Map<String, dynamic>;
+  final targetIds = (data['target_ids'] as List<dynamic>?)?.cast<String>() ?? const [];
+  await ChatStore.deleteMessages(ownerInfo.login, targetIds);
 }
 
-      if (!chatIsOpen) {
+      // Реакция/пин/правка/удаление — служебные события, не самостоятельные
+      // сообщения: не заслуживают звука, даже если чат закрыт (собеседник
+      // увидит их, когда сам откроет чат — специально идти проверять их не
+      // нужно).
+      if (!chatIsOpen && !_silentTypes.contains(inner.type)) {
         SoundService.playMessageSound();
       }
     } catch (e, stackTrace) {

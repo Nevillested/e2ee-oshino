@@ -15,10 +15,25 @@
       "Bash(git -C /home/luck/Documents/Github/e2ee-oshino/client diff pubspec.yaml)",
       "Bash(./gradlew :app:compileDebugKotlin :call_ring_plugin:compileDebugKotlin)",
       "Bash(./gradlew :app:compileDebugKotlin)",
-      "Bash(adb -s 192.168.40.4:45047 logcat -d -s MainActivity:D CallRingService:D EndCallReceiver:D OngoingCallNotifier:D CallRingPlugin:D flutter:D *:S)"
+      "Bash(adb -s 192.168.40.4:45047 logcat -d -s MainActivity:D CallRingService:D EndCallReceiver:D OngoingCallNotifier:D CallRingPlugin:D flutter:D *:S)",
+      "Bash(adb -s 192.168.40.4:45047 logcat -d -t 200)",
+      "Bash(uname -m; echo \"---kvm---\"; ls -la /dev/kvm 2>&1; echo \"---mem---\"; free -h)",
+      "Read(//dev/**)",
+      "Bash(adb -s 192.168.40.4:45047 logcat -d -s MainActivity:D CallRingService:D CallDeclineReceiver:D EndCallReceiver:D OngoingCallNotifier:D CallRingPlugin:D flutter:D *:S)",
+      "Bash(find /home/luck/.claude/projects -maxdepth 1 -iname \"*e2ee-oshino*\" 2>&1)",
+      "Read(//home/luck/.claude/projects/**)",
+      "Bash(adb -s 192.168.40.89:41177 logcat -d -t 3000)",
+      "Bash(adb -s 192.168.40.89:41177 logcat -d)",
+      "Bash(timeout 60 adb -s 192.168.40.89:41177 logcat -c)",
+      "Bash(timeout 60 adb -s 192.168.40.89:41177 logcat)",
+      "Bash(adb -s 192.168.40.89:41177 logcat -d -T '200')",
+      "Bash(adb -s 192.168.40.4:45047 logcat -d -T '200')",
+      "Bash(echo \"EXIT_CODE=$?\")",
+      "Bash(grep -n \"_onSwipeBack\\\\|_swipeStartX\\\\|_swipeDx\\\\|_swipeEdgeExclusion\\\\|_swipeDistanceThreshold\\\\|_swipeVelocityThreshold\\\\|GestureDetector\\(\\\\s*$\\\\|onHorizontalDrag\" /home/luck/Documents/Github/e2ee-oshino/client/lib/screens/chat_screen.dart)"
     ],
     "additionalDirectories": [
-      "/home/luck/Documents/Github/e2ee-oshino/server"
+      "/home/luck/Documents/Github/e2ee-oshino/server",
+      "/home/luck/.claude/projects/-home-luck-Documents-Github-e2ee-oshino-client/memory"
     ]
   }
 }

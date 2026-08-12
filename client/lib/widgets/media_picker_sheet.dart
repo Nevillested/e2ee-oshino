@@ -100,19 +100,6 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
     await _load();
   }
 
-  /// MediaStore не всегда успевает проиндексировать файл, снятый секунду
-  /// назад, к моменту открытия шторки — ручное обновление без закрытия и
-  /// повторного открытия листа.
-  Future<void> _refreshAssets() async {
-    setState(() {
-      _loading = true;
-      _page = 0;
-      _hasMore = true;
-      _thumbnailFutures.clear();
-    });
-    await _load();
-  }
-
   Future<void> _initLiveCamera() async {
     try {
       final cameras = await availableCameras();
@@ -229,31 +216,15 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
           children: [
             SizedBox(
               height: 36,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: AppColors.textMuted,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
+              child: Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.textMuted,
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                  Positioned(
-                    right: 4,
-                    top: 0,
-                    bottom: 0,
-                    child: IconButton(
-                      icon: const Icon(Icons.refresh, size: 20, color: AppColors.textMuted),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                      visualDensity: VisualDensity.compact,
-                      tooltip: 'Обновить список файлов',
-                      onPressed: _loading ? null : _refreshAssets,
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
             if (_isLimitedAccess)

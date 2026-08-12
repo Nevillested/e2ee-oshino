@@ -37,8 +37,9 @@ class CallRingPlugin :
         when (call.method) {
             "startRinging" -> {
                 val callId = call.argument<String>("callId")
-                Log.d(TAG, "startRinging() called, callId=$callId")
-                CallRingService.start(appContext, callId)
+                val callerDeviceId = call.argument<String>("callerDeviceId")
+                Log.d(TAG, "startRinging() called, callId=$callId, callerDeviceId=$callerDeviceId")
+                CallRingService.start(appContext, callId, callerDeviceId)
                 result.success(null)
             }
             "stopRinging" -> {
@@ -66,13 +67,28 @@ class CallRingPlugin :
             "showOngoingCall" -> {
                 val peerLogin = call.argument<String>("peerLogin") ?: "собеседником"
                 Log.d(TAG, "showOngoingCall() called, peerLogin=$peerLogin")
-                OngoingCallNotifier.show(appContext, peerLogin)
+                // Через foreground-сервис, а не прямой notify() — иначе
+                // процесс ничем не защищён от смахивания задачи из
+                // "недавних" во время разговора (см. OngoingCallService).
+                OngoingCallService.start(appContext, peerLogin)
                 result.success(null)
             }
             "hideOngoingCall" -> {
                 Log.d(TAG, "hideOngoingCall() called")
-                OngoingCallNotifier.hide(appContext)
+                OngoingCallService.stop(appContext)
                 result.success(null)
+            }
+            "consumePendingMissedCall" -> {
+                // Читаем и сразу стираем — см. PendingMissedCallStore. Пусто,
+                // если ничего не отклоняли, пока приложение было закрыто.
+                val pending = PendingMissedCallStore.consume(appContext)
+                Log.d(TAG, "consumePendingMissedCall() -> $pending")
+                if (pending != null) {
+                    val (callerDeviceId, timestamp) = pending
+                    result.success(mapOf("callerDeviceId" to callerDeviceId, "timestamp" to timestamp))
+                } else {
+                    result.success(null)
+                }
             }
             else -> result.notImplemented()
         }

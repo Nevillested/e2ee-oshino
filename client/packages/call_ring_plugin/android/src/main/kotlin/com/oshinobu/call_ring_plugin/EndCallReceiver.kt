@@ -1,5 +1,6 @@
 package com.oshinobu.call_ring_plugin
 
+import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -23,12 +24,17 @@ import io.flutter.plugin.common.MethodChannel
 class EndCallReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         Log.d(TAG, "onReceive: получено нажатие 'Завершить звонок', action=${intent.action}")
-        // Гасим уведомление сразу и безусловно — даже если по какой-то
-        // причине не получится достучаться до движка, висящая кнопка "жми
-        // сколько угодно, ничего не происходит" хуже, чем просто пропавшее
-        // уведомление.
-        OngoingCallNotifier.hide(context)
-        Log.d(TAG, "onReceive: уведомление 'Идёт разговор' скрыто")
+        // Гасим уведомление/сервис сразу и безусловно — даже если по
+        // какой-то причине не получится достучаться до движка, висящая
+        // кнопка "жми сколько угодно, ничего не происходит" хуже, чем
+        // просто пропавшее уведомление. Останов сервиса сам уберёт
+        // уведомление (это стандартное поведение foreground-сервиса), а
+        // прямой cancel() ниже — подстраховка на случай, если сервис
+        // почему-то не был запущен.
+        OngoingCallService.stop(context)
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancel(OngoingCallNotifier.NOTIFICATION_ID)
+        Log.d(TAG, "onReceive: OngoingCallService остановлен, уведомление 'Идёт разговор' скрыто")
 
         val cachedEngines = FlutterEngineCache.getInstance()
         val engine = cachedEngines.get(MAIN_ENGINE_ID)

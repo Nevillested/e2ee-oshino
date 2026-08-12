@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:call_ring_plugin/call_ring_plugin.dart';
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
@@ -13,6 +14,8 @@ import '../storage/notes_store.dart';
 import '../theme/app_theme.dart';
 import '../utils/time_format.dart';
 import '../widgets/bottom_action_bar.dart';
+import '../widgets/connection_status_indicator.dart';
+import '../widgets/swipe_back_page_route.dart';
 import 'chat_screen.dart';
 import 'incoming_call_screen.dart';
 import 'new_chat_screen.dart';
@@ -23,7 +26,11 @@ const _notesMarker = '__notes__';
 
 class _NoGlowScrollBehavior extends ScrollBehavior {
   @override
-  Widget buildOverscrollIndicator(BuildContext context, Widget child, ScrollableDetails details) {
+  Widget buildOverscrollIndicator(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
     return child;
   }
 }
@@ -65,6 +72,12 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
       CallService.instance.requestAutoAcceptNextCall();
     }
 
+    // Звонок могли отклонить кнопкой в уведомлении, ПОКА приложение было
+    // полностью закрыто — тогда его некому было сразу записать в историю
+    // чата (см. PendingMissedCallStore.kt). Досписываем при первом же
+    // запуске.
+    unawaited(_writePendingMissedCallIfAny(token));
+
     // Автопринятые звонки (кнопка "Ответить" в push-уведомлении) CallService
     // открывает сам, напрямую через глобальный rootNavigatorKey — этот
     // листенер эмитится только для звонков, требующих ручного выбора
@@ -73,13 +86,18 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
       final currentToken = await Session.getToken();
       String peerLogin = 'Неизвестный';
       if (currentToken != null) {
-        final owner = await ApiClient().getDeviceOwnerInfo(currentToken, info.peerDeviceId);
+        final owner = await ApiClient().getDeviceOwnerInfo(
+          currentToken,
+          info.peerDeviceId,
+        );
         if (owner != null) peerLogin = owner.login;
       }
       if (!mounted) return;
       Navigator.push(
         context,
-        MaterialPageRoute(builder: (context) => IncomingCallScreen(peerLogin: peerLogin)),
+        MaterialPageRoute(
+          builder: (context) => IncomingCallScreen(peerLogin: peerLogin),
+        ),
       );
     });
 
@@ -99,12 +117,42 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
     await _refreshChats();
   }
 
+  /// См. комментарий у вызова выше — дописывает в историю чата звонок,
+  /// который отклонили кнопкой в уведомлении при полностью закрытом
+  /// приложении. ChatStore.changes уже слушается в _connect() выше, так
+  /// что список чатов обновится сам.
+  Future<void> _writePendingMissedCallIfAny(String token) async {
+    final pending = await CallRingPlugin.consumePendingMissedCall();
+    if (pending == null) return;
+    try {
+      final owner = await ApiClient().getDeviceOwnerInfo(
+        token,
+        pending.callerDeviceId,
+      );
+      if (owner == null) return;
+      await ChatStore.addCallLog(
+        owner.login,
+        direction: 'incoming',
+        outcome: 'missed',
+        timestamp: pending.timestamp,
+        accountId: owner.accountId,
+      );
+    } catch (_) {
+      // Не получилось дописать сейчас — не критично, это всего одна запись
+      // в локальной истории, которую мы иначе потеряли бы безвозвратно.
+    }
+  }
+
   Future<void> _refreshChats() async {
     final chats = await ChatStore.getKnownPeers();
     final notesSummary = await NotesStore.getSummary();
 
     final combined = <ChatSummary>[
-      ChatSummary(_notesMarker, notesSummary.lastMessage, notesSummary.lastTimestamp),
+      ChatSummary(
+        _notesMarker,
+        notesSummary.lastMessage,
+        notesSummary.lastTimestamp,
+      ),
       ...chats,
     ]..sort((a, b) => b.lastTimestamp.compareTo(a.lastTimestamp));
 
@@ -118,7 +166,8 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Чаты'),
+        title: const ConnectionStatusIndicator(),
+        centerTitle: false,
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
@@ -149,55 +198,78 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
                         : Colors.transparent,
                     child: ListTile(
                       title: Text(
-                        isNotes ? 'Заметки' : (entry.isDeleted ? 'Удалённый аккаунт' : entry.peerLogin),
+                        isNotes
+                            ? 'Заметки'
+                            : (entry.isDeleted
+                                  ? 'Удалённый аккаунт'
+                                  : entry.peerLogin),
                         style: TextStyle(
                           color: AppColors.textPrimary,
-                          fontWeight: entry.unreadCount > 0 ? FontWeight.bold : FontWeight.normal,
+                          fontWeight: entry.unreadCount > 0
+                              ? FontWeight.bold
+                              : FontWeight.normal,
                         ),
                       ),
                       subtitle: Text(
                         entry.lastMessage,
                         style: TextStyle(
                           color: AppColors.textMuted,
-                          fontWeight: entry.unreadCount > 0 ? FontWeight.w600 : FontWeight.normal,
+                          fontWeight: entry.unreadCount > 0
+                              ? FontWeight.w600
+                              : FontWeight.normal,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-trailing: Row(
-  mainAxisAlignment: MainAxisAlignment.center,
-  crossAxisAlignment: CrossAxisAlignment.center,
-  mainAxisSize: MainAxisSize.min,
-  children: [
-    if (entry.unreadCount > 0)
-      Container(
-        margin: const EdgeInsets.only(right: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-        decoration: BoxDecoration(
-          color: AppColors.primary,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          entry.unreadCount > 9 ? '9+' : '${entry.unreadCount}',
-          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-        ),
-      ),
-    if (entry.lastTimestamp > 0)
-      Text(
-        formatChatTime(entry.lastTimestamp),
-        style: TextStyle(
-          color: entry.unreadCount > 0 ? AppColors.primary : AppColors.textMuted,
-          fontSize: 12,
-          fontWeight: entry.unreadCount > 0 ? FontWeight.bold : FontWeight.normal,
-        ),
-      ),
-  ],
-),
+                      trailing: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (entry.unreadCount > 0)
+                            Container(
+                              margin: const EdgeInsets.only(right: 6),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                entry.unreadCount > 9
+                                    ? '9+'
+                                    : '${entry.unreadCount}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          if (entry.lastTimestamp > 0)
+                            Text(
+                              formatChatTime(entry.lastTimestamp),
+                              style: TextStyle(
+                                color: entry.unreadCount > 0
+                                    ? AppColors.primary
+                                    : AppColors.textMuted,
+                                fontSize: 12,
+                                fontWeight: entry.unreadCount > 0
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                        ],
+                      ),
                       onTap: () async {
                         if (isNotes) {
                           await Navigator.push(
                             context,
-                            MaterialPageRoute(builder: (context) => const NotesScreen()),
+                            MaterialPageRoute(
+                              builder: (context) => const NotesScreen(),
+                            ),
                           );
                           return;
                         }
@@ -208,13 +280,19 @@ trailing: Row(
                         () async {
                           try {
                             final token = await Session.getToken();
-                            final result = await ApiClient().getDevicesByLogin(token!, login);
+                            final result = await ApiClient().getDevicesByLogin(
+                              token!,
+                              login,
+                            );
                             if (result.devices.isNotEmpty) {
                               await ChatStore.setLastKnownDeviceId(
                                 login,
                                 result.devices.first['device_id'] as String,
                               );
-                              await ChatStore.setPeerDeletedStatus(login, false);
+                              await ChatStore.setPeerDeletedStatus(
+                                login,
+                                false,
+                              );
                             }
                           } on ApiException {
                             await ChatStore.setPeerDeletedStatus(login, true);
@@ -223,7 +301,7 @@ trailing: Row(
 
                         await Navigator.push(
                           context,
-                          MaterialPageRoute(
+                          SwipeBackPageRoute(
                             builder: (context) => ChatScreen(
                               peerDeviceId: deviceIdToUse,
                               peerAccountId: entry.lastKnownAccountId ?? '',

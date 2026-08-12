@@ -1,6 +1,7 @@
 package com.oshinobu.oshinobu_client
 
 import android.app.PictureInPictureParams
+import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
@@ -64,6 +65,38 @@ class MainActivity : FlutterActivity() {
     // не на реальном устройстве; если оно не подтвердится в тестах, придётся
     // подбирать сигнал заново по логам.
     private var pendingLauncherReopen = false
+
+    // По умолчанию Flutter создаёт свой движок ЗАНОВО под каждую новую
+    // Activity и уничтожает его вместе со старой (onDestroy → engine.destroy()).
+    // Это ровно то, что рвёт активный звонок: смахивание задачи из "недавних"
+    // уничтожает Activity (и с ней — движок, Dart-изолят, CallService,
+    // WebRTC-соединение), даже если сам ПРОЦЕСС уцелел (см.
+    // OngoingCallService — именно он не даёт Android убить процесс целиком,
+    // пока разговор активен). Без удержания движка процесс мог бы выжить,
+    // но при повторном входе получил бы СОВЕРШЕННО НОВЫЙ, пустой
+    // CallService — то есть "звонок-призрак": звук по факту оборвался бы
+    // всё равно (движок с реальным WebRTC-соединением уничтожен), а заново
+    // открытое приложение ничего не знало бы о нём.
+    //
+    // Оба метода ниже — задокументированный Flutter-паттерн "cache and
+    // reuse a FlutterEngine": движок кэшируется уже в configureFlutterEngine
+    // (см. MAIN_ENGINE_ID выше), здесь он просто (а) не уничтожается вместе
+    // с Activity и (б) переиспользуется следующей Activity вместо создания
+    // нового. Вне звонков это тоже безвредно — если процесс всё-таки убьют
+    // (например, банальная нехватка памяти без активного foreground-сервиса),
+    // кэш умирает вместе с ним, и следующий запуск как обычно поднимет всё
+    // с нуля.
+    override fun shouldDestroyEngineWithHost(): Boolean = false
+
+    override fun provideFlutterEngine(context: Context): FlutterEngine? {
+        val cached = FlutterEngineCache.getInstance().get(MAIN_ENGINE_ID)
+        if (cached != null) {
+            Log.d(TAG, "provideFlutterEngine: переиспользую закэшированный движок $cached")
+            return cached
+        }
+        Log.d(TAG, "provideFlutterEngine: кэш пуст, создаю новый движок как обычно")
+        return super.provideFlutterEngine(context)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

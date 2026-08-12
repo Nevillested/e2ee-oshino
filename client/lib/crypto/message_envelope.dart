@@ -10,19 +10,35 @@ class InnerMessage {
   final String body;
   final String? groupId;
 
+  /// Сообщение, на которое отвечают (см. InnerMessage.text/.media) — если
+  /// не null, отправлено вместе с превью текста оригинала, снятым В
+  /// МОМЕНТ ответа: так превью переживает последующее редактирование или
+  /// удаление оригинала у отвечающего — то же самое, что делает и Telegram.
+  final String? replyToMessageId;
+  final String? replyToPreview;
+
   InnerMessage({
     required this.messageId,
     required this.type,
     required this.sentAt,
     required this.body,
     this.groupId,
+    this.replyToMessageId,
+    this.replyToPreview,
   });
 
-  factory InnerMessage.text(String body) => InnerMessage(
+  factory InnerMessage.text(
+    String body, {
+    String? replyToMessageId,
+    String? replyToPreview,
+  }) =>
+      InnerMessage(
         messageId: _uuid.v4(),
         type: 'text',
         sentAt: DateTime.now().millisecondsSinceEpoch,
         body: body,
+        replyToMessageId: replyToMessageId,
+        replyToPreview: replyToPreview,
       );
 
 factory InnerMessage.media({
@@ -35,6 +51,8 @@ factory InnerMessage.media({
   bool isFile = false,
   int fileSize = 0,
   bool chunked = false,
+  String? replyToMessageId,
+  String? replyToPreview,
 }) {
   final body = jsonEncode({
     'media_id': mediaId,
@@ -51,6 +69,8 @@ factory InnerMessage.media({
     type: 'media',
     sentAt: DateTime.now().millisecondsSinceEpoch,
     body: body,
+    replyToMessageId: replyToMessageId,
+    replyToPreview: replyToPreview,
   );
 }
 
@@ -94,12 +114,80 @@ factory InnerMessage.media({
     );
   }
 
+  /// Реакция на сообщение — emoji=null означает "снять реакцию". Как и
+  /// остальные control-типы ниже, идёт тем же каналом (тот же Double
+  /// Ratchet, та же офлайн-очередь на сервере), что и обычные сообщения —
+  /// сервер по-прежнему не видит ничего, кроме шифротекста.
+  factory InnerMessage.reaction({
+    required String targetMessageId,
+    String? emoji,
+  }) {
+    final body = jsonEncode({'target_id': targetMessageId, 'emoji': emoji});
+    return InnerMessage(
+      messageId: _uuid.v4(),
+      type: 'reaction',
+      sentAt: DateTime.now().millisecondsSinceEpoch,
+      body: body,
+    );
+  }
+
+  /// pinned=false — открепление. Один закреп на чат: новый pin просто
+  /// заменяет старый (специального сообщения "открепили X, закрепили Y"
+  /// не шлём, у получателя действие тоже просто идемпотентно применяется).
+  factory InnerMessage.pin({
+    required String targetMessageId,
+    required bool pinned,
+  }) {
+    final body = jsonEncode({'target_id': targetMessageId, 'pinned': pinned});
+    return InnerMessage(
+      messageId: _uuid.v4(),
+      type: 'pin',
+      sentAt: DateTime.now().millisecondsSinceEpoch,
+      body: body,
+    );
+  }
+
+  /// Редактирование — получатель ищет сообщение с target_id в своей
+  /// локальной истории и, если находит, заменяет текст и помечает
+  /// отредактированным. Разрешено только для СВОИХ текстовых сообщений
+  /// без группы — это ограничение проверяется на UI-уровне отправителя,
+  /// получатель доверяет присланному (как и всему остальному в этом
+  /// протоколе — собеседник аутентифицирован Double Ratchet).
+  factory InnerMessage.edit({
+    required String targetMessageId,
+    required String newText,
+  }) {
+    final body = jsonEncode({'target_id': targetMessageId, 'text': newText});
+    return InnerMessage(
+      messageId: _uuid.v4(),
+      type: 'edit',
+      sentAt: DateTime.now().millisecondsSinceEpoch,
+      body: body,
+    );
+  }
+
+  /// "Удалить у обоих" — список id, чтобы одним сообщением удалить сразу
+  /// пачку (режим выбора). У получателя просто выпиливаются из локальной
+  /// истории те id, что у него реально есть — отсутствующие тихо
+  /// игнорируются.
+  factory InnerMessage.delete({required List<String> targetMessageIds}) {
+    final body = jsonEncode({'target_ids': targetMessageIds});
+    return InnerMessage(
+      messageId: _uuid.v4(),
+      type: 'delete',
+      sentAt: DateTime.now().millisecondsSinceEpoch,
+      body: body,
+    );
+  }
+
   String encode() => jsonEncode({
         'message_id': messageId,
         'type': type,
         'sent_at': sentAt,
         'body': body,
         'group_id': groupId,
+        'reply_to_id': replyToMessageId,
+        'reply_to_preview': replyToPreview,
       });
 
   static InnerMessage decode(String raw) {
@@ -110,6 +198,8 @@ factory InnerMessage.media({
       sentAt: json['sent_at'] as int,
       body: json['body'] as String,
       groupId: json['group_id'] as String?,
+      replyToMessageId: json['reply_to_id'] as String?,
+      replyToPreview: json['reply_to_preview'] as String?,
     );
   }
 }

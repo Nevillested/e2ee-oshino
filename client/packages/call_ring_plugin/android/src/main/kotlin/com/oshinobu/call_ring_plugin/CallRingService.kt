@@ -34,6 +34,13 @@ class CallRingService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var isRinging = false
     private var currentCallId: String? = null
+
+    // Нужен только для того, чтобы при отклонении звонка из ПОЛНОСТЬЮ
+    // закрытого приложения (см. CallDeclineReceiver, ветка без живого
+    // движка) было о ком записать пропущенный звонок в локальную историю
+    // чата — сама Dart-сторона в этот момент не поднята и ничего сама
+    // сделать не может.
+    private var currentCallerDeviceId: String? = null
     private val stopHandler = Handler(Looper.getMainLooper())
     private val stopRunnable = Runnable { stopSelf() }
 
@@ -47,6 +54,7 @@ class CallRingService : Service() {
         // Может прийти без call_id (например повторный вызов из другого
         // источника push) — тогда просто сохраняем уже известный.
         intent?.getStringExtra(EXTRA_CALL_ID)?.let { currentCallId = it }
+        intent?.getStringExtra(EXTRA_CALLER_DEVICE_ID)?.let { currentCallerDeviceId = it }
         startForeground(NOTIFICATION_ID, buildNotification(), foregroundServiceType())
 
         // startRinging() может прийти повторно за один и тот же звонок —
@@ -77,6 +85,7 @@ class CallRingService : Service() {
         Log.d(TAG, "onDestroy, instance=$this")
         isRinging = false
         currentCallId = null
+        currentCallerDeviceId = null
         stopHandler.removeCallbacks(stopRunnable)
         mediaPlayer?.let {
             try {
@@ -195,6 +204,7 @@ class CallRingService : Service() {
         // по TTL.
         val declineIntent = Intent(this, CallDeclineReceiver::class.java).apply {
             putExtra(EXTRA_CALL_ID, currentCallId)
+            putExtra(EXTRA_CALLER_DEVICE_ID, currentCallerDeviceId)
         }
         val declinePendingIntent = PendingIntent.getBroadcast(
             this,
@@ -261,11 +271,13 @@ class CallRingService : Service() {
         const val EXTRA_SHOW_OVER_LOCKSCREEN = "oshinobu.SHOW_OVER_LOCKSCREEN"
         const val EXTRA_AUTO_ACCEPT = "oshinobu.AUTO_ACCEPT_CALL"
         const val EXTRA_CALL_ID = "oshinobu.CALL_ID"
+        const val EXTRA_CALLER_DEVICE_ID = "oshinobu.CALLER_DEVICE_ID"
 
-        fun start(context: Context, callId: String?) {
-            Log.d(TAG, "start() requested, callId=$callId")
+        fun start(context: Context, callId: String?, callerDeviceId: String? = null) {
+            Log.d(TAG, "start() requested, callId=$callId, callerDeviceId=$callerDeviceId")
             val intent = Intent(context, CallRingService::class.java).apply {
                 if (callId != null) putExtra(EXTRA_CALL_ID, callId)
+                if (callerDeviceId != null) putExtra(EXTRA_CALLER_DEVICE_ID, callerDeviceId)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)

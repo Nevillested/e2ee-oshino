@@ -69,7 +69,10 @@ class PushService {
       // делаем то же самое, что и в фоновом обработчике.
       final type = message.data['type'];
       if (type == 'call') {
-        CallRingPlugin.startRinging(callId: message.data['call_id']);
+        CallRingPlugin.startRinging(
+          callId: message.data['call_id'],
+          callerDeviceId: message.data['caller_device_id'],
+        );
       } else if (type == 'call_cancel') {
         CallRingPlugin.stopRinging();
       }
@@ -118,7 +121,10 @@ Future<void> pushBackgroundHandler(RemoteMessage message) async {
     // который делает это сам, как настоящая звонилка. Как только реальный
     // call_offer дойдёт по WebSocket (см. CallService), сервис остановится
     // и управление рингтоном/экраном звонка перейдёт уже к живому приложению.
-    await CallRingPlugin.startRinging(callId: message.data['call_id']);
+    await CallRingPlugin.startRinging(
+      callId: message.data['call_id'],
+      callerDeviceId: message.data['caller_device_id'],
+    );
     return;
   }
 

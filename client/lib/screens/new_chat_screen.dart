@@ -3,6 +3,7 @@ import '../api/api_client.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_text_field.dart';
+import '../widgets/swipe_back_page_route.dart';
 import 'chat_screen.dart';
 import '../storage/peer_account_store.dart';
 import 'notes_screen.dart';
@@ -31,57 +32,58 @@ class _NewChatScreenState extends State<NewChatScreen> {
     super.dispose();
   }
 
-String? _peerAccountId;
+  String? _peerAccountId;
 
-// В _NewChatScreenState добавьте поле для хранения peerAccountId:
+  // В _NewChatScreenState добавьте поле для хранения peerAccountId:
 
-Future<void> _search() async {
-  final query = _loginController.text.trim();
-  final myLogin = await Session.getLogin();
+  Future<void> _search() async {
+    final query = _loginController.text.trim();
+    final myLogin = await Session.getLogin();
 
-  if (myLogin != null && query == myLogin) {
-    if (!mounted) return;
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const NotesScreen()),
-    );
-    return;
-  }
-
-  setState(() {
-    _isLoading = true;
-    _errorText = null;
-    _foundDevices = [];
-  });
-
-  try {
-    final token = await Session.getToken();
-    final result = await _apiClient.getDevicesByLogin(
-      token!,
-      _loginController.text.trim(),
-    );
-
-    for (final device in result.devices) {
-      final deviceId = (device['device_id'] ?? device['deviceId'])?.toString();
-      if (deviceId != null && deviceId.isNotEmpty) {
-        await PeerAccountStore.save(deviceId, result.accountId);
-      }
+    if (myLogin != null && query == myLogin) {
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const NotesScreen()),
+      );
+      return;
     }
 
     setState(() {
-      _foundDevices = result.devices;
-      _peerAccountId = result.accountId; // Запоминаем accountId
+      _isLoading = true;
+      _errorText = null;
+      _foundDevices = [];
     });
-  } catch (e) {
-    setState(() {
-      _errorText = e.toString();
-    });
-  } finally {
-    setState(() {
-      _isLoading = false;
-    });
+
+    try {
+      final token = await Session.getToken();
+      final result = await _apiClient.getDevicesByLogin(
+        token!,
+        _loginController.text.trim(),
+      );
+
+      for (final device in result.devices) {
+        final deviceId = (device['device_id'] ?? device['deviceId'])
+            ?.toString();
+        if (deviceId != null && deviceId.isNotEmpty) {
+          await PeerAccountStore.save(deviceId, result.accountId);
+        }
+      }
+
+      setState(() {
+        _foundDevices = result.devices;
+        _peerAccountId = result.accountId; // Запоминаем accountId
+      });
+    } catch (e) {
+      setState(() {
+        _errorText = e.toString();
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
-}
 
   @override
   Widget build(BuildContext context) {
@@ -111,36 +113,39 @@ Future<void> _search() async {
                 itemCount: _foundDevices.length,
                 itemBuilder: (context, index) {
                   final device = _foundDevices[index];
-return Container(
-  margin: const EdgeInsets.symmetric(vertical: 6),
-  decoration: BoxDecoration(
-    gradient: const LinearGradient(
-      colors: [AppColors.primary, AppColors.primaryDark],
-    ),
-    borderRadius: BorderRadius.circular(16),
-  ),
-  child: ListTile(
-    leading: const Icon(Icons.person, color: Colors.white),
-    title: Text(
-      _loginController.text.trim(),
-      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-    ),
-onTap: () {
-  if (_peerAccountId == null) return;
-  
-  Navigator.pushReplacement(
-    context,
-    MaterialPageRoute(
-      builder: (context) => ChatScreen(
-        peerDeviceId: device['device_id'] as String,
-        peerAccountId: _peerAccountId!,
-        peerLogin: _loginController.text.trim(),
-      ),
-    ),
-  );
-},
-  ),
-);
+                  return Container(
+                    margin: const EdgeInsets.symmetric(vertical: 6),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [AppColors.primary, AppColors.primaryDark],
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: ListTile(
+                      leading: const Icon(Icons.person, color: Colors.white),
+                      title: Text(
+                        _loginController.text.trim(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      onTap: () {
+                        if (_peerAccountId == null) return;
+
+                        Navigator.pushReplacement(
+                          context,
+                          SwipeBackPageRoute(
+                            builder: (context) => ChatScreen(
+                              peerDeviceId: device['device_id'] as String,
+                              peerAccountId: _peerAccountId!,
+                              peerLogin: _loginController.text.trim(),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
                 },
               ),
             ),

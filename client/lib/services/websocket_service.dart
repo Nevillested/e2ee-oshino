@@ -9,9 +9,31 @@ import '../storage/outbox_store.dart';
 import '../storage/chat_store.dart';
 import '../api/api_client.dart';
 
+/// Человекочитаемое состояние подключения к серверу — для индикатора в
+/// шапке списка чатов. Не претендует на бОльшую детализацию, чем реально
+/// умеет отличать сам WebSocketService: Dart/IOWebSocketChannel не даёт
+/// отдельно поймать фазу DNS-резолва отдельно от TCP-хендшейка, поэтому obе
+/// объединены в connecting.
+enum ConnectionStatus {
+  waitingForNetwork,
+  connecting,
+  connected,
+  reconnecting,
+}
+
 class WebSocketService {
   WebSocketService._internal();
   static final WebSocketService instance = WebSocketService._internal();
+
+  final _statusController = StreamController<ConnectionStatus>.broadcast();
+  Stream<ConnectionStatus> get statusUpdates => _statusController.stream;
+  ConnectionStatus status = ConnectionStatus.connecting;
+
+  void _setStatus(ConnectionStatus s) {
+    if (status == s) return;
+    status = s;
+    _statusController.add(s);
+  }
 
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
@@ -43,6 +65,8 @@ Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
       final hasNetwork = result.isNotEmpty && !result.contains(ConnectivityResult.none);
       if (hasNetwork && !_hadNetwork) {
         _forceReconnect();
+      } else if (!hasNetwork) {
+        _setStatus(ConnectionStatus.waitingForNetwork);
       }
       _hadNetwork = hasNetwork;
     });
@@ -60,11 +84,22 @@ Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
   void _openConnection() {
     if (_token == null || _deviceId == null) return;
 
+    _setStatus(ConnectionStatus.connecting);
+
     final uri = Uri.parse('${ApiConfig.wsBaseUrl}/ws?device_id=$_deviceId');
 
+    // pingInterval — без него "зомби"-соединение (сокет технически ещё
+    // жив с точки зрения клиента, но реально не пропускает данные — типично
+    // при обрыве по таймауту NAT/оператора без честного TCP FIN/RST) висит
+    // в статусе "подключено" сколь угодно долго: ни onError, ни onDone
+    // никогда не срабатывают, потому что клиенту физически неоткуда узнать
+    // о разрыве. С pingInterval dart:io сам шлёт ping и, не дождавшись
+    // pong, закрывает сокет — тогда уже отработает наш обычный
+    // onDone/onError → _scheduleReconnect().
     _channel = IOWebSocketChannel.connect(
       uri,
       headers: {'Authorization': 'Bearer $_token'},
+      pingInterval: const Duration(seconds: 20),
     );
 
     // connect() возвращает канал сразу, а само подключение (включая DNS)
@@ -73,7 +108,9 @@ Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
     // как необработанное исключение (просто шум в логах, а не крэш —
     // .listen(onError:) ниже слушает уже установленное соединение и здесь
     // не участвует). Ловим и тихо уходим в обычный цикл переподключения.
-    _channel!.ready.catchError((Object e) {
+    _channel!.ready.then((_) {
+      _setStatus(ConnectionStatus.connected);
+    }).catchError((Object e) {
       debugPrint('WebSocketService: не удалось подключиться ($e), повтор через reconnect');
       _scheduleReconnect();
     });
@@ -127,6 +164,7 @@ void _scheduleReconnect() {
   _channel = null;
   _subscription?.cancel();
   if (_manuallyDisconnected) return;
+  _setStatus(_hadNetwork ? ConnectionStatus.reconnecting : ConnectionStatus.waitingForNetwork);
   _reconnectTimer?.cancel();
   _reconnectTimer = Timer(const Duration(seconds: 3), () async {
     final token = _token;
@@ -161,13 +199,18 @@ _openConnection();
     _channel = null;
   }
 
+  /// silent — служебное control-сообщение (реакция/пин/правка/удаление),
+  /// см. WSMsgFrom.Silent на сервере: открытым текстом просим сервер не
+  /// слать будящий push офлайн-получателю ради него. Само сообщение
+  /// шифруется и доставляется как обычно — флаг влияет только на push.
   Future<String> sendEnvelope(
     String toDeviceId,
     Map<String, dynamic> envelope,
-    String messageId,
-  ) async {
+    String messageId, {
+    bool silent = false,
+  }) async {
     if (_channel == null) {
-      await OutboxStore.add(toDeviceId, envelope, messageId);
+      await OutboxStore.add(toDeviceId, envelope, messageId, silent: silent);
       return 'queued';
     }
 
@@ -175,6 +218,7 @@ _openConnection();
       'ToDeviceId': toDeviceId,
       'Ciphertext': jsonEncode(envelope),
       'Type': 'message',
+      'Silent': silent,
     };
     _channel!.sink.add(jsonEncode(message));
     return 'sent';
@@ -200,11 +244,13 @@ _openConnection();
       final toDeviceId = item['to_device_id'] as String;
       final envelope = item['envelope'] as Map<String, dynamic>;
       final messageId = item['message_id'] as String?;
+      final silent = item['silent'] as bool? ?? false;
 
       final message = {
         'ToDeviceId': toDeviceId,
         'Ciphertext': jsonEncode(envelope),
         'Type': 'message',
+        'Silent': silent,
       };
       _channel?.sink.add(jsonEncode(message));
 
