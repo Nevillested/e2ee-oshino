@@ -29,7 +29,22 @@
       "Bash(adb -s 192.168.40.89:41177 logcat -d -T '200')",
       "Bash(adb -s 192.168.40.4:45047 logcat -d -T '200')",
       "Bash(echo \"EXIT_CODE=$?\")",
-      "Bash(grep -n \"_onSwipeBack\\\\|_swipeStartX\\\\|_swipeDx\\\\|_swipeEdgeExclusion\\\\|_swipeDistanceThreshold\\\\|_swipeVelocityThreshold\\\\|GestureDetector\\(\\\\s*$\\\\|onHorizontalDrag\" /home/luck/Documents/Github/e2ee-oshino/client/lib/screens/chat_screen.dart)"
+      "Bash(grep -n \"_onSwipeBack\\\\|_swipeStartX\\\\|_swipeDx\\\\|_swipeEdgeExclusion\\\\|_swipeDistanceThreshold\\\\|_swipeVelocityThreshold\\\\|GestureDetector\\(\\\\s*$\\\\|onHorizontalDrag\" /home/luck/Documents/Github/e2ee-oshino/client/lib/screens/chat_screen.dart)",
+      "Bash(ls ~/.pub-cache/hosted/pub.dev/ 2>/dev/null | grep -i \"^record-\" )",
+      "Read(//home/luck/.pub-cache/hosted/pub.dev/**)",
+      "Read(//home/luck/.pub-cache/hosted/pub.dev/record-5.2.1/lib/src/**)",
+      "Bash(find ~/.pub-cache/hosted/pub.dev/record-5.2.1 -name \"*.dart\" | xargs grep -l \"class AudioRecorder\" 2>/dev/null)",
+      "Read(//home/luck/.pub-cache/hosted/pub.dev/record-5.2.1/**)",
+      "Bash(sed -n '1,140p' ~/.pub-cache/hosted/pub.dev/record-5.2.1/lib/src/record.dart)",
+      "Bash(grep -n \"hasPermission\\\\|Future<void> dispose\\\\|isRecording\\\\b\" ~/.pub-cache/hosted/pub.dev/record-5.2.1/lib/src/record.dart | head -10 *)",
+      "Read(//home/luck/.pub-cache/hosted/pub.dev/record_platform_interface-1.6.0/**)",
+      "Read(//home/luck/.pub-cache/hosted/pub.dev/record_platform_interface-1.6.0/lib/src/types/**)",
+      "Bash(grep -n \"Icons.mic\\\\|Icons.attach_file\\\\|_openAttachmentSheet\\\\|SafeArea\\(\\\\s*$\" /home/luck/Documents/Github/e2ee-oshino/client/lib/screens/chat_screen.dart)",
+      "Bash(grep -n \"^  camera:\" /home/luck/Documents/Github/e2ee-oshino/client/pubspec.lock -A2 *)",
+      "Bash(grep -n \"setDescription\\\\|Future<void> setDescription\" ~/.pub-cache/hosted/pub.dev/camera-0.12.0+2/lib/src/camera_controller.dart | head -10)",
+      "Read(//home/luck/.pub-cache/hosted/pub.dev/camera-0.12.0\\\\+2/lib/src/**)",
+      "Bash(sed -n '420,470p' ~/.pub-cache/hosted/pub.dev/camera-0.12.0+2/lib/src/camera_controller.dart)",
+      "Bash(grep -n \"Future<void> startVideoRecording\" -A 30 ~/.pub-cache/hosted/pub.dev/camera-0.12.0+2/lib/src/camera_controller.dart | head -40)"
     ],
     "additionalDirectories": [
       "/home/luck/Documents/Github/e2ee-oshino/server",

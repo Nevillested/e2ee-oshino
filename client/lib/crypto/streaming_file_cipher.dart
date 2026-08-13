@@ -52,7 +52,13 @@ class StreamingFileCipher {
       while (buffer.length >= chunkSize) {
         final chunk = buffer.sublist(0, chunkSize);
         buffer = buffer.sublist(chunkSize);
-        await _encryptAndWriteChunk(sink, secretKey, chunk, index, isLast: false);
+        await _encryptAndWriteChunk(
+          sink,
+          secretKey,
+          chunk,
+          index,
+          isLast: false,
+        );
         index++;
         processed += chunk.length;
         onProgress?.call(totalSize == 0 ? 100 : processed / totalSize * 100);
@@ -67,7 +73,6 @@ class StreamingFileCipher {
     onProgress?.call(100);
     return keyBytes;
   }
-
 
   static Future<void> _encryptAndWriteChunk(
     IOSink sink,
@@ -113,7 +118,9 @@ class StreamingFileCipher {
         if (headerBytes.length < 4) {
           throw Exception('Повреждённый файл: неполный заголовок блока');
         }
-        final len = ByteData.sublistView(Uint8List.fromList(headerBytes)).getUint32(0, Endian.big);
+        final len = ByteData.sublistView(
+          Uint8List.fromList(headerBytes),
+        ).getUint32(0, Endian.big);
         offset += 4;
 
         final payload = await raf.read(len);
@@ -154,7 +161,9 @@ class StreamingFileCipher {
     }
 
     if (!sawLast) {
-      throw Exception('Файл повреждён или обрезан — отсутствует завершающий блок');
+      throw Exception(
+        'Файл повреждён или обрезан — отсутствует завершающий блок',
+      );
     }
   }
 }

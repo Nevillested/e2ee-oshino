@@ -1,5 +1,21 @@
 import 'package:flutter/material.dart';
 
+/// Длительность "доезда" после отпускания пальца (и обычного pop без
+/// жеста) — см. handleDragEnd/reverseTransitionDuration.
+const _kTransitionDuration = Duration(milliseconds: 340);
+
+/// Открытие тапом раньше вело себя отдельно от возврата (свой,
+/// "телеграмный" стиль — фейд + небольшой сдвиг вместо слайда через весь
+/// экран, ветвление по animation.status), но пользователь эту анимацию не
+/// видел вообще ни при каком её увеличении — значит, дело было либо в
+/// самом ветвлении, либо ещё в чём-то. Единый со сдвигом механизм (тот же
+/// SlideTransition, что и у возврата), нарочно замедленный до 900мс,
+/// подтвердил, что анимация РАБОТАЕТ и ВИДНА — теперь просто возвращаем
+/// длительность в комфортный диапазон (короче, чем диагностические
+/// 900мс, но всё ещё заметно длиннее, чем полностью незаметные прежние
+/// варианты).
+const _kPushTransitionDuration = Duration(milliseconds: 550);
+
 /// Полностью самописный интерактивный переход "потянуть экран вправо,
 /// открыв предыдущий" — как в Telegram для Android: свайп работает из
 /// ЛЮБОЙ точки экрана (не только от края, в отличие от системного жеста
@@ -14,6 +30,21 @@ class SwipeBackPageRoute<T> extends PageRoute<T> {
   SwipeBackPageRoute({required this.builder, super.settings});
 
   final WidgetBuilder builder;
+
+  /// true, пока палец физически ведёт жест И пока идёт "доезд" после его
+  /// отпускания (см. handleDragEnd) — всё это время анимация должна идти
+  /// без ДОПОЛНИТЕЛЬНОЙ кривой (см. _LiveOrCurvedAnimation): у доезда уже
+  /// есть своя кривая, зашитая прямо в animateTo/animateBack, и повторное
+  /// применение кривой поверх уже искривлённого значения ломает монотонность
+  /// темпа. Кривая из buildTransitions нужна только для "настоящих", идущих
+  /// по времени переходов САМИ ПО СЕБЕ — открытие тапом и обычный системный
+  /// pop.
+  bool _liveDrag = false;
+
+  /// Счётчик жестов — нужен, чтобы отложенный колбэк settleDone() от
+  /// ПРЕДЫДУЩЕГО доезда не мог ошибочно сбросить _liveDrag, если пользователь
+  /// уже успел начать новый жест до того, как старый доезд доиграл до конца.
+  int _dragGeneration = 0;
 
   @override
   bool get opaque => true;
@@ -31,10 +62,10 @@ class SwipeBackPageRoute<T> extends PageRoute<T> {
   bool get maintainState => true;
 
   @override
-  Duration get transitionDuration => const Duration(milliseconds: 300);
+  Duration get transitionDuration => _kPushTransitionDuration;
 
   @override
-  Duration get reverseTransitionDuration => const Duration(milliseconds: 300);
+  Duration get reverseTransitionDuration => _kTransitionDuration;
 
   @override
   Widget buildPage(
@@ -52,16 +83,22 @@ class SwipeBackPageRoute<T> extends PageRoute<T> {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
-    final curved = CurvedAnimation(
+    // easeInOut, а не easeOut: у easeOut производная (скорость) МАКСИМАЛЬНА
+    // ровно в самом начале (по определению "ease OUT" — влетает сразу на
+    // полной скорости и затормаживает к концу) — субъективно это и
+    // читалось как "слишком быстрый старт". easeInOut разгоняется и
+    // тормозит одинаково плавно С ОБЕИХ сторон, пик скорости — только в
+    // середине.
+    final effective = _LiveOrCurvedAnimation(
       parent: animation,
-      curve: Curves.easeOutCubic,
-      reverseCurve: Curves.easeInCubic,
+      curve: Curves.easeInOut,
+      isLive: () => _liveDrag,
     );
     return SlideTransition(
       position: Tween<Offset>(
         begin: const Offset(1, 0),
         end: Offset.zero,
-      ).animate(curved),
+      ).animate(effective),
       child: DecoratedBoxTransition(
         decoration: DecorationTween(
           begin: const BoxDecoration(
@@ -82,7 +119,7 @@ class SwipeBackPageRoute<T> extends PageRoute<T> {
               ),
             ],
           ),
-        ).animate(curved),
+        ).animate(effective),
         child: child,
       ),
     );
@@ -94,11 +131,16 @@ class SwipeBackPageRoute<T> extends PageRoute<T> {
   // тут не используется.
 
   void handleDragStart() {
+    _dragGeneration++;
+    _liveDrag = true;
     navigator?.didStartUserGesture();
   }
 
   /// deltaFraction — смещение пальца за этот кадр в долях ширины экрана
-  /// (положительное — вправо, "к закрытию").
+  /// (положительное — вправо, "к закрытию"). Линейно, 1:1 с пальцем —
+  /// именно поэтому во время живого жеста кривая отключена (см. _liveDrag):
+  /// кривая, применённая к УЖЕ линейному значению, делает самое начало
+  /// движения почти незаметным, а отклик — "тугим".
   void handleDragUpdate(double deltaFraction) {
     controller?.value -= deltaFraction;
   }
@@ -108,7 +150,24 @@ class SwipeBackPageRoute<T> extends PageRoute<T> {
   void handleDragEnd(double velocityFraction) {
     final ctrl = controller;
     final nav = navigator;
-    if (ctrl == null || nav == null) return;
+    if (ctrl == null || nav == null) {
+      _liveDrag = false;
+      return;
+    }
+
+    // _liveDrag остаётся true на всё время "доезда" — сама кривая уже
+    // задана ниже, в animateTo/animateBack, и buildTransitions не должен
+    // искривлять их результат ещё раз (см. комментарий там). Возвращаем
+    // обычный (curved) режим только когда доезд по-настоящему завершился —
+    // на этот момент controller.value уже 0 или 1, где кривая ничего не
+    // меняет, так что сброс не даёт видимого скачка. Проверка поколения —
+    // на случай, если пользователь успел начать новый жест до того, как
+    // этот колбэк сработал: тогда сбрасывать _liveDrag уже нельзя, это
+    // сломало бы уже идущий новый жест.
+    final myGeneration = _dragGeneration;
+    void settleDone() {
+      if (_dragGeneration == myGeneration) _liveDrag = false;
+    }
 
     const flingVelocity = 1.0;
     final bool shouldPop;
@@ -123,20 +182,54 @@ class SwipeBackPageRoute<T> extends PageRoute<T> {
         nav.pop();
       }
       if (ctrl.isAnimating) {
-        ctrl.animateBack(
-          0.0,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
+        ctrl
+            .animateBack(
+              0.0,
+              duration: _kTransitionDuration,
+              curve: Curves.easeInOut,
+            )
+            .whenComplete(settleDone);
+      } else {
+        settleDone();
       }
     } else {
-      ctrl.animateTo(
-        1.0,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-      );
+      ctrl
+          .animateTo(
+            1.0,
+            duration: _kTransitionDuration,
+            curve: Curves.easeInOut,
+          )
+          .whenComplete(settleDone);
     }
     nav.didStopUserGesture();
+  }
+}
+
+/// Animation<double>, который либо прозрачно отдаёт значение родителя как
+/// есть (во время живого перетаскивания пальцем — isLive() == true), либо
+/// пропускает его через кривую (во всех остальных случаях — обычный
+/// программный переход, идущий по времени, где кривая уместна и нужна для
+/// красивого ускорения/замедления). AnimationWithParentMixin — тот же
+/// приём, которым внутри Flutter устроен сам CurvedAnimation, просто с
+/// возможностью на лету решать, применять кривую или нет.
+class _LiveOrCurvedAnimation extends Animation<double>
+    with AnimationWithParentMixin<double> {
+  _LiveOrCurvedAnimation({
+    required this.parent,
+    required this.curve,
+    required this.isLive,
+  });
+
+  @override
+  final Animation<double> parent;
+  final Curve curve;
+  final bool Function() isLive;
+
+  @override
+  double get value {
+    final v = parent.value;
+    if (isLive()) return v;
+    return curve.transform(v.clamp(0.0, 1.0));
   }
 }
 

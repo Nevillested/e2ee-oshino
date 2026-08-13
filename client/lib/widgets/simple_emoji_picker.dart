@@ -36,7 +36,10 @@ class _SimpleEmojiPickerState extends State<SimpleEmojiPicker> {
                   borderRadius: BorderRadius.circular(16),
                   onTap: () => setState(() => _activeCategory = category),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: isActive ? AppColors.primary : Colors.transparent,
                       borderRadius: BorderRadius.circular(16),
@@ -65,7 +68,10 @@ class _SimpleEmojiPickerState extends State<SimpleEmojiPicker> {
               return InkWell(
                 onTap: () => widget.onEmojiSelected(emojis[index]),
                 child: Center(
-                  child: Text(emojis[index], style: const TextStyle(fontSize: 24)),
+                  child: Text(
+                    emojis[index],
+                    style: const TextStyle(fontSize: 24),
+                  ),
                 ),
               );
             },

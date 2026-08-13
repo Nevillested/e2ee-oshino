@@ -3,7 +3,8 @@ String formatChatTime(int timestampMs) {
 
   final date = DateTime.fromMillisecondsSinceEpoch(timestampMs);
   final now = DateTime.now();
-  final isToday = date.year == now.year && date.month == now.month && date.day == now.day;
+  final isToday =
+      date.year == now.year && date.month == now.month && date.day == now.day;
 
   if (isToday) {
     final hh = date.hour.toString().padLeft(2, '0');

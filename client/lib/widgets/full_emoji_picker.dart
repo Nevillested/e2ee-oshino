@@ -14,8 +14,9 @@ class FullEmojiPicker extends StatelessWidget {
   // Список составлен из общих для Android и iOS эмодзи — используем уже
   // существующий curated-набор (emoji_data.dart), просто разворачиваем
   // все категории в один плоский список без разделения.
-  static final List<String> _allEmojis =
-      emojiCategories.values.expand((list) => list).toList();
+  static final List<String> _allEmojis = emojiCategories.values
+      .expand((list) => list)
+      .toList();
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +36,10 @@ class FullEmojiPicker extends StatelessWidget {
               // (планшеты) — крупнее, но их всегда ровно 10 в ряд.
               final fontSize = constraints.maxWidth * 0.55;
               return Center(
-                child: Text(_allEmojis[index], style: TextStyle(fontSize: fontSize)),
+                child: Text(
+                  _allEmojis[index],
+                  style: TextStyle(fontSize: fontSize),
+                ),
               );
             },
           ),

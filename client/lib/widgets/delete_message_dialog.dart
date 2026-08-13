@@ -37,7 +37,11 @@ class _DeleteMessagesDialogState extends State<_DeleteMessagesDialog> {
       actionsPadding: const EdgeInsets.fromLTRB(8, 0, 12, 8),
       title: const Text(
         'Удалить сообщение?',
-        style: TextStyle(color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w500),
+        style: TextStyle(
+          color: AppColors.textPrimary,
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+        ),
       ),
       content: InkWell(
         onTap: () => setState(() => _alsoForPeer = !_alsoForPeer),
@@ -61,7 +65,10 @@ class _DeleteMessagesDialogState extends State<_DeleteMessagesDialog> {
               Flexible(
                 child: Text(
                   'Также удалить у ${widget.peerName}',
-                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 14,
+                  ),
                 ),
               ),
             ],
@@ -71,11 +78,18 @@ class _DeleteMessagesDialogState extends State<_DeleteMessagesDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Отмена', style: TextStyle(color: AppColors.primary, fontSize: 15)),
+          child: const Text(
+            'Отмена',
+            style: TextStyle(color: AppColors.primary, fontSize: 15),
+          ),
         ),
         TextButton(
-          onPressed: () => Navigator.of(context).pop(DeleteConfirmResult(_alsoForPeer)),
-          child: const Text('Удалить', style: TextStyle(color: AppColors.primary, fontSize: 15)),
+          onPressed: () =>
+              Navigator.of(context).pop(DeleteConfirmResult(_alsoForPeer)),
+          child: const Text(
+            'Удалить',
+            style: TextStyle(color: AppColors.primary, fontSize: 15),
+          ),
         ),
       ],
     );

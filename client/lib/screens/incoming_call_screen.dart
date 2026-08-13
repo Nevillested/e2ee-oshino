@@ -45,7 +45,9 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
       if (state != CallState.incomingRinging) {
         _navigatedAway = true;
         final route = ModalRoute.of(context);
-        debugPrint('IncomingCallScreen: ухожу с экрана сам (removeRoute), route=$route');
+        debugPrint(
+          'IncomingCallScreen: ухожу с экрана сам (removeRoute), route=$route',
+        );
         if (route != null) {
           Navigator.of(context).removeRoute(route);
         }
@@ -72,9 +74,18 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
             const Spacer(),
             const CircleAvatar(radius: 56, child: Icon(Icons.person, size: 56)),
             const SizedBox(height: 20),
-            Text(peerLogin, style: const TextStyle(color: AppColors.textPrimary, fontSize: 24)),
+            Text(
+              peerLogin,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 24,
+              ),
+            ),
             const SizedBox(height: 8),
-            const Text('Входящий звонок', style: TextStyle(color: AppColors.textMuted)),
+            const Text(
+              'Входящий звонок',
+              style: TextStyle(color: AppColors.textMuted),
+            ),
             const Spacer(),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
@@ -100,7 +111,10 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                       CallService.instance.acceptCall();
                       Navigator.pushReplacement(
                         context,
-                        MaterialPageRoute(builder: (context) => CallScreen(peerLogin: peerLogin)),
+                        MaterialPageRoute(
+                          builder: (context) =>
+                              CallScreen(peerLogin: peerLogin),
+                        ),
                       );
                     },
                   ),
@@ -113,7 +127,11 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
     );
   }
 
-  Widget _actionButton({required IconData icon, required Color color, required VoidCallback onTap}) {
+  Widget _actionButton({
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
     return InkWell(
       onTap: onTap,
       customBorder: const CircleBorder(),

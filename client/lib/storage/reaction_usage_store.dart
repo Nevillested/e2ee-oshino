@@ -19,7 +19,9 @@ class ReactionUsageStore {
   static Future<Map<String, int>> _readCounts() async {
     final stored = await _storage.read(key: _key);
     if (stored == null) return {};
-    return (jsonDecode(stored) as Map<String, dynamic>).map((k, v) => MapEntry(k, v as int));
+    return (jsonDecode(stored) as Map<String, dynamic>).map(
+      (k, v) => MapEntry(k, v as int),
+    );
   }
 
   /// Полный список реакций, отсортированный по убыванию частоты

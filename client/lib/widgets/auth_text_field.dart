@@ -24,10 +24,7 @@ class AuthTextField extends StatelessWidget {
       controller: controller,
       obscureText: obscureText,
       keyboardType: keyboardType,
-      decoration: InputDecoration(
-        hintText: hintText,
-        suffixIcon: suffixIcon,
-      ),
+      decoration: InputDecoration(hintText: hintText, suffixIcon: suffixIcon),
     );
   }
 }

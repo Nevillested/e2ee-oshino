@@ -15,23 +15,26 @@ class OutboxStore {
     return list.cast<Map<String, dynamic>>();
   }
 
-static Future<void> add(
-  String toDeviceId,
-  Map<String, dynamic> envelope,
-  String messageId, {
-  bool silent = false,
-}) async {
-  final items = await getAll();
-  items.add({
-    'to_device_id': toDeviceId,
-    'envelope': envelope,
-    'message_id': messageId,
-    'silent': silent,
-  });
-  await _storage.write(key: _key, value: jsonEncode(items));
-}
+  static Future<void> add(
+    String toDeviceId,
+    Map<String, dynamic> envelope,
+    String messageId, {
+    bool silent = false,
+  }) async {
+    final items = await getAll();
+    items.add({
+      'to_device_id': toDeviceId,
+      'envelope': envelope,
+      'message_id': messageId,
+      'silent': silent,
+    });
+    await _storage.write(key: _key, value: jsonEncode(items));
+  }
 
   static Future<void> clear() async {
-    await _storage.write(key: _key, value: jsonEncode(<Map<String, dynamic>>[]));
+    await _storage.write(
+      key: _key,
+      value: jsonEncode(<Map<String, dynamic>>[]),
+    );
   }
 }

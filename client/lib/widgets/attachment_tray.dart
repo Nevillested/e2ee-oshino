@@ -6,7 +6,11 @@ class AttachmentTray extends StatelessWidget {
   final List<PendingAttachment> attachments;
   final void Function(PendingAttachment) onCancel;
 
-  const AttachmentTray({super.key, required this.attachments, required this.onCancel});
+  const AttachmentTray({
+    super.key,
+    required this.attachments,
+    required this.onCancel,
+  });
 
   String _extensionOf(String fileName) {
     final parts = fileName.split('.');
@@ -36,14 +40,24 @@ class AttachmentTray extends StatelessWidget {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(10),
                     child: att.isImage
-    ? Image.memory(att.bytes, width: 74, height: 74, fit: BoxFit.cover, cacheWidth: 148)                        : Container(
+                        ? Image.memory(
+                            att.bytes,
+                            width: 74,
+                            height: 74,
+                            fit: BoxFit.cover,
+                            cacheWidth: 148,
+                          )
+                        : Container(
                             width: 74,
                             height: 74,
                             color: AppColors.surface,
                             alignment: Alignment.center,
                             child: Text(
                               _extensionOf(att.fileName),
-                              style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                   ),
@@ -67,7 +81,10 @@ class AttachmentTray extends StatelessWidget {
                               ),
                               Text(
                                 '${att.displayedProgress.toInt()}%',
-                                style: const TextStyle(color: Colors.white, fontSize: 10),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                ),
                               ),
                             ],
                           ),
@@ -78,13 +95,21 @@ class AttachmentTray extends StatelessWidget {
                     const Positioned(
                       bottom: 2,
                       right: 2,
-                      child: Icon(Icons.check_circle, color: Colors.lightGreenAccent, size: 20),
+                      child: Icon(
+                        Icons.check_circle,
+                        color: Colors.lightGreenAccent,
+                        size: 20,
+                      ),
                     ),
                   if (att.status == AttachmentStatus.failed)
                     const Positioned(
                       bottom: 2,
                       right: 2,
-                      child: Icon(Icons.error, color: Colors.redAccent, size: 20),
+                      child: Icon(
+                        Icons.error,
+                        color: Colors.redAccent,
+                        size: 20,
+                      ),
                     ),
                   Positioned(
                     top: 2,
@@ -92,9 +117,16 @@ class AttachmentTray extends StatelessWidget {
                     child: GestureDetector(
                       onTap: () => onCancel(att),
                       child: Container(
-                        decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                        decoration: const BoxDecoration(
+                          color: Colors.black54,
+                          shape: BoxShape.circle,
+                        ),
                         padding: const EdgeInsets.all(2),
-                        child: const Icon(Icons.close, color: Colors.white, size: 14),
+                        child: const Icon(
+                          Icons.close,
+                          color: Colors.white,
+                          size: 14,
+                        ),
                       ),
                     ),
                   ),

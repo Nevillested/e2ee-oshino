@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import '../api/api_client.dart';
 import '../crypto/double_ratchet.dart';
 import '../crypto/message_cipher.dart';
@@ -32,7 +33,10 @@ class MessageRouter {
     final senderDeviceId = envelope['sender_device_id'] as String?;
     if (senderDeviceId == null) return;
 
-    await SendLock.run(senderDeviceId, () => _processIncoming(senderDeviceId, envelope));
+    await SendLock.run(
+      senderDeviceId,
+      () => _processIncoming(senderDeviceId, envelope),
+    );
   }
 
   static Future<void> _processIncoming(
@@ -51,8 +55,9 @@ class MessageRouter {
         );
         state = await RatchetState.initAsReceiver(
           rootKey: rootKey,
-          remoteEphemeralPubkey:
-              base64DecodeSafe(envelope['ephemeral_pubkey'] as String),
+          remoteEphemeralPubkey: base64DecodeSafe(
+            envelope['ephemeral_pubkey'] as String,
+          ),
         );
       }
 
@@ -71,7 +76,10 @@ class MessageRouter {
         await ChatStore.addMessage(
           ownerInfo.login,
           StoredMessage(
-            inner.messageId, inner.body, false, inner.sentAt,
+            inner.messageId,
+            inner.body,
+            false,
+            inner.sentAt,
             groupId: inner.groupId,
             replyToMessageId: inner.replyToMessageId,
             replyToPreview: inner.replyToPreview,
@@ -79,117 +87,160 @@ class MessageRouter {
           accountId: ownerInfo.accountId,
           incrementUnread: !chatIsOpen,
         );
-} else if (inner.type == 'media') {
-  final mediaInfo = jsonDecode(inner.body) as Map<String, dynamic>;
-  final isFile = mediaInfo['is_file'] as bool? ?? false;
-  final fileName = mediaInfo['file_name'] as String;
-  final fileSize = mediaInfo['file_size'] as int? ?? 0;
-  final chunked = mediaInfo['chunked'] as bool? ?? false;
+      } else if (inner.type == 'media') {
+        final mediaInfo = jsonDecode(inner.body) as Map<String, dynamic>;
+        final isFile = mediaInfo['is_file'] as bool? ?? false;
+        final fileName = mediaInfo['file_name'] as String;
+        final fileSize = mediaInfo['file_size'] as int? ?? 0;
+        final chunked = mediaInfo['chunked'] as bool? ?? false;
 
-  await ChatStore.addMessage(
-    ownerInfo.login,
-    StoredMessage(
-      inner.messageId,
-      isFile ? fileName : '📷 Фото',
-      false,
-      inner.sentAt,
-      isMedia: true,
-      isFile: isFile,
-      fileSize: fileSize,
-      chunked: chunked,
-      mediaId: mediaInfo['media_id'] as String,
-      mediaKeyBase64: mediaInfo['key'] as String,
-      mediaNonceBase64: mediaInfo['nonce'] as String?,
-      mediaMacBase64: mediaInfo['mac'] as String?,
-      fileName: fileName,
-      groupId: inner.groupId,
-      replyToMessageId: inner.replyToMessageId,
-      replyToPreview: inner.replyToPreview,
-    ),
-    accountId: ownerInfo.accountId,
-    incrementUnread: !chatIsOpen,
-  );
-} else if (inner.type == 'media_group') {
-  final groupInfo = jsonDecode(inner.body) as Map<String, dynamic>;
-  final caption = groupInfo['caption'] as String?;
-  final textMessageId = groupInfo['text_message_id'] as String?;
-  final filesRaw = (groupInfo['files'] as List<dynamic>).cast<Map<String, dynamic>>();
+        await ChatStore.addMessage(
+          ownerInfo.login,
+          StoredMessage(
+            inner.messageId,
+            isFile ? fileName : '📷 Фото',
+            false,
+            inner.sentAt,
+            isMedia: true,
+            isFile: isFile,
+            fileSize: fileSize,
+            chunked: chunked,
+            mediaId: mediaInfo['media_id'] as String,
+            mediaKeyBase64: mediaInfo['key'] as String,
+            mediaNonceBase64: mediaInfo['nonce'] as String?,
+            mediaMacBase64: mediaInfo['mac'] as String?,
+            fileName: fileName,
+            groupId: inner.groupId,
+            replyToMessageId: inner.replyToMessageId,
+            replyToPreview: inner.replyToPreview,
+          ),
+          accountId: ownerInfo.accountId,
+          incrementUnread: !chatIsOpen,
+        );
+      } else if (inner.type == 'voice' || inner.type == 'video_note') {
+        final info = jsonDecode(inner.body) as Map<String, dynamic>;
+        final isVideoNote = inner.type == 'video_note';
+        await ChatStore.addMessage(
+          ownerInfo.login,
+          StoredMessage(
+            inner.messageId,
+            isVideoNote ? '🎥 Видеосообщение' : '🎤 Голосовое сообщение',
+            false,
+            inner.sentAt,
+            isMedia: true,
+            isVoice: !isVideoNote,
+            isVideoNote: isVideoNote,
+            fileSize: info['file_size'] as int? ?? 0,
+            chunked: info['chunked'] as bool? ?? false,
+            durationMs: info['duration_ms'] as int?,
+            mediaId: info['media_id'] as String,
+            mediaKeyBase64: info['key'] as String,
+            mediaNonceBase64: info['nonce'] as String?,
+            mediaMacBase64: info['mac'] as String?,
+            groupId: inner.groupId,
+            replyToMessageId: inner.replyToMessageId,
+            replyToPreview: inner.replyToPreview,
+          ),
+          accountId: ownerInfo.accountId,
+          incrementUnread: !chatIsOpen,
+        );
+      } else if (inner.type == 'media_group') {
+        final groupInfo = jsonDecode(inner.body) as Map<String, dynamic>;
+        final caption = groupInfo['caption'] as String?;
+        final textMessageId = groupInfo['text_message_id'] as String?;
+        final filesRaw = (groupInfo['files'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
 
-  final newMessages = <StoredMessage>[];
-  if (caption != null && caption.isNotEmpty && textMessageId != null) {
-    newMessages.add(StoredMessage(textMessageId, caption, false, inner.sentAt, groupId: inner.groupId));
-  }
-  for (final f in filesRaw) {
-    final isFile = f['is_file'] as bool? ?? false;
-    final fileName = f['file_name'] as String;
-    newMessages.add(StoredMessage(
-      f['message_id'] as String,
-      isFile ? fileName : '📷 Фото',
-      false,
-      inner.sentAt,
-      isMedia: true,
-      isFile: isFile,
-      fileSize: f['file_size'] as int? ?? 0,
-      chunked: f['chunked'] as bool? ?? false,
-      mediaId: f['media_id'] as String,
-      mediaKeyBase64: f['key'] as String,
-      mediaNonceBase64: f['nonce'] as String?,
-      mediaMacBase64: f['mac'] as String?,
-      fileName: fileName,
-      groupId: inner.groupId,
-    ));
-  }
+        final newMessages = <StoredMessage>[];
+        if (caption != null && caption.isNotEmpty && textMessageId != null) {
+          newMessages.add(
+            StoredMessage(
+              textMessageId,
+              caption,
+              false,
+              inner.sentAt,
+              groupId: inner.groupId,
+            ),
+          );
+        }
+        for (final f in filesRaw) {
+          final isFile = f['is_file'] as bool? ?? false;
+          final fileName = f['file_name'] as String;
+          newMessages.add(
+            StoredMessage(
+              f['message_id'] as String,
+              isFile ? fileName : '📷 Фото',
+              false,
+              inner.sentAt,
+              isMedia: true,
+              isFile: isFile,
+              fileSize: f['file_size'] as int? ?? 0,
+              chunked: f['chunked'] as bool? ?? false,
+              mediaId: f['media_id'] as String,
+              mediaKeyBase64: f['key'] as String,
+              mediaNonceBase64: f['nonce'] as String?,
+              mediaMacBase64: f['mac'] as String?,
+              fileName: fileName,
+              groupId: inner.groupId,
+            ),
+          );
+        }
 
-  await ChatStore.addMessages(
-    ownerInfo.login,
-    newMessages,
-    accountId: ownerInfo.accountId,
-    incrementUnread: !chatIsOpen,
-  );
-} else if (inner.type == 'call_missed') {
-  // Собеседник звонил, пока мы были офлайн, и call_offer до нас в
-  // реальном времени не дошёл — это подстраховочное уведомление, дошедшее
-  // через обычную очередь offline-доставки, а не через сигналы звонка.
-  final callInfo = jsonDecode(inner.body) as Map<String, dynamic>;
-  final calledAt = callInfo['called_at'] as int? ?? inner.sentAt;
-  await ChatStore.addCallLog(
-    ownerInfo.login,
-    direction: 'incoming',
-    outcome: 'missed',
-    timestamp: calledAt,
-    accountId: ownerInfo.accountId,
-    incrementUnread: !chatIsOpen,
-  );
-} else if (inner.type == 'reaction') {
-  // Реакция от собеседника — с НАШЕЙ стороны это всегда "peer"-реакция,
-  // независимо от того, кто автор самого сообщения, на которое она стоит.
-  final data = jsonDecode(inner.body) as Map<String, dynamic>;
-  final targetId = data['target_id'] as String?;
-  if (targetId != null) {
-    await ChatStore.setReaction(
-      ownerInfo.login,
-      targetId,
-      isMine: false,
-      emoji: data['emoji'] as String?,
-    );
-  }
-} else if (inner.type == 'pin') {
-  final data = jsonDecode(inner.body) as Map<String, dynamic>;
-  final targetId = data['target_id'] as String?;
-  final pinned = data['pinned'] as bool? ?? false;
-  await ChatStore.setPinned(ownerInfo.login, pinned ? targetId : null);
-} else if (inner.type == 'edit') {
-  final data = jsonDecode(inner.body) as Map<String, dynamic>;
-  final targetId = data['target_id'] as String?;
-  final newText = data['text'] as String?;
-  if (targetId != null && newText != null) {
-    await ChatStore.editMessageText(ownerInfo.login, targetId, newText);
-  }
-} else if (inner.type == 'delete') {
-  final data = jsonDecode(inner.body) as Map<String, dynamic>;
-  final targetIds = (data['target_ids'] as List<dynamic>?)?.cast<String>() ?? const [];
-  await ChatStore.deleteMessages(ownerInfo.login, targetIds);
-}
+        await ChatStore.addMessages(
+          ownerInfo.login,
+          newMessages,
+          accountId: ownerInfo.accountId,
+          incrementUnread: !chatIsOpen,
+        );
+      } else if (inner.type == 'call_missed') {
+        // Собеседник звонил, пока мы были офлайн, и call_offer до нас в
+        // реальном времени не дошёл — это подстраховочное уведомление, дошедшее
+        // через обычную очередь offline-доставки, а не через сигналы звонка.
+        final callInfo = jsonDecode(inner.body) as Map<String, dynamic>;
+        final calledAt = callInfo['called_at'] as int? ?? inner.sentAt;
+        await ChatStore.addCallLog(
+          ownerInfo.login,
+          direction: 'incoming',
+          outcome: 'missed',
+          timestamp: calledAt,
+          accountId: ownerInfo.accountId,
+          incrementUnread: !chatIsOpen,
+        );
+      } else if (inner.type == 'reaction') {
+        // Реакция от собеседника — с НАШЕЙ стороны это всегда "peer"-реакция,
+        // независимо от того, кто автор самого сообщения, на которое она стоит.
+        final data = jsonDecode(inner.body) as Map<String, dynamic>;
+        final targetId = data['target_id'] as String?;
+        if (targetId != null) {
+          await ChatStore.setReaction(
+            ownerInfo.login,
+            targetId,
+            isMine: false,
+            emoji: data['emoji'] as String?,
+          );
+          // Виброотклик на чужую реакцию — только если мы прямо сейчас
+          // смотрим именно в этот чат (иначе непонятно, по какому поводу
+          // телефон дёрнулся, если мы вообще не видим этот пузырь).
+          if (chatIsOpen) HapticFeedback.vibrate();
+        }
+      } else if (inner.type == 'pin') {
+        final data = jsonDecode(inner.body) as Map<String, dynamic>;
+        final targetId = data['target_id'] as String?;
+        final pinned = data['pinned'] as bool? ?? false;
+        await ChatStore.setPinned(ownerInfo.login, pinned ? targetId : null);
+      } else if (inner.type == 'edit') {
+        final data = jsonDecode(inner.body) as Map<String, dynamic>;
+        final targetId = data['target_id'] as String?;
+        final newText = data['text'] as String?;
+        if (targetId != null && newText != null) {
+          await ChatStore.editMessageText(ownerInfo.login, targetId, newText);
+        }
+      } else if (inner.type == 'delete') {
+        final data = jsonDecode(inner.body) as Map<String, dynamic>;
+        final targetIds =
+            (data['target_ids'] as List<dynamic>?)?.cast<String>() ?? const [];
+        await ChatStore.deleteMessages(ownerInfo.login, targetIds);
+      }
 
       // Реакция/пин/правка/удаление — служебные события, не самостоятельные
       // сообщения: не заслуживают звука, даже если чат закрыт (собеседник
@@ -203,7 +254,9 @@ class MessageRouter {
     }
   }
 
-  static Future<({String accountId, String login})?> _resolveOwner(String deviceId) async {
+  static Future<({String accountId, String login})?> _resolveOwner(
+    String deviceId,
+  ) async {
     final token = await Session.getToken();
     if (token == null) return null;
     return ApiClient().getDeviceOwnerInfo(token, deviceId);

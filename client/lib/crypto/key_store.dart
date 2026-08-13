@@ -13,9 +13,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 /// делать сам X3DH-обмен при первом сообщении новому собеседнику.
 class KeyStore {
   static const _storage = FlutterSecureStorage();
-static const _identityDhPrivateKey = 'identity_dh_private_key';
-static const _identityDhPublicKey = 'identity_dh_public_key';
-static const _identityDhSignature = 'identity_dh_signature';
+  static const _identityDhPrivateKey = 'identity_dh_private_key';
+  static const _identityDhPublicKey = 'identity_dh_public_key';
+  static const _identityDhSignature = 'identity_dh_signature';
   static const _identityPrivateKey = 'identity_private_key';
   static const _identityPublicKey = 'identity_public_key';
   static const _signedPrekeyPrivateKey = 'signed_prekey_private_key';
@@ -56,57 +56,59 @@ static const _identityDhSignature = 'identity_dh_signature';
     return keyPair;
   }
 
-/// Возвращает существующую пару X25519-ключей для Диффи-Хеллмана (identity
-/// DH key), либо создаёт новую и сразу подписывает её публичную часть
-/// Ed25519-ключом — эта подпись доказывает собеседнику, что именно
-/// владелец identity-ключа выпустил этот DH-ключ, а не подменил его сервер.
-static Future<({SimpleKeyPair keyPair, List<int> signature})>
-    getOrCreateIdentityDhKeyPair(SimpleKeyPair identityKeyPair) async {
-  final storedPrivate = await _storage.read(key: _identityDhPrivateKey);
-  final storedPublic = await _storage.read(key: _identityDhPublicKey);
-  final storedSignature = await _storage.read(key: _identityDhSignature);
+  /// Возвращает существующую пару X25519-ключей для Диффи-Хеллмана (identity
+  /// DH key), либо создаёт новую и сразу подписывает её публичную часть
+  /// Ed25519-ключом — эта подпись доказывает собеседнику, что именно
+  /// владелец identity-ключа выпустил этот DH-ключ, а не подменил его сервер.
+  static Future<({SimpleKeyPair keyPair, List<int> signature})>
+  getOrCreateIdentityDhKeyPair(SimpleKeyPair identityKeyPair) async {
+    final storedPrivate = await _storage.read(key: _identityDhPrivateKey);
+    final storedPublic = await _storage.read(key: _identityDhPublicKey);
+    final storedSignature = await _storage.read(key: _identityDhSignature);
 
-  if (storedPrivate != null && storedPublic != null && storedSignature != null) {
-    final keyPair = SimpleKeyPairData(
-      base64Decode(storedPrivate),
-      publicKey: SimplePublicKey(
-        base64Decode(storedPublic),
+    if (storedPrivate != null &&
+        storedPublic != null &&
+        storedSignature != null) {
+      final keyPair = SimpleKeyPairData(
+        base64Decode(storedPrivate),
+        publicKey: SimplePublicKey(
+          base64Decode(storedPublic),
+          type: KeyPairType.x25519,
+        ),
         type: KeyPairType.x25519,
-      ),
-      type: KeyPairType.x25519,
+      );
+      return (keyPair: keyPair, signature: base64Decode(storedSignature));
+    }
+
+    final dhKeyPair = await X25519().newKeyPair();
+    final privateBytes = await dhKeyPair.extractPrivateKeyBytes();
+    final publicKey = await dhKeyPair.extractPublicKey();
+
+    final signature = await Ed25519().sign(
+      publicKey.bytes,
+      keyPair: identityKeyPair,
     );
-    return (keyPair: keyPair, signature: base64Decode(storedSignature));
+
+    await _storage.write(
+      key: _identityDhPrivateKey,
+      value: base64Encode(privateBytes),
+    );
+    await _storage.write(
+      key: _identityDhPublicKey,
+      value: base64Encode(publicKey.bytes),
+    );
+    await _storage.write(
+      key: _identityDhSignature,
+      value: base64Encode(signature.bytes),
+    );
+
+    return (keyPair: dhKeyPair, signature: signature.bytes);
   }
-
-  final dhKeyPair = await X25519().newKeyPair();
-  final privateBytes = await dhKeyPair.extractPrivateKeyBytes();
-  final publicKey = await dhKeyPair.extractPublicKey();
-
-  final signature = await Ed25519().sign(
-    publicKey.bytes,
-    keyPair: identityKeyPair,
-  );
-
-  await _storage.write(
-    key: _identityDhPrivateKey,
-    value: base64Encode(privateBytes),
-  );
-  await _storage.write(
-    key: _identityDhPublicKey,
-    value: base64Encode(publicKey.bytes),
-  );
-  await _storage.write(
-    key: _identityDhSignature,
-    value: base64Encode(signature.bytes),
-  );
-
-  return (keyPair: dhKeyPair, signature: signature.bytes);
-}
 
   /// Генерирует новый signed prekey (X25519, для будущего Диффи-Хеллмана),
   /// подписывает его identity-ключом, сохраняет приватную часть локально.
   static Future<({List<int> publicKey, List<int> signature})>
-      createSignedPrekey(SimpleKeyPair identityKeyPair) async {
+  createSignedPrekey(SimpleKeyPair identityKeyPair) async {
     final prekeyPair = await X25519().newKeyPair();
     final prekeyPrivate = await prekeyPair.extractPrivateKeyBytes();
     final prekeyPublic = await prekeyPair.extractPublicKey();
@@ -160,45 +162,52 @@ static Future<({SimpleKeyPair keyPair, List<int> signature})>
     return _storage.write(key: _deviceIdKey, value: deviceId);
   }
 
-/// Полностью стирает все ключи и device_id с устройства. Используется
-/// при выходе из аккаунта — без этих ключей переписку восстановить
-/// невозможно, поэтому это необратимое действие.
-static Future<void> clearAll() async {
-  await _storage.deleteAll();
-}
-
-
-/// Загружает уже сохранённый signed prekey — без генерации нового.
-/// Нужен получателю при входящем X3DH.
-static Future<SimpleKeyPair?> getStoredSignedPrekeyPair() async {
-  final storedPrivate = await _storage.read(key: _signedPrekeyPrivateKey);
-  final storedPublic = await _storage.read(key: _signedPrekeyPublicKey);
-  if (storedPrivate == null || storedPublic == null) return null;
-
-  return SimpleKeyPairData(
-    base64Decode(storedPrivate),
-    publicKey: SimplePublicKey(base64Decode(storedPublic), type: KeyPairType.x25519),
-    type: KeyPairType.x25519,
-  );
-}
-
-/// Ищет сохранённый one-time prekey по его публичной части — нужен,
-/// когда собеседник использовал конкретно этот ключ в своём заголовке.
-static Future<SimpleKeyPair?> findOneTimePrekeyPair(String publicKeyBase64) async {
-  final stored = await _storage.read(key: _oneTimePrekeysKey);
-  if (stored == null) return null;
-
-  final list = jsonDecode(stored) as List<dynamic>;
-  for (final entry in list) {
-    final map = entry as Map<String, dynamic>;
-    if (map['public'] == publicKeyBase64) {
-      return SimpleKeyPairData(
-        base64Decode(map['private'] as String),
-        publicKey: SimplePublicKey(base64Decode(map['public'] as String), type: KeyPairType.x25519),
-        type: KeyPairType.x25519,
-      );
-    }
+  /// Полностью стирает все ключи и device_id с устройства. Используется
+  /// при выходе из аккаунта — без этих ключей переписку восстановить
+  /// невозможно, поэтому это необратимое действие.
+  static Future<void> clearAll() async {
+    await _storage.deleteAll();
   }
-  return null;
-}
+
+  /// Загружает уже сохранённый signed prekey — без генерации нового.
+  /// Нужен получателю при входящем X3DH.
+  static Future<SimpleKeyPair?> getStoredSignedPrekeyPair() async {
+    final storedPrivate = await _storage.read(key: _signedPrekeyPrivateKey);
+    final storedPublic = await _storage.read(key: _signedPrekeyPublicKey);
+    if (storedPrivate == null || storedPublic == null) return null;
+
+    return SimpleKeyPairData(
+      base64Decode(storedPrivate),
+      publicKey: SimplePublicKey(
+        base64Decode(storedPublic),
+        type: KeyPairType.x25519,
+      ),
+      type: KeyPairType.x25519,
+    );
+  }
+
+  /// Ищет сохранённый one-time prekey по его публичной части — нужен,
+  /// когда собеседник использовал конкретно этот ключ в своём заголовке.
+  static Future<SimpleKeyPair?> findOneTimePrekeyPair(
+    String publicKeyBase64,
+  ) async {
+    final stored = await _storage.read(key: _oneTimePrekeysKey);
+    if (stored == null) return null;
+
+    final list = jsonDecode(stored) as List<dynamic>;
+    for (final entry in list) {
+      final map = entry as Map<String, dynamic>;
+      if (map['public'] == publicKeyBase64) {
+        return SimpleKeyPairData(
+          base64Decode(map['private'] as String),
+          publicKey: SimplePublicKey(
+            base64Decode(map['public'] as String),
+            type: KeyPairType.x25519,
+          ),
+          type: KeyPairType.x25519,
+        );
+      }
+    }
+    return null;
+  }
 }

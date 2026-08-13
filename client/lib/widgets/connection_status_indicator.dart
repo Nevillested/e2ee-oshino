@@ -12,7 +12,8 @@ class ConnectionStatusIndicator extends StatefulWidget {
   const ConnectionStatusIndicator({super.key});
 
   @override
-  State<ConnectionStatusIndicator> createState() => _ConnectionStatusIndicatorState();
+  State<ConnectionStatusIndicator> createState() =>
+      _ConnectionStatusIndicatorState();
 }
 
 class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {

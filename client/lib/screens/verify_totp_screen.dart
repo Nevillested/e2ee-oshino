@@ -32,10 +32,12 @@ class _VerifyTotpScreenState extends State<VerifyTotpScreen> {
     _codeController.dispose();
     super.dispose();
   }
-String _extractSecret(String otpauthUrl) {
-  final uri = Uri.parse(otpauthUrl);
-  return uri.queryParameters['secret'] ?? '';
-}
+
+  String _extractSecret(String otpauthUrl) {
+    final uri = Uri.parse(otpauthUrl);
+    return uri.queryParameters['secret'] ?? '';
+  }
+
   Future<void> _handleVerify() async {
     setState(() {
       _isLoading = true;
@@ -82,53 +84,56 @@ String _extractSecret(String otpauthUrl) {
                 '(Google Authenticator, Aegis и т.п.), затем введи текущий код:',
                 style: TextStyle(color: AppColors.textMuted),
               ),
-const SizedBox(height: 20),
-Center(
-  child: Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(14),
-    ),
-    child: QrImageView(
-      data: widget.totpUrl,
-      version: QrVersions.auto,
-      size: 200,
-    ),
-  ),
-),
-const SizedBox(height: 20),
-Text(
-  'Или введи секретный код вручную:',
-  style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
-),
-const SizedBox(height: 8),
-Row(
-  children: [
-    Expanded(
-      child: SelectableText(
-        _extractSecret(widget.totpUrl),
-        style: const TextStyle(
-          color: AppColors.textPrimary,
-          fontSize: 16,
-          letterSpacing: 1.5,
-        ),
-      ),
-    ),
-    IconButton(
-      icon: const Icon(Icons.copy, color: AppColors.primary),
-      onPressed: () {
-        Clipboard.setData(
-          ClipboardData(text: _extractSecret(widget.totpUrl)),
-        );
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Код скопирован')),
-        );
-      },
-    ),
-  ],
-),
-const SizedBox(height: 24),
+              const SizedBox(height: 20),
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: QrImageView(
+                    data: widget.totpUrl,
+                    version: QrVersions.auto,
+                    size: 200,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Или введи секретный код вручную:',
+                style: const TextStyle(
+                  color: AppColors.textMuted,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      _extractSecret(widget.totpUrl),
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 16,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy, color: AppColors.primary),
+                    onPressed: () {
+                      Clipboard.setData(
+                        ClipboardData(text: _extractSecret(widget.totpUrl)),
+                      );
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Код скопирован')),
+                      );
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
               AuthTextField(
                 controller: _codeController,
                 hintText: 'Код из аутентификатора',

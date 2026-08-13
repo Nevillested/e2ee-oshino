@@ -88,7 +88,10 @@ class RatchetState {
     final newKeyPair = await _x25519.newKeyPair();
     final shared = await _x25519.sharedSecretKey(
       keyPair: newKeyPair,
-      remotePublicKey: SimplePublicKey(receivingRatchetPublicKey!, type: KeyPairType.x25519),
+      remotePublicKey: SimplePublicKey(
+        receivingRatchetPublicKey!,
+        type: KeyPairType.x25519,
+      ),
     );
     final combined = [...rootKey, ...await shared.extractBytes()];
     final derived = await _hkdf(combined, 'oshinobu-ratchet', 64);
@@ -102,7 +105,10 @@ class RatchetState {
   Future<void> _dhRatchetStepForReceiving(List<int> newRemotePubkey) async {
     final shared = await _x25519.sharedSecretKey(
       keyPair: sendingRatchetKeyPair,
-      remotePublicKey: SimplePublicKey(newRemotePubkey, type: KeyPairType.x25519),
+      remotePublicKey: SimplePublicKey(
+        newRemotePubkey,
+        type: KeyPairType.x25519,
+      ),
     );
     final combined = [...rootKey, ...await shared.extractBytes()];
     final derived = await _hkdf(combined, 'oshinobu-ratchet', 64);
@@ -116,7 +122,8 @@ class RatchetState {
     skippedReceivingKeys = {};
   }
 
-  Future<({Map<String, dynamic> header, List<int> messageKey})> nextSendingKey() async {
+  Future<({Map<String, dynamic> header, List<int> messageKey})>
+  nextSendingKey() async {
     if (needsSendingRatchet) {
       await _dhRatchetStepForSending();
     }
@@ -139,7 +146,8 @@ class RatchetState {
     final incomingPubkey = base64Decode(header['ratchet_pubkey'] as String);
     final messageNumber = header['message_number'] as int;
 
-    final isNewRatchetKey = receivingRatchetPublicKey == null ||
+    final isNewRatchetKey =
+        receivingRatchetPublicKey == null ||
         !_bytesEqual(receivingRatchetPublicKey!, incomingPubkey);
 
     if (isNewRatchetKey) {
@@ -155,11 +163,15 @@ class RatchetState {
     if (messageNumber < receiveMessageNumber) {
       // Номер меньше уже обработанного и не найден среди пропущенных —
       // это повтор или испорченные данные, ключ восстановить невозможно.
-      throw Exception('Сообщение с номером $messageNumber уже было обработано ранее');
+      throw Exception(
+        'Сообщение с номером $messageNumber уже было обработано ранее',
+      );
     }
 
     if (messageNumber - receiveMessageNumber > _maxSkippedKeys) {
-      throw Exception('Слишком большой разрыв в номерах сообщений — отказ от обработки');
+      throw Exception(
+        'Слишком большой разрыв в номерах сообщений — отказ от обработки',
+      );
     }
 
     // Догоняем цепочку до нужного номера, попутно запоминая ключи для
@@ -190,8 +202,12 @@ class RatchetState {
     final publicKey = await sendingRatchetKeyPair.extractPublicKey();
     return {
       'root_key': base64Encode(rootKey),
-      'sending_chain_key': sendingChainKey != null ? base64Encode(sendingChainKey!) : null,
-      'receiving_chain_key': receivingChainKey != null ? base64Encode(receivingChainKey!) : null,
+      'sending_chain_key': sendingChainKey != null
+          ? base64Encode(sendingChainKey!)
+          : null,
+      'receiving_chain_key': receivingChainKey != null
+          ? base64Encode(receivingChainKey!)
+          : null,
       'sending_ratchet_private': base64Encode(privateBytes),
       'sending_ratchet_public': base64Encode(publicKey.bytes),
       'receiving_ratchet_public': receivingRatchetPublicKey != null
@@ -216,7 +232,8 @@ class RatchetState {
       type: KeyPairType.x25519,
     );
 
-    final skippedRaw = json['skipped_receiving_keys'] as Map<String, dynamic>? ?? {};
+    final skippedRaw =
+        json['skipped_receiving_keys'] as Map<String, dynamic>? ?? {};
     final skipped = skippedRaw.map(
       (key, value) => MapEntry(int.parse(key), base64Decode(value as String)),
     );

@@ -54,16 +54,21 @@ class PipService {
   /// его телу помечается так же, intent-экстрой, а не через
   /// flutter_local_notifications payload.
   static final _openCallScreenController = StreamController<void>.broadcast();
-  static Stream<void> get openCallScreenRequests => _openCallScreenController.stream;
+  static Stream<void> get openCallScreenRequests =>
+      _openCallScreenController.stream;
 
   static bool _initialized = false;
 
   static void _ensureInitialized() {
     if (_initialized) return;
     _initialized = true;
-    debugPrint('PipService: устанавливаю обработчик входящих вызовов на канале oshinobu/pip');
+    debugPrint(
+      'PipService: устанавливаю обработчик входящих вызовов на канале oshinobu/pip',
+    );
     _channel.setMethodCallHandler((call) async {
-      debugPrint('PipService: пришёл вызов от нативной стороны: ${call.method}');
+      debugPrint(
+        'PipService: пришёл вызов от нативной стороны: ${call.method}',
+      );
       if (call.method == 'pipModeChanged') {
         final args = (call.arguments as Map).cast<String, dynamic>();
         final isInPip = args['isInPip'] as bool? ?? false;
@@ -73,13 +78,19 @@ class PipService {
           'reopen' => PipExitReason.reopen,
           _ => null,
         };
-        debugPrint('PipService: pipModeChanged isInPip=$isInPip reason=$reasonStr');
+        debugPrint(
+          'PipService: pipModeChanged isInPip=$isInPip reason=$reasonStr',
+        );
         _pipModeController.add(PipModeEvent(isInPip, reason));
       } else if (call.method == 'autoAcceptRequested') {
-        debugPrint('PipService: autoAcceptRequested -> публикую в autoAcceptRequests');
+        debugPrint(
+          'PipService: autoAcceptRequested -> публикую в autoAcceptRequests',
+        );
         _autoAcceptController.add(null);
       } else if (call.method == 'openCallScreenRequested') {
-        debugPrint('PipService: openCallScreenRequested -> публикую в openCallScreenRequests');
+        debugPrint(
+          'PipService: openCallScreenRequested -> публикую в openCallScreenRequests',
+        );
         _openCallScreenController.add(null);
       }
     });
@@ -145,7 +156,8 @@ class PipService {
   static Future<bool> consumeAutoAccept() async {
     _ensureInitialized();
     try {
-      final result = await _channel.invokeMethod<bool>('consumeAutoAccept') ?? false;
+      final result =
+          await _channel.invokeMethod<bool>('consumeAutoAccept') ?? false;
       debugPrint('PipService: consumeAutoAccept() -> $result');
       return result;
     } catch (e) {

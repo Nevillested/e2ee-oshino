@@ -95,11 +95,17 @@ class _SystemPipVideoViewState extends State<SystemPipVideoView> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const CircleAvatar(radius: 28, child: Icon(Icons.person, size: 28)),
+                      const CircleAvatar(
+                        radius: 28,
+                        child: Icon(Icons.person, size: 28),
+                      ),
                       const SizedBox(height: 8),
                       Text(
                         _call.currentPeerLogin ?? '',
-                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                        ),
                       ),
                     ],
                   ),

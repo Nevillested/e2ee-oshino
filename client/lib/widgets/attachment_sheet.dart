@@ -30,9 +30,27 @@ Future<AttachmentPickType?> showAttachmentSheet(BuildContext context) {
                   height: tileSize,
                   child: Row(
                     children: [
-                      _tile(context, tileSize, Icons.photo_library, 'Галерея', AttachmentPickType.gallery),
-                      _tile(context, tileSize, Icons.camera_alt, 'Камера', AttachmentPickType.camera),
-                      _tile(context, tileSize, Icons.insert_drive_file, 'Файл', AttachmentPickType.file),
+                      _tile(
+                        context,
+                        tileSize,
+                        Icons.photo_library,
+                        'Галерея',
+                        AttachmentPickType.gallery,
+                      ),
+                      _tile(
+                        context,
+                        tileSize,
+                        Icons.camera_alt,
+                        'Камера',
+                        AttachmentPickType.camera,
+                      ),
+                      _tile(
+                        context,
+                        tileSize,
+                        Icons.insert_drive_file,
+                        'Файл',
+                        AttachmentPickType.file,
+                      ),
                     ],
                   ),
                 );
@@ -45,7 +63,13 @@ Future<AttachmentPickType?> showAttachmentSheet(BuildContext context) {
   );
 }
 
-Widget _tile(BuildContext context, double size, IconData icon, String label, AttachmentPickType type) {
+Widget _tile(
+  BuildContext context,
+  double size,
+  IconData icon,
+  String label,
+  AttachmentPickType type,
+) {
   return InkWell(
     onTap: () => Navigator.pop(context, type),
     child: SizedBox(

@@ -9,7 +9,10 @@ class SessionStore {
   static const _storage = FlutterSecureStorage();
   static String _key(String remoteDeviceId) => 'ratchet:$remoteDeviceId';
 
-  static Future<void> saveState(String remoteDeviceId, RatchetState state) async {
+  static Future<void> saveState(
+    String remoteDeviceId,
+    RatchetState state,
+  ) async {
     final json = await state.toJson();
     await _storage.write(key: _key(remoteDeviceId), value: jsonEncode(json));
   }

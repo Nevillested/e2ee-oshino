@@ -18,10 +18,7 @@ void main() {
       // под капотом в момент входа в PiP.
       builder: (context, child) {
         return Stack(
-          children: [
-            if (child != null) child,
-            const SystemPipVideoView(),
-          ],
+          children: [if (child != null) child, const SystemPipVideoView()],
         );
       },
     ),

@@ -31,48 +31,114 @@ class InnerMessage {
     String body, {
     String? replyToMessageId,
     String? replyToPreview,
-  }) =>
-      InnerMessage(
-        messageId: _uuid.v4(),
-        type: 'text',
-        sentAt: DateTime.now().millisecondsSinceEpoch,
-        body: body,
-        replyToMessageId: replyToMessageId,
-        replyToPreview: replyToPreview,
-      );
-
-factory InnerMessage.media({
-  String? messageId,
-  required String mediaId,
-  required String keyBase64,
-  String? nonceBase64,
-  String? macBase64,
-  required String fileName,
-  bool isFile = false,
-  int fileSize = 0,
-  bool chunked = false,
-  String? replyToMessageId,
-  String? replyToPreview,
-}) {
-  final body = jsonEncode({
-    'media_id': mediaId,
-    'key': keyBase64,
-    'nonce': nonceBase64,
-    'mac': macBase64,
-    'file_name': fileName,
-    'is_file': isFile,
-    'file_size': fileSize,
-    'chunked': chunked,
-  });
-  return InnerMessage(
-    messageId: messageId ?? _uuid.v4(),
-    type: 'media',
+  }) => InnerMessage(
+    messageId: _uuid.v4(),
+    type: 'text',
     sentAt: DateTime.now().millisecondsSinceEpoch,
     body: body,
     replyToMessageId: replyToMessageId,
     replyToPreview: replyToPreview,
   );
-}
+
+  factory InnerMessage.media({
+    String? messageId,
+    required String mediaId,
+    required String keyBase64,
+    String? nonceBase64,
+    String? macBase64,
+    required String fileName,
+    bool isFile = false,
+    int fileSize = 0,
+    bool chunked = false,
+    String? replyToMessageId,
+    String? replyToPreview,
+  }) {
+    final body = jsonEncode({
+      'media_id': mediaId,
+      'key': keyBase64,
+      'nonce': nonceBase64,
+      'mac': macBase64,
+      'file_name': fileName,
+      'is_file': isFile,
+      'file_size': fileSize,
+      'chunked': chunked,
+    });
+    return InnerMessage(
+      messageId: messageId ?? _uuid.v4(),
+      type: 'media',
+      sentAt: DateTime.now().millisecondsSinceEpoch,
+      body: body,
+      replyToMessageId: replyToMessageId,
+      replyToPreview: replyToPreview,
+    );
+  }
+
+  /// Голосовое сообщение — зашифровано/загружено тем же путём, что и
+  /// любой файл (см. InnerMessage.media), просто отдельный тип, чтобы
+  /// получатель однозначно знал рендерить плеер, а не пузырь с фото/файлом.
+  factory InnerMessage.voice({
+    String? messageId,
+    required String mediaId,
+    required String keyBase64,
+    String? nonceBase64,
+    String? macBase64,
+    int fileSize = 0,
+    bool chunked = false,
+    required int durationMs,
+    String? replyToMessageId,
+    String? replyToPreview,
+  }) {
+    final body = jsonEncode({
+      'media_id': mediaId,
+      'key': keyBase64,
+      'nonce': nonceBase64,
+      'mac': macBase64,
+      'file_size': fileSize,
+      'chunked': chunked,
+      'duration_ms': durationMs,
+    });
+    return InnerMessage(
+      messageId: messageId ?? _uuid.v4(),
+      type: 'voice',
+      sentAt: DateTime.now().millisecondsSinceEpoch,
+      body: body,
+      replyToMessageId: replyToMessageId,
+      replyToPreview: replyToPreview,
+    );
+  }
+
+  /// Видео-сообщение (у нас квадратное, а не кружком) — тот же принцип,
+  /// что и .voice.
+  factory InnerMessage.videoNote({
+    String? messageId,
+    required String mediaId,
+    required String keyBase64,
+    String? nonceBase64,
+    String? macBase64,
+    int fileSize = 0,
+    bool chunked = false,
+    required int durationMs,
+    String? replyToMessageId,
+    String? replyToPreview,
+  }) {
+    final body = jsonEncode({
+      'media_id': mediaId,
+      'key': keyBase64,
+      'nonce': nonceBase64,
+      'mac': macBase64,
+      'file_size': fileSize,
+      'chunked': chunked,
+      'duration_ms': durationMs,
+    });
+    return InnerMessage(
+      messageId: messageId ?? _uuid.v4(),
+      type: 'video_note',
+      sentAt: DateTime.now().millisecondsSinceEpoch,
+      body: body,
+      replyToMessageId: replyToMessageId,
+      replyToPreview: replyToPreview,
+    );
+  }
 
   /// Несколько файлов (и опционально подпись), отправленные одним
   /// пользовательским действием, уходят собеседнику ОДНИМ зашифрованным
@@ -181,14 +247,14 @@ factory InnerMessage.media({
   }
 
   String encode() => jsonEncode({
-        'message_id': messageId,
-        'type': type,
-        'sent_at': sentAt,
-        'body': body,
-        'group_id': groupId,
-        'reply_to_id': replyToMessageId,
-        'reply_to_preview': replyToPreview,
-      });
+    'message_id': messageId,
+    'type': type,
+    'sent_at': sentAt,
+    'body': body,
+    'group_id': groupId,
+    'reply_to_id': replyToMessageId,
+    'reply_to_preview': replyToPreview,
+  });
 
   static InnerMessage decode(String raw) {
     final json = jsonDecode(raw) as Map<String, dynamic>;

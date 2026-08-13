@@ -25,17 +25,26 @@ Future<void> confirmLogout(BuildContext context) async {
     context: context,
     builder: (context) => AlertDialog(
       backgroundColor: AppColors.surface,
-      title: const Text('Выйти из аккаунта?', style: TextStyle(color: AppColors.textPrimary)),
+      title: const Text(
+        'Выйти из аккаунта?',
+        style: TextStyle(color: AppColors.textPrimary),
+      ),
       content: const Text(
         'Ключи шифрования будут удалены с этого устройства. '
         'Без них восстановить переписку будет невозможно.',
         style: TextStyle(color: AppColors.textMuted),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Отмена'),
+        ),
         TextButton(
           onPressed: () => Navigator.pop(context, true),
-          child: const Text('Я понимаю, выйти из аккаунта', style: TextStyle(color: Colors.red)),
+          child: const Text(
+            'Я понимаю, выйти из аккаунта',
+            style: TextStyle(color: Colors.red),
+          ),
         ),
       ],
     ),
@@ -51,17 +60,26 @@ Future<void> confirmDeleteAccount(BuildContext context) async {
     context: context,
     builder: (context) => AlertDialog(
       backgroundColor: AppColors.surface,
-      title: const Text('Удалить аккаунт?', style: TextStyle(color: AppColors.textPrimary)),
+      title: const Text(
+        'Удалить аккаунт?',
+        style: TextStyle(color: AppColors.textPrimary),
+      ),
       content: const Text(
         'Аккаунт будет безвозвратно удалён с сервера. Собеседники увидят '
         'вас как «Удалённый аккаунт». Это действие нельзя отменить.',
         style: TextStyle(color: AppColors.textMuted),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Отмена'),
+        ),
         TextButton(
           onPressed: () => Navigator.pop(context, true),
-          child: const Text('Удалить аккаунт навсегда', style: TextStyle(color: Colors.red)),
+          child: const Text(
+            'Удалить аккаунт навсегда',
+            style: TextStyle(color: Colors.red),
+          ),
         ),
       ],
     ),
@@ -84,7 +102,9 @@ Future<void> confirmDeleteAccount(BuildContext context) async {
   if (!success) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Нет соединения с сервером — удаление аккаунта возможно только онлайн'),
+        content: Text(
+          'Нет соединения с сервером — удаление аккаунта возможно только онлайн',
+        ),
       ),
     );
     return;
@@ -103,7 +123,10 @@ void showSettingsSheet(BuildContext context) {
         children: [
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.red),
-            title: const Text('Выйти из аккаунта', style: TextStyle(color: Colors.red)),
+            title: const Text(
+              'Выйти из аккаунта',
+              style: TextStyle(color: Colors.red),
+            ),
             onTap: () {
               Navigator.pop(sheetContext);
               confirmLogout(context);
@@ -111,7 +134,10 @@ void showSettingsSheet(BuildContext context) {
           ),
           ListTile(
             leading: const Icon(Icons.delete_forever, color: Colors.red),
-            title: const Text('Удалить аккаунт', style: TextStyle(color: Colors.red)),
+            title: const Text(
+              'Удалить аккаунт',
+              style: TextStyle(color: Colors.red),
+            ),
             onTap: () {
               Navigator.pop(sheetContext);
               confirmDeleteAccount(context);

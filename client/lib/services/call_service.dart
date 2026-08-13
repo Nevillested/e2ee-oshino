@@ -217,7 +217,9 @@ class CallService {
     // Тап по САМОМУ уведомлению "Идёт разговор" (не по кнопке) — открыть
     // экран разговора, если он сейчас не на виду.
     PipService.openCallScreenRequests.listen((_) {
-      debugPrint('CallService: openCallScreenRequests -> вызываю _openCallScreen()');
+      debugPrint(
+        'CallService: openCallScreenRequests -> вызываю _openCallScreen()',
+      );
       _openCallScreen();
     });
     // Кнопка "Завершить звонок" в том же уведомлении — см. подробное
@@ -232,7 +234,9 @@ class CallService {
     // CallRingPlugin.declineCallRequests, почему одного HTTP-пути (для
     // офлайн-звонков) здесь недостаточно.
     CallRingPlugin.declineCallRequests.listen((_) {
-      debugPrint('CallService: declineCallRequests получен -> вызываю declineCall()');
+      debugPrint(
+        'CallService: declineCallRequests получен -> вызываю declineCall()',
+      );
       declineCall();
     });
     debugPrint('CallService: startListening() — все подписки установлены');
@@ -279,7 +283,9 @@ class CallService {
     }
     try {
       await acceptCall();
-      debugPrint('CallService: _autoAcceptAndOpenScreen: acceptCall() завершился, state=$_state');
+      debugPrint(
+        'CallService: _autoAcceptAndOpenScreen: acceptCall() завершился, state=$_state',
+      );
     } catch (e, st) {
       debugPrint('CallService: автоответ провалился: $e\n$st');
     }
@@ -290,7 +296,9 @@ class CallService {
     try {
       final token = await Session.getToken();
       if (token == null) {
-        debugPrint('CallService: _resolvePeerLogin: нет токена сессии, оставляю currentPeerLogin=null');
+        debugPrint(
+          'CallService: _resolvePeerLogin: нет токена сессии, оставляю currentPeerLogin=null',
+        );
         return;
       }
       final owner = await ApiClient().getDeviceOwnerInfo(token, peerDeviceId);
@@ -298,7 +306,9 @@ class CallService {
         currentPeerLogin = owner.login;
         debugPrint('CallService: _resolvePeerLogin -> ${owner.login}');
       } else {
-        debugPrint('CallService: _resolvePeerLogin: getDeviceOwnerInfo вернул null для $peerDeviceId');
+        debugPrint(
+          'CallService: _resolvePeerLogin: getDeviceOwnerInfo вернул null для $peerDeviceId',
+        );
       }
     } catch (e) {
       // Не критично — уведомление/пузырь используют запасной текст.
@@ -308,16 +318,22 @@ class CallService {
 
   void _openCallScreen() {
     if (isCallScreenVisible) {
-      debugPrint('CallService: _openCallScreen: пропускаю — CallScreen уже на виду');
+      debugPrint(
+        'CallService: _openCallScreen: пропускаю — CallScreen уже на виду',
+      );
       return;
     }
     final peerLogin = currentPeerLogin;
     if (peerLogin == null) {
-      debugPrint('CallService: _openCallScreen: пропускаю — currentPeerLogin==null, показывать нечего');
+      debugPrint(
+        'CallService: _openCallScreen: пропускаю — currentPeerLogin==null, показывать нечего',
+      );
       return;
     }
     final nav = rootNavigatorKey.currentState;
-    debugPrint('CallService: _openCallScreen: push CallScreen(peerLogin=$peerLogin), navigatorState=$nav');
+    debugPrint(
+      'CallService: _openCallScreen: push CallScreen(peerLogin=$peerLogin), navigatorState=$nav',
+    );
     nav?.push(
       MaterialPageRoute(builder: (_) => CallScreen(peerLogin: peerLogin)),
     );
@@ -343,7 +359,9 @@ class CallService {
     // гарантированно знает, что разговор закончился и уведомление пора
     // убрать.
     if (s == CallState.connected) {
-      CallRingPlugin.showOngoingCallNotification(currentPeerLogin ?? 'собеседником');
+      CallRingPlugin.showOngoingCallNotification(
+        currentPeerLogin ?? 'собеседником',
+      );
     } else if (s == CallState.idle) {
       CallRingPlugin.hideOngoingCallNotification();
     }
@@ -564,7 +582,9 @@ class CallService {
   }
 
   Future<void> declineCall() async {
-    debugPrint('CallService: declineCall() вызван, state=$_state, peerDeviceId=$_peerDeviceId, callId=$_callId');
+    debugPrint(
+      'CallService: declineCall() вызван, state=$_state, peerDeviceId=$_peerDeviceId, callId=$_callId',
+    );
     await _send('call_reject', {});
     await _resetLocal();
     debugPrint('CallService: declineCall() завершён, state=$_state');
@@ -588,7 +608,9 @@ class CallService {
   }
 
   Future<void> _resetLocal({bool peerWasUnavailable = false}) async {
-    debugPrint('CallService: _resetLocal() старт, state=$_state, peerWasUnavailable=$peerWasUnavailable');
+    debugPrint(
+      'CallService: _resetLocal() старт, state=$_state, peerWasUnavailable=$peerWasUnavailable',
+    );
     // На всякий случай — если по какой-то причине нативный
     // foreground-service звонка ещё активен, гасим его вместе с обычным
     // сбросом состояния. Вызов безопасен, даже если он и не был запущен.
@@ -675,10 +697,15 @@ class CallService {
 
           if (peerWasUnavailable && _isOutgoingCall) {
             try {
-              await SendLock.run(owner.login, () => sendPeerMessage(
-                    peerDeviceId,
-                    InnerMessage.missedCall(calledAt: startedAt.millisecondsSinceEpoch),
-                  ));
+              await SendLock.run(
+                owner.login,
+                () => sendPeerMessage(
+                  peerDeviceId,
+                  InnerMessage.missedCall(
+                    calledAt: startedAt.millisecondsSinceEpoch,
+                  ),
+                ),
+              );
             } catch (_) {
               // Не получилось доставить уведомление сейчас — не критично,
               // при следующем звонке будет ещё одна попытка.
@@ -763,7 +790,9 @@ class CallService {
         // было свёрнуто/закрыто), это просто no-op без рестарта плеера.
         _setState(CallState.incomingRinging);
 
-        debugPrint('CallService: call_offer получен, autoAcceptPending=$_autoAcceptPending');
+        debugPrint(
+          'CallService: call_offer получен, autoAcceptPending=$_autoAcceptPending',
+        );
         final shouldAutoAccept = _autoAcceptPending;
         _autoAcceptPending = false;
 
@@ -774,7 +803,9 @@ class CallService {
           // нём, с живым статусом через statusUpdates.
           unawaited(_autoAcceptAndOpenScreen(senderDeviceId));
         } else {
-          _incomingCallController.add(IncomingCallInfo(_callId ?? '', senderDeviceId));
+          _incomingCallController.add(
+            IncomingCallInfo(_callId ?? '', senderDeviceId),
+          );
         }
         break;
 

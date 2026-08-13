@@ -28,15 +28,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
-Future<void> _handleRegister() async {
-  FocusScope.of(context).unfocus();
-  setState(() {
-  _isLoading = true;
-  _errorText = null;
-});
-showLoadingOverlay(context, 'Идёт регистрация, подождите');
+  Future<void> _handleRegister() async {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isLoading = true;
+      _errorText = null;
+    });
+    showLoadingOverlay(context, 'Идёт регистрация, подождите');
 
-try {
+    try {
       final totpUrl = await _apiClient.register(
         _loginController.text.trim(),
         _passwordController.text,
@@ -56,14 +56,14 @@ try {
       setState(() {
         _errorText = e.toString();
       });
-} finally {
-  hideLoadingOverlay();
-  if (mounted) {
-    setState(() {
-      _isLoading = false;
-    });
-  }
-}
+    } finally {
+      hideLoadingOverlay();
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
@@ -76,10 +76,7 @@ try {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              AuthTextField(
-                controller: _loginController,
-                hintText: 'Логин',
-              ),
+              AuthTextField(controller: _loginController, hintText: 'Логин'),
               const SizedBox(height: 14),
               AuthTextField(
                 controller: _passwordController,

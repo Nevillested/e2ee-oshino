@@ -38,7 +38,11 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
   Future<void> _openCamera(int index) async {
     await _controller?.dispose();
-    final controller = CameraController(_cameras[index], ResolutionPreset.high, enableAudio: false);
+    final controller = CameraController(
+      _cameras[index],
+      ResolutionPreset.high,
+      enableAudio: false,
+    );
     await controller.initialize();
     if (!mounted) return;
     setState(() {
@@ -58,7 +62,9 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
     if (_controller == null || !_controller!.value.isInitialized) return;
     final shot = await _controller!.takePicture();
     final tempDir = await getTemporaryDirectory();
-    final dest = File('${tempDir.path}/capture_${DateTime.now().millisecondsSinceEpoch}.jpg');
+    final dest = File(
+      '${tempDir.path}/capture_${DateTime.now().millisecondsSinceEpoch}.jpg',
+    );
     await File(shot.path).copy(dest.path);
     setState(() => _capturedFile = dest);
   }
@@ -82,25 +88,30 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       return Scaffold(
         backgroundColor: Colors.black,
         resizeToAvoidBottomInset: false,
+        // Stack вместо Column — CaptionInputBar (с клавиатурой/эмодзи-панелью
+        // под ней) ложится ПОВЕРХ фото, а не сдвигает/сжимает его: сама
+        // картинка остаётся на месте целиком, независимо от того, открыта
+        // сейчас клавиатура, эмодзи-панель или ничего.
         body: SafeArea(
-          child: Column(
+          child: Stack(
             children: [
-              Expanded(
-                child: Stack(
-                  children: [
-                    Positioned.fill(child: Image.file(_capturedFile!, fit: BoxFit.contain)),
-                    Positioned(
-                      top: 8,
-                      left: 8,
-                      child: IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white, size: 28),
-                        onPressed: _retake,
-                      ),
-                    ),
-                  ],
+              Positioned.fill(
+                child: Image.file(_capturedFile!, fit: BoxFit.contain),
+              ),
+              Positioned(
+                top: 8,
+                left: 8,
+                child: IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                  onPressed: _retake,
                 ),
               ),
-              CaptionInputBar(onSend: _send),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: CaptionInputBar(onSend: _send),
+              ),
             ],
           ),
         ),
@@ -127,7 +138,10 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  _roundButton(icon: Icons.close, onTap: () => Navigator.pop(context)),
+                  _roundButton(
+                    icon: Icons.close,
+                    onTap: () => Navigator.pop(context),
+                  ),
                   InkWell(
                     onTap: _capture,
                     child: Container(
@@ -156,7 +170,10 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       child: Container(
         width: 52,
         height: 52,
-        decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+        decoration: const BoxDecoration(
+          color: Colors.black45,
+          shape: BoxShape.circle,
+        ),
         child: Icon(icon, color: Colors.white),
       ),
     );

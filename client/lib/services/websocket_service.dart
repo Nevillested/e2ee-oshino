@@ -14,12 +14,7 @@ import '../api/api_client.dart';
 /// умеет отличать сам WebSocketService: Dart/IOWebSocketChannel не даёт
 /// отдельно поймать фазу DNS-резолва отдельно от TCP-хендшейка, поэтому obе
 /// объединены в connecting.
-enum ConnectionStatus {
-  waitingForNetwork,
-  connecting,
-  connected,
-  reconnecting,
-}
+enum ConnectionStatus { waitingForNetwork, connecting, connected, reconnecting }
 
 class WebSocketService {
   WebSocketService._internal();
@@ -51,8 +46,8 @@ class WebSocketService {
   Stream<Map<String, dynamic>> get callSignals => _callController.stream;
   bool get isConnected => _channel != null;
 
-final _sessionInvalidController = StreamController<void>.broadcast();
-Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
+  final _sessionInvalidController = StreamController<void>.broadcast();
+  Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
 
   void connect(String token, String deviceId) {
     _token = token;
@@ -61,8 +56,11 @@ Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
     _openConnection();
 
     _connectivitySubscription?.cancel();
-    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((result) {
-      final hasNetwork = result.isNotEmpty && !result.contains(ConnectivityResult.none);
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
+      result,
+    ) {
+      final hasNetwork =
+          result.isNotEmpty && !result.contains(ConnectivityResult.none);
       if (hasNetwork && !_hadNetwork) {
         _forceReconnect();
       } else if (!hasNetwork) {
@@ -108,12 +106,16 @@ Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
     // как необработанное исключение (просто шум в логах, а не крэш —
     // .listen(onError:) ниже слушает уже установленное соединение и здесь
     // не участвует). Ловим и тихо уходим в обычный цикл переподключения.
-    _channel!.ready.then((_) {
-      _setStatus(ConnectionStatus.connected);
-    }).catchError((Object e) {
-      debugPrint('WebSocketService: не удалось подключиться ($e), повтор через reconnect');
-      _scheduleReconnect();
-    });
+    _channel!.ready
+        .then((_) {
+          _setStatus(ConnectionStatus.connected);
+        })
+        .catchError((Object e) {
+          debugPrint(
+            'WebSocketService: не удалось подключиться ($e), повтор через reconnect',
+          );
+          _scheduleReconnect();
+        });
 
     flushOutbox();
 
@@ -131,7 +133,9 @@ Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
             // нет, и это просто безопасный no-op.
             final deliveryId = outer['DeliveryId'];
             if (deliveryId is String && deliveryId.isNotEmpty) {
-              _channel?.sink.add(jsonEncode({'Type': 'ack', 'DeliveryId': deliveryId}));
+              _channel?.sink.add(
+                jsonEncode({'Type': 'ack', 'DeliveryId': deliveryId}),
+              );
             }
 
             final ciphertext = outer['Ciphertext'] as String?;
@@ -145,7 +149,9 @@ Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
 
           final deliveryId = outer['DeliveryId'];
           if (deliveryId is String && deliveryId.isNotEmpty) {
-            _channel?.sink.add(jsonEncode({'Type': 'ack', 'DeliveryId': deliveryId}));
+            _channel?.sink.add(
+              jsonEncode({'Type': 'ack', 'DeliveryId': deliveryId}),
+            );
           }
 
           final ciphertext = outer['Ciphertext'];
@@ -160,35 +166,39 @@ Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
     );
   }
 
-void _scheduleReconnect() {
-  _channel = null;
-  _subscription?.cancel();
-  if (_manuallyDisconnected) return;
-  _setStatus(_hadNetwork ? ConnectionStatus.reconnecting : ConnectionStatus.waitingForNetwork);
-  _reconnectTimer?.cancel();
-  _reconnectTimer = Timer(const Duration(seconds: 3), () async {
-    final token = _token;
-    if (token == null) {
+  void _scheduleReconnect() {
+    _channel = null;
+    _subscription?.cancel();
+    if (_manuallyDisconnected) return;
+    _setStatus(
+      _hadNetwork
+          ? ConnectionStatus.reconnecting
+          : ConnectionStatus.waitingForNetwork,
+    );
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(seconds: 3), () async {
+      final token = _token;
+      if (token == null) {
+        _openConnection();
+        return;
+      }
+      // Соединение оборвалось — прежде чем пытаться переподключиться,
+      // проверяем, не отозвал ли сервер токен (например, вход выполнен
+      // на другом устройстве). Если отозвал — дальше пытаться бессмысленно.
+      final valid = await ApiClient().checkSession(token);
+      if (valid == false) {
+        // Именно false — сервер явно ответил "токен невалиден", это точно
+        // принудительный логаут (вход с другого устройства).
+        _manuallyDisconnected = true;
+        _sessionInvalidController.add(null);
+        return;
+      }
+      // valid == true или valid == null (не удалось проверить, например нет
+      // сети) — в обоих случаях просто пробуем переподключиться дальше, не
+      // разлогиниваем пользователя из-за временного отсутствия интернета.
       _openConnection();
-      return;
-    }
-    // Соединение оборвалось — прежде чем пытаться переподключиться,
-    // проверяем, не отозвал ли сервер токен (например, вход выполнен
-    // на другом устройстве). Если отозвал — дальше пытаться бессмысленно.
-final valid = await ApiClient().checkSession(token);
-if (valid == false) {
-  // Именно false — сервер явно ответил "токен невалиден", это точно
-  // принудительный логаут (вход с другого устройства).
-  _manuallyDisconnected = true;
-  _sessionInvalidController.add(null);
-  return;
-}
-// valid == true или valid == null (не удалось проверить, например нет
-// сети) — в обоих случаях просто пробуем переподключиться дальше, не
-// разлогиниваем пользователя из-за временного отсутствия интернета.
-_openConnection();
-  });
-}
+    });
+  }
 
   void disconnect() {
     _manuallyDisconnected = true;
@@ -227,7 +237,11 @@ _openConnection();
   /// Сигналы звонка (offer/answer/ICE и т.д.) — не проходят через очередь
   /// офлайн-доставки: если собеседник недоступен прямо сейчас, звонок
   /// просто не проходит, ждать его появления в сети не нужно.
-  void sendCallSignal(String toDeviceId, String type, Map<String, dynamic> payload) {
+  void sendCallSignal(
+    String toDeviceId,
+    String type,
+    Map<String, dynamic> payload,
+  ) {
     final message = {
       'ToDeviceId': toDeviceId,
       'Ciphertext': jsonEncode(payload),

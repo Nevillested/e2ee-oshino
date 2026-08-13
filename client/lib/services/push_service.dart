@@ -41,7 +41,9 @@ class PushService {
 
     final messaging = FirebaseMessaging.instance;
     final permission = await messaging.requestPermission();
-    debugPrint('PushService: notification permission = ${permission.authorizationStatus}');
+    debugPrint(
+      'PushService: notification permission = ${permission.authorizationStatus}',
+    );
 
     // На Android 14+ отдельно проверяем разрешение на full-screen intent —
     // без него экран входящего звонка просто не будет всплывать поверх
@@ -84,11 +86,19 @@ class PushService {
       final sessionToken = await Session.getToken();
       final deviceId = await KeyStore.getStoredDeviceId();
       if (sessionToken == null || deviceId == null) {
-        debugPrint('PushService: _registerToken: нет sessionToken/deviceId, пропуск');
+        debugPrint(
+          'PushService: _registerToken: нет sessionToken/deviceId, пропуск',
+        );
         return;
       }
-      final ok = await ApiClient().registerPushToken(sessionToken, deviceId, token);
-      debugPrint('PushService: registerPushToken() -> $ok (device_id=$deviceId)');
+      final ok = await ApiClient().registerPushToken(
+        sessionToken,
+        deviceId,
+        token,
+      );
+      debugPrint(
+        'PushService: registerPushToken() -> $ok (device_id=$deviceId)',
+      );
 
       // Кнопке "Отклонить" в уведомлении о звонке нужен свой, независимый
       // от Dart-хранилища доступ к токену сессии — обновляем кэш на

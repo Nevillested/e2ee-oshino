@@ -33,7 +33,9 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void initState() {
     super.initState();
-    debugPrint('CallScreen: initState (peerLogin=${widget.peerLogin}, state=${_call.state})');
+    debugPrint(
+      'CallScreen: initState (peerLogin=${widget.peerLogin}, state=${_call.state})',
+    );
     // Логин собеседника и "экран разговора сейчас виден" нужны отдельно от
     // самого CallState — уведомление и системный PiP ориентируются именно
     // на них, чтобы показать/спрятать себя при уходе на другой экран
@@ -79,7 +81,9 @@ class _CallScreenState extends State<CallScreen> {
     // ТЕКУЩЕЕ значение напрямую, а стримом ниже реагируем только на
     // дальнейшие изменения.
     _lastRemoteStream = _call.remoteStream;
-    _remoteRenderer.srcObject = _call.remoteVideoEnabled ? _lastRemoteStream : null;
+    _remoteRenderer.srcObject = _call.remoteVideoEnabled
+        ? _lastRemoteStream
+        : null;
     debugPrint(
       'CallScreen: _init: подхватил текущий remoteStream=${_call.remoteStream}, '
       'remoteVideoEnabled=${_call.remoteVideoEnabled}',

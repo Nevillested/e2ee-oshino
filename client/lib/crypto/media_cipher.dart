@@ -32,6 +32,9 @@ Future<Uint8List> decryptFileBytes({
   required Uint8List ciphertext,
 }) async {
   final secretBox = SecretBox(ciphertext, nonce: nonce, mac: Mac(mac));
-  final plainBytes = await _aesGcm.decrypt(secretBox, secretKey: SecretKey(key));
+  final plainBytes = await _aesGcm.decrypt(
+    secretBox,
+    secretKey: SecretKey(key),
+  );
   return Uint8List.fromList(plainBytes);
 }

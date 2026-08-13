@@ -2,6 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+/// "Заметки" — переписка с самим собой: полноправный чат в ChatStore под
+/// этим фиксированным peerLogin (не настоящий логин — такой строка не
+/// может быть выдана при регистрации, см. валидацию логина на сервере),
+/// просто без сетевой отправки — см. ChatScreen._isNotes.
+const notesPeerLogin = '__notes__';
+
 class StoredMessage {
   final String messageId;
   final String text;
@@ -16,6 +22,13 @@ class StoredMessage {
   final String? mediaNonceBase64;
   final String? mediaMacBase64;
   final String? fileName;
+
+  /// Голосовое/видео-кружок (у нас — квадрат) сообщение — используют те же
+  /// media*-поля выше для загрузки/шифрования, просто рендерятся и
+  /// проигрываются иначе, чем обычное фото/файл.
+  final bool isVoice;
+  final bool isVideoNote;
+  final int? durationMs;
   final String status;
   final String? processingStep;
   final String? localPreviewPath;
@@ -56,6 +69,9 @@ class StoredMessage {
     this.mediaNonceBase64,
     this.mediaMacBase64,
     this.fileName,
+    this.isVoice = false,
+    this.isVideoNote = false,
+    this.durationMs,
     this.status = 'sent',
     this.processingStep,
     this.localPreviewPath,
@@ -110,8 +126,13 @@ class StoredMessage {
       mediaNonceBase64: mediaNonceBase64 ?? this.mediaNonceBase64,
       mediaMacBase64: mediaMacBase64 ?? this.mediaMacBase64,
       fileName: fileName,
+      isVoice: isVoice,
+      isVideoNote: isVideoNote,
+      durationMs: durationMs,
       status: status ?? this.status,
-      processingStep: clearProcessingStep ? null : (processingStep ?? this.processingStep),
+      processingStep: clearProcessingStep
+          ? null
+          : (processingStep ?? this.processingStep),
       localPreviewPath: localPreviewPath,
       groupId: groupId,
       isCallLog: isCallLog,
@@ -122,67 +143,75 @@ class StoredMessage {
       replyToPreview: replyToPreview,
       edited: edited ?? this.edited,
       myReaction: clearMyReaction ? null : (myReaction ?? this.myReaction),
-      peerReaction: clearPeerReaction ? null : (peerReaction ?? this.peerReaction),
+      peerReaction: clearPeerReaction
+          ? null
+          : (peerReaction ?? this.peerReaction),
     );
   }
 
   Map<String, dynamic> toJson() => {
-        'id': messageId,
-        'text': text,
-        'is_mine': isMine,
-        'ts': timestamp,
-        'is_media': isMedia,
-        'is_file': isFile,
-        'file_size': fileSize,
-        'chunked': chunked,
-        'media_id': mediaId,
-        'media_key': mediaKeyBase64,
-        'media_nonce': mediaNonceBase64,
-        'media_mac': mediaMacBase64,
-        'file_name': fileName,
-        'status': status,
-        'step': processingStep,
-        'local_preview': localPreviewPath,
-        'group_id': groupId,
-        'is_call_log': isCallLog,
-        'call_direction': callDirection,
-        'call_outcome': callOutcome,
-        'call_duration': callDurationSeconds,
-        'reply_to_id': replyToMessageId,
-        'reply_to_preview': replyToPreview,
-        'edited': edited,
-        'my_reaction': myReaction,
-        'peer_reaction': peerReaction,
-      };
+    'id': messageId,
+    'text': text,
+    'is_mine': isMine,
+    'ts': timestamp,
+    'is_media': isMedia,
+    'is_file': isFile,
+    'file_size': fileSize,
+    'chunked': chunked,
+    'media_id': mediaId,
+    'media_key': mediaKeyBase64,
+    'media_nonce': mediaNonceBase64,
+    'media_mac': mediaMacBase64,
+    'file_name': fileName,
+    'is_voice': isVoice,
+    'is_video_note': isVideoNote,
+    'duration_ms': durationMs,
+    'status': status,
+    'step': processingStep,
+    'local_preview': localPreviewPath,
+    'group_id': groupId,
+    'is_call_log': isCallLog,
+    'call_direction': callDirection,
+    'call_outcome': callOutcome,
+    'call_duration': callDurationSeconds,
+    'reply_to_id': replyToMessageId,
+    'reply_to_preview': replyToPreview,
+    'edited': edited,
+    'my_reaction': myReaction,
+    'peer_reaction': peerReaction,
+  };
 
   static StoredMessage fromJson(Map<String, dynamic> j) => StoredMessage(
-        j['id'] as String? ?? '',
-        j['text'] as String,
-        j['is_mine'] as bool,
-        j['ts'] as int,
-        isMedia: j['is_media'] as bool? ?? false,
-        isFile: j['is_file'] as bool? ?? false,
-        fileSize: j['file_size'] as int? ?? 0,
-        chunked: j['chunked'] as bool? ?? false,
-        mediaId: j['media_id'] as String?,
-        mediaKeyBase64: j['media_key'] as String?,
-        mediaNonceBase64: j['media_nonce'] as String?,
-        mediaMacBase64: j['media_mac'] as String?,
-        fileName: j['file_name'] as String?,
-        status: j['status'] as String? ?? 'sent',
-        processingStep: j['step'] as String?,
-        localPreviewPath: j['local_preview'] as String?,
-        groupId: j['group_id'] as String?,
-        isCallLog: j['is_call_log'] as bool? ?? false,
-        callDirection: j['call_direction'] as String?,
-        callOutcome: j['call_outcome'] as String?,
-        callDurationSeconds: j['call_duration'] as int?,
-        replyToMessageId: j['reply_to_id'] as String?,
-        replyToPreview: j['reply_to_preview'] as String?,
-        edited: j['edited'] as bool? ?? false,
-        myReaction: j['my_reaction'] as String?,
-        peerReaction: j['peer_reaction'] as String?,
-      );
+    j['id'] as String? ?? '',
+    j['text'] as String,
+    j['is_mine'] as bool,
+    j['ts'] as int,
+    isMedia: j['is_media'] as bool? ?? false,
+    isFile: j['is_file'] as bool? ?? false,
+    fileSize: j['file_size'] as int? ?? 0,
+    chunked: j['chunked'] as bool? ?? false,
+    mediaId: j['media_id'] as String?,
+    mediaKeyBase64: j['media_key'] as String?,
+    mediaNonceBase64: j['media_nonce'] as String?,
+    mediaMacBase64: j['media_mac'] as String?,
+    fileName: j['file_name'] as String?,
+    isVoice: j['is_voice'] as bool? ?? false,
+    isVideoNote: j['is_video_note'] as bool? ?? false,
+    durationMs: j['duration_ms'] as int?,
+    status: j['status'] as String? ?? 'sent',
+    processingStep: j['step'] as String?,
+    localPreviewPath: j['local_preview'] as String?,
+    groupId: j['group_id'] as String?,
+    isCallLog: j['is_call_log'] as bool? ?? false,
+    callDirection: j['call_direction'] as String?,
+    callOutcome: j['call_outcome'] as String?,
+    callDurationSeconds: j['call_duration'] as int?,
+    replyToMessageId: j['reply_to_id'] as String?,
+    replyToPreview: j['reply_to_preview'] as String?,
+    edited: j['edited'] as bool? ?? false,
+    myReaction: j['my_reaction'] as String?,
+    peerReaction: j['peer_reaction'] as String?,
+  );
 }
 
 class ChatSummary {
@@ -219,10 +248,15 @@ class ChatStore {
     final stored = await _storage.read(key: _messagesKey(peerLogin));
     if (stored == null) return [];
     final list = jsonDecode(stored) as List<dynamic>;
-    return list.map((e) => StoredMessage.fromJson(e as Map<String, dynamic>)).toList();
+    return list
+        .map((e) => StoredMessage.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
-  static Future<void> _writeMessages(String peerLogin, List<StoredMessage> messages) {
+  static Future<void> _writeMessages(
+    String peerLogin,
+    List<StoredMessage> messages,
+  ) {
     return _storage.write(
       key: _messagesKey(peerLogin),
       value: jsonEncode(messages.map((m) => m.toJson()).toList()),
@@ -260,10 +294,14 @@ class ChatStore {
     final messages = await getMessages(peerLogin);
     messages.addAll(newMessages);
     await _writeMessages(peerLogin, messages);
-    final last = newMessages.reduce((a, b) => a.timestamp >= b.timestamp ? a : b);
+    final last = newMessages.reduce(
+      (a, b) => a.timestamp >= b.timestamp ? a : b,
+    );
     await _touchPeer(
       peerLogin,
-      last.isMedia ? (last.isFile ? (last.fileName ?? '📎 Файл') : '📷 Фото') : last.text,
+      last.isMedia
+          ? (last.isFile ? (last.fileName ?? '📎 Файл') : '📷 Фото')
+          : last.text,
       last.timestamp,
       accountId: accountId,
       incrementUnread: incrementUnread,
@@ -293,7 +331,10 @@ class ChatStore {
     return addMessage(
       peerLogin,
       StoredMessage(
-        id, preview, direction == 'outgoing', timestamp,
+        id,
+        preview,
+        direction == 'outgoing',
+        timestamp,
         isCallLog: true,
         callDirection: direction,
         callOutcome: outcome,
@@ -304,7 +345,11 @@ class ChatStore {
     );
   }
 
-  static Future<void> _replace(String peerLogin, String messageId, StoredMessage Function(StoredMessage old) update) async {
+  static Future<void> _replace(
+    String peerLogin,
+    String messageId,
+    StoredMessage Function(StoredMessage old) update,
+  ) async {
     final messages = await getMessages(peerLogin);
     final index = messages.indexWhere((m) => m.messageId == messageId);
     if (index == -1) return;
@@ -313,15 +358,34 @@ class ChatStore {
     _changesController.add(null);
   }
 
-  static Future<void> updateMessageStatus(String peerLogin, String messageId, String newStatus) {
-    return _replace(peerLogin, messageId, (old) => old.copyWith(
-          status: newStatus,
-          clearProcessingStep: newStatus == 'sent' || newStatus == 'failed' || newStatus == 'queued',
-        ));
+  static Future<void> updateMessageStatus(
+    String peerLogin,
+    String messageId,
+    String newStatus,
+  ) {
+    return _replace(
+      peerLogin,
+      messageId,
+      (old) => old.copyWith(
+        status: newStatus,
+        clearProcessingStep:
+            newStatus == 'sent' ||
+            newStatus == 'failed' ||
+            newStatus == 'queued',
+      ),
+    );
   }
 
-  static Future<void> updateProcessingStep(String peerLogin, String messageId, String step) {
-    return _replace(peerLogin, messageId, (old) => old.copyWith(processingStep: step));
+  static Future<void> updateProcessingStep(
+    String peerLogin,
+    String messageId,
+    String step,
+  ) {
+    return _replace(
+      peerLogin,
+      messageId,
+      (old) => old.copyWith(processingStep: step),
+    );
   }
 
   /// Сохраняет реальный mediaId и ключи ПОСЛЕ успешной загрузки на
@@ -335,12 +399,16 @@ class ChatStore {
     String? nonceBase64,
     String? macBase64,
   }) {
-    return _replace(peerLogin, messageId, (old) => old.copyWith(
-          mediaId: mediaId,
-          mediaKeyBase64: keyBase64,
-          mediaNonceBase64: nonceBase64,
-          mediaMacBase64: macBase64,
-        ));
+    return _replace(
+      peerLogin,
+      messageId,
+      (old) => old.copyWith(
+        mediaId: mediaId,
+        mediaKeyBase64: keyBase64,
+        mediaNonceBase64: nonceBase64,
+        mediaMacBase64: macBase64,
+      ),
+    );
   }
 
   /// isMine=true — это МОЯ реакция (я тапнул эмодзи); false — реакция
@@ -352,22 +420,37 @@ class ChatStore {
     required bool isMine,
     String? emoji,
   }) {
-    return _replace(peerLogin, messageId, (old) => old.copyWith(
-          myReaction: isMine ? emoji : null,
-          clearMyReaction: isMine && emoji == null,
-          peerReaction: !isMine ? emoji : null,
-          clearPeerReaction: !isMine && emoji == null,
-        ));
+    return _replace(
+      peerLogin,
+      messageId,
+      (old) => old.copyWith(
+        myReaction: isMine ? emoji : null,
+        clearMyReaction: isMine && emoji == null,
+        peerReaction: !isMine ? emoji : null,
+        clearPeerReaction: !isMine && emoji == null,
+      ),
+    );
   }
 
-  static Future<void> editMessageText(String peerLogin, String messageId, String newText) {
-    return _replace(peerLogin, messageId, (old) => old.copyWith(text: newText, edited: true));
+  static Future<void> editMessageText(
+    String peerLogin,
+    String messageId,
+    String newText,
+  ) {
+    return _replace(
+      peerLogin,
+      messageId,
+      (old) => old.copyWith(text: newText, edited: true),
+    );
   }
 
   /// Удаляет ЛОКАЛЬНО (и у себя при "у меня", и здесь же — при "у
   /// обоих", после того как control-сообщение уже отправлено собеседнику;
   /// сам факт отправки — забота вызывающего кода, не этой функции).
-  static Future<void> deleteMessages(String peerLogin, List<String> messageIds) async {
+  static Future<void> deleteMessages(
+    String peerLogin,
+    List<String> messageIds,
+  ) async {
     if (messageIds.isEmpty) return;
     final ids = messageIds.toSet();
     final messages = await getMessages(peerLogin);
@@ -405,13 +488,15 @@ class ChatStore {
       if (accountId != null) existing.first.lastKnownAccountId = accountId;
       if (incrementUnread) existing.first.unreadCount += 1;
     } else {
-      peers.add(ChatSummary(
-        peerLogin,
-        lastMessage,
-        timestamp,
-        lastKnownAccountId: accountId,
-        unreadCount: incrementUnread ? 1 : 0,
-      ));
+      peers.add(
+        ChatSummary(
+          peerLogin,
+          lastMessage,
+          timestamp,
+          lastKnownAccountId: accountId,
+          unreadCount: incrementUnread ? 1 : 0,
+        ),
+      );
     }
     await _writePeers(peers);
   }
@@ -425,7 +510,10 @@ class ChatStore {
     await _writePeers(peers);
   }
 
-  static Future<void> setPeerDeletedStatus(String peerLogin, bool isDeleted) async {
+  static Future<void> setPeerDeletedStatus(
+    String peerLogin,
+    bool isDeleted,
+  ) async {
     final peers = await getKnownPeers();
     final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
     if (existing.isEmpty) return;
@@ -433,7 +521,10 @@ class ChatStore {
     await _writePeers(peers);
   }
 
-  static Future<void> setLastKnownDeviceId(String peerLogin, String deviceId) async {
+  static Future<void> setLastKnownDeviceId(
+    String peerLogin,
+    String deviceId,
+  ) async {
     final peers = await getKnownPeers();
     final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
     if (existing.isEmpty) return;
@@ -444,8 +535,10 @@ class ChatStore {
   static Future<void> _writePeers(List<ChatSummary> peers) async {
     await _storage.write(
       key: _peersIndexKey,
-      value: jsonEncode(peers
-          .map((p) => {
+      value: jsonEncode(
+        peers
+            .map(
+              (p) => {
                 'login': p.peerLogin,
                 'account_id': p.lastKnownAccountId,
                 'device_id': p.lastKnownDeviceId,
@@ -454,8 +547,10 @@ class ChatStore {
                 'is_deleted': p.isDeleted,
                 'unread': p.unreadCount,
                 'pinned_message_id': p.pinnedMessageId,
-              })
-          .toList()),
+              },
+            )
+            .toList(),
+      ),
     );
     _changesController.add(null);
   }
@@ -465,16 +560,18 @@ class ChatStore {
     if (stored == null) return [];
     final list = jsonDecode(stored) as List<dynamic>;
     return list
-        .map((e) => ChatSummary(
-              e['login'] as String,
-              e['last_message'] as String,
-              e['last_ts'] as int,
-              lastKnownAccountId: e['account_id'] as String?,
-              lastKnownDeviceId: e['device_id'] as String?,
-              isDeleted: e['is_deleted'] as bool? ?? false,
-              unreadCount: e['unread'] as int? ?? 0,
-              pinnedMessageId: e['pinned_message_id'] as String?,
-            ))
+        .map(
+          (e) => ChatSummary(
+            e['login'] as String,
+            e['last_message'] as String,
+            e['last_ts'] as int,
+            lastKnownAccountId: e['account_id'] as String?,
+            lastKnownDeviceId: e['device_id'] as String?,
+            isDeleted: e['is_deleted'] as bool? ?? false,
+            unreadCount: e['unread'] as int? ?? 0,
+            pinnedMessageId: e['pinned_message_id'] as String?,
+          ),
+        )
         .toList()
       ..sort((a, b) => b.lastTimestamp.compareTo(a.lastTimestamp));
   }

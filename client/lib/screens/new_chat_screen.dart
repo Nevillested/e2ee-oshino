@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../session.dart';
+import '../storage/chat_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/swipe_back_page_route.dart';
 import 'chat_screen.dart';
 import '../storage/peer_account_store.dart';
-import 'notes_screen.dart';
 
 /// Экран поиска собеседника по логину. Показывает список его устройств.
 /// Пока это конечная точка — реальное начало X3DH-обмена с выбранным
@@ -41,10 +41,17 @@ class _NewChatScreenState extends State<NewChatScreen> {
     final myLogin = await Session.getLogin();
 
     if (myLogin != null && query == myLogin) {
+      final myAccountId = await Session.getAccountId() ?? '';
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => const NotesScreen()),
+        SwipeBackPageRoute(
+          builder: (context) => ChatScreen(
+            peerDeviceId: '',
+            peerAccountId: myAccountId,
+            peerLogin: notesPeerLogin,
+          ),
+        ),
       );
       return;
     }

@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:video_player/video_player.dart';
+import '../services/media_asset_cache.dart';
 import '../theme/app_theme.dart';
 import 'caption_input_bar.dart';
 import 'vertical_dismiss_detector.dart';
@@ -14,12 +16,63 @@ class MediaPickerSheetResult {
   MediaPickerSheetResult(this.items, this.caption);
 }
 
+/// Стандартная кривая появления модального bottom sheet в Flutter
+/// (Easing.legacyDecelerate) вообще не даёт перелёта — просто плавно
+/// замедляется к цели. Здесь — та же формула, что и у Curves.easeOutBack
+/// (кубическая "пружинка" Robert Penner) — с коэффициентом 1.70158, это
+/// как раз ЕЁ СОБСТВЕННОЕ стандартное значение (Robert Penner), дающее
+/// перелёт примерно на 10%: при отдыхе на kAttachmentSheetRestFraction
+/// = 0.5 экрана кривая сначала долетает примерно до 0.55 и только потом
+/// оседает на 0.5. Раньше пробовали 8.5 (перелёт почти 100% — при высоте
+/// панели около половины экрана это ПРЕВЫШАЛО полную высоту экрана,
+/// Flutter обрезал реальный размер по границе, и получалось не "перелёт",
+/// а "упёрлось в потолок и рухнуло обратно") и 3.4 (перелёт ~30%, до 0.65
+/// — по ощущениям оказалось многовато).
+class _BigOvershootCurve extends Curve {
+  const _BigOvershootCurve(this.overshoot);
+  final double overshoot;
+
+  @override
+  double transformInternal(double t) {
+    final c1 = overshoot;
+    final c3 = c1 + 1;
+    final tm1 = t - 1;
+    return 1 + c3 * tm1 * tm1 * tm1 + c1 * tm1 * tm1;
+  }
+}
+
+const _kAttachmentSheetCurve = _BigOvershootCurve(1.70158);
+
+/// Доля высоты экрана, на которой панель "отдыхает" после открытия — но
+/// НЕ жёсткий пол: ниже этой точки панель по-прежнему тянется пальцем
+/// напрямую (см. minChildSize: 0.0 в build()), просто при отпускании
+/// пальца решение "закрыть/вернуть на место" принимается по факту того,
+/// где панель оказалась в момент отпускания — см. _onSheetSizeChanged().
+const double kAttachmentSheetRestFraction = 0.5;
+
+/// Ниже этой доли экрана отпускание пальца ЗАКРЫВАЕТ шторку целиком;
+/// выше — панель пружинисто возвращается на kAttachmentSheetRestFraction.
+const double _kAttachmentSheetDismissThreshold = 0.4;
+
+/// Сама открывающая анимация (рост+перелёт+усадка) больше не крутится тут,
+/// в самом route — она играет ВНУТРИ _MediaPickerSheetBody, через
+/// DraggableScrollableController.animateTo (см. _openSheet()): так высота
+/// панели зависит от РЕАЛЬНОГО количества медиафайлов (сколько строк по 3
+/// плитки в ряд получится) — а не от произвольной константы вроде
+/// "половина экрана", и после открытия по этой же ленте можно тянуть
+/// дальше, до самого верха, и она просто скроллится, без второго,
+/// отдельного от анимации, скачка. Тут — только мягкое затемнение фона.
 Future<dynamic> showMediaPickerSheet(BuildContext context) {
-  return showModalBottomSheet<dynamic>(
+  return showGeneralDialog<dynamic>(
     context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    builder: (context) => const _MediaPickerSheetBody(),
+    barrierDismissible: true,
+    barrierLabel: 'media-picker',
+    barrierColor: Colors.black54,
+    transitionDuration: const Duration(milliseconds: 250),
+    pageBuilder: (context, anim1, anim2) => const _MediaPickerSheetBody(),
+    transitionBuilder: (context, anim, secondaryAnim, child) {
+      return FadeTransition(opacity: anim, child: child);
+    },
   );
 }
 
@@ -33,8 +86,18 @@ class _MediaPickerSheetBody extends StatefulWidget {
 class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
   static const int _pageSize = 200;
 
-  bool _dragStartedAtTop = false;
-  final ScrollController _gridScrollController = ScrollController();
+  // Контроллер, который DraggableScrollableSheet сам передаёт в builder —
+  // именно ЕГО, а не отдельный свой, нужно слушать для пагинации: панель
+  // теперь одна общая лента (шапка + сетка), а не сетка внутри отдельного
+  // фиксированного окошка со своим скроллом.
+  ScrollController? _attachedScrollController;
+  final _sheetController = DraggableScrollableController();
+  // Защита от повторного/зависшего закрытия — см. _closeSheet().
+  bool _closing = false;
+  // Для оценки скорости прокрутки списка "на глаз" по паре соседних
+  // ScrollUpdateNotification — см. _handleListScrollNotification.
+  DateTime? _lastScrollNotifTime;
+  double? _lastScrollNotifPixels;
   List<AssetEntity> _assets = [];
   final Map<String, int> _selectedOrder = {};
   CameraController? _liveCamera;
@@ -56,21 +119,140 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
     return created.isAfter(modified) ? created : modified;
   }
 
+  // Таймер "устаканилось" — см. _onSheetSizeChanged: пересоздаётся на
+  // каждое изменение size, и решение "закрыть/вернуть/оставить" выносится
+  // только когда по нему прошло достаточно тишины, то есть панель РЕАЛЬНО
+  // перестала двигаться (а не просто в моменте отпустили палец — см.
+  // объяснение там же, почему именно так).
+  Timer? _sheetSettleTimer;
+
   @override
   void initState() {
     super.initState();
     _load();
     _initLiveCamera();
-    _gridScrollController.addListener(_onScroll);
+    // Параллельно с загрузкой файлов (заполнением плиток) — сама открывающая
+    // анимация: растёт из нижнего края, перелетает выше цели и оседает на
+    // kAttachmentSheetRestFraction. addPostFrameCallback — DraggableScrollableController
+    // должен быть уже ПРИКРЕПЛЁН к построенному DraggableScrollableSheet.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _openSheet());
+    _sheetController.addListener(_onSheetSizeChanged);
+  }
+
+  Future<void> _openSheet() async {
+    // В полтора раза быстрее предыдущего показа (было 1400мс).
+    await _sheetController.animateTo(
+      kAttachmentSheetRestFraction,
+      duration: const Duration(milliseconds: 933),
+      curve: _kAttachmentSheetCurve,
+    );
+  }
+
+  /// Реагирует на ЛЮБОЕ изменение размера панели — и от прямого перетягивания
+  /// пальцем, и от баллистического доката ПОСЛЕ отпускания (флик). Раньше
+  /// решение "закрыть/вернуть на место" принималось только в момент
+  /// onPointerUp по текущему на тот момент размеру — а при флике в момент
+  /// отпускания пальца размер ещё мог быть большим (например, около 1.0),
+  /// а реальное итоговое положение становилось известно только СПУСТЯ
+  /// какое-то время, пока доигрывала инерция самого DraggableScrollableSheet.
+  /// Если та инерция утаскивала панель в 0, наш Navigator.pop() просто
+  /// никогда не вызывался — маршрут не закрывался, а вместе с ним не
+  /// пропадало и затемнение фона. Теперь решение принимается по ФАКТИЧЕСКИ
+  /// устоявшемуся размеру, независимо от того, чем он был вызван.
+  void _onSheetSizeChanged() {
+    if (_closing || !_sheetController.isAttached) return;
+    final size = _sheetController.size;
+    if (size <= 0.001) {
+      _sheetSettleTimer?.cancel();
+      _closeSheet();
+      return;
+    }
+    _sheetSettleTimer?.cancel();
+    _sheetSettleTimer = Timer(const Duration(milliseconds: 120), () {
+      if (_closing || !_sheetController.isAttached) return;
+      final settled = _sheetController.size;
+      if (settled >= kAttachmentSheetRestFraction) return;
+      if (settled < _kAttachmentSheetDismissThreshold) {
+        _closeSheet();
+      } else {
+        _sheetController.animateTo(
+          kAttachmentSheetRestFraction,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  /// DraggableScrollableSheet, когда список НЕ у самого начала, сначала
+  /// докручивает список к его собственному верху (position 0), и только
+  /// потом начинает сжимать саму панель — это устройство самого виджета.
+  /// Проблема в том, что когда это докручивание списка происходит не
+  /// пальцем, а баллистически (флик), и список долетает до нуля СО
+  /// СКОРОСТЬЮ — встроенный виджет в ЭТОМ направлении (список → сжатие
+  /// панели) остаток инерции никуда не передаёт: список просто упирается в
+  /// свою границу и останавливается, а панель как стояла на потолке, так и
+  /// стоит, хотя палец явно "бросал" её вниз. Здесь оцениваем скорость по
+  /// последним двум ScrollUpdateNotification и, если список долетел до
+  /// верха БАЛЛИСТИЧЕСКИ (dragDetails == null, то есть не рукой) и с
+  /// заметной скоростью — а не просто тихо доскроллил и остановился сам,
+  /// как при обычном неспешном просмотре, — докатываем панель сами.
+  static const double _kListFlingContinuationVelocity = 800;
+
+  bool _handleListScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollStartNotification) {
+      _lastScrollNotifTime = null;
+      _lastScrollNotifPixels = null;
+      return false;
+    }
+    if (notification is! ScrollUpdateNotification) return false;
+
+    final now = DateTime.now();
+    final pixels = notification.metrics.pixels;
+    final prevTime = _lastScrollNotifTime;
+    final prevPixels = _lastScrollNotifPixels;
+    _lastScrollNotifTime = now;
+    _lastScrollNotifPixels = pixels;
+
+    if (notification.dragDetails != null) return false; // ведёт палец, не флик
+    if (pixels > 0) return false; // ещё не докатились до верха списка
+    if (prevTime == null || prevPixels == null) return false;
+
+    final dtSeconds = now.difference(prevTime).inMicroseconds / 1e6;
+    if (dtSeconds <= 0) return false;
+    final velocity = (pixels - prevPixels) / dtSeconds; // <0 — летит к верху
+
+    if (velocity < -_kListFlingContinuationVelocity &&
+        _sheetController.isAttached &&
+        _sheetController.size > kAttachmentSheetRestFraction) {
+      _sheetController.animateTo(
+        kAttachmentSheetRestFraction,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOut,
+      );
+    }
+    return false;
   }
 
   void _onScroll() {
     if (!_hasMore || _loadingMore) return;
-    if (!_gridScrollController.hasClients) return;
-    final position = _gridScrollController.position;
+    final controller = _attachedScrollController;
+    if (controller == null || !controller.hasClients) return;
+    final position = controller.position;
     if (position.pixels >= position.maxScrollExtent - 600) {
       _loadMore();
     }
+  }
+
+  /// DraggableScrollableSheet передаёт СВОЙ ScrollController через builder —
+  /// его и нужно слушать для пагинации (см. _onScroll), а не заводить
+  /// отдельный. Он может смениться при пересборке — переслушиваем только
+  /// при реальной смене объекта.
+  void _attachScrollController(ScrollController controller) {
+    if (identical(controller, _attachedScrollController)) return;
+    _attachedScrollController?.removeListener(_onScroll);
+    _attachedScrollController = controller;
+    controller.addListener(_onScroll);
   }
 
   Future<void> _loadMore() async {
@@ -84,7 +266,8 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
     if (!mounted) return;
     setState(() {
       _page = nextPage;
-      _assets = [..._assets, ...more]..sort((a, b) => _sortKey(b).compareTo(_sortKey(a)));
+      _assets = [..._assets, ...more]
+        ..sort((a, b) => _sortKey(b).compareTo(_sortKey(a)));
       _hasMore = more.length == _pageSize;
       _loadingMore = false;
     });
@@ -92,6 +275,7 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
 
   Future<void> _requestFullAccess() async {
     await PhotoManager.presentLimited(type: RequestType.common);
+    MediaAssetCache.invalidate();
     setState(() {
       _loading = true;
       _page = 0;
@@ -107,7 +291,11 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
         (c) => c.lensDirection == CameraLensDirection.back,
         orElse: () => cameras.first,
       );
-      final controller = CameraController(back, ResolutionPreset.low, enableAudio: false);
+      final controller = CameraController(
+        back,
+        ResolutionPreset.low,
+        enableAudio: false,
+      );
       await controller.initialize();
       if (mounted) setState(() => _liveCamera = controller);
     } catch (_) {
@@ -115,53 +303,31 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
     }
   }
 
+  /// Сама загрузка (запрос прав + первая страница галереи, см.
+  /// MediaAssetCache) теперь запускается ЗАРАНЕЕ — см. ChatScreen.initState
+  /// — а не в момент открытия шторки: это самое время (заметный запрос к
+  /// PhotoManager) раньше выполнялось ровно тогда же, когда играет
+  /// открывающая анимация, отсюда и промелькивающий спиннер. Здесь просто
+  /// забираем уже готовый (или почти готовый) результат.
   Future<void> _load() async {
-    final permission = await PhotoManager.requestPermissionExtend();
-    if (!permission.hasAccess) {
-      setState(() => _loading = false);
-      return;
-    }
-    final isLimited = permission == PermissionState.limited;
-
-    // onlyAll: true — просим именно единый объединённый альбом "Все", а не
-    // первый попавшийся из списка папок (WhatsApp Images, Camera и т.п.);
-    // firstWhere-с-фолбэком раньше при отсутствии isAll-альбома мог молча
-    // подставить произвольную папку, где новых файлов просто нет.
-    //
-    // durationConstraint(allowNullable: true) — по умолчанию plugin
-    // ИСКЛЮЧАЕТ видео с ещё не вычисленной длительностью (duration == null).
-    // Свежезаписанный крупный (4K/десятки МБ) файл MediaStore может не
-    // успеть проиндексировать полностью за секунды — именно поэтому фото из
-    // той же папки видны сразу, а такое видео пропадает, пока сама ОС не
-    // доиндексирует его в фоне.
-    final filterOption = FilterOptionGroup(
-      videoOption: const FilterOption(
-        durationConstraint: DurationConstraint(allowNullable: true),
-      ),
-    );
-    final paths = await PhotoManager.getAssetPathList(
-      type: RequestType.common,
-      onlyAll: true,
-      filterOption: filterOption,
-    );
-    if (paths.isEmpty) {
-      setState(() {
-        _loading = false;
-        _isLimitedAccess = isLimited;
-      });
+    final page = await MediaAssetCache.get();
+    if (page.path == null && page.assets.isEmpty && !page.isLimited) {
+      // path == null без ограниченного доступа — либо нет прав вообще,
+      // либо в галерее пусто; в обоих случаях просто показываем пустую
+      // сетку без плиток фото (плитка камеры при этом всё равно есть).
+      if (mounted) setState(() => _loading = false);
       return;
     }
 
-    final allPath = paths.first;
-    final assets = await allPath.getAssetListPaged(page: 0, size: _pageSize);
-    assets.sort((a, b) => _sortKey(b).compareTo(_sortKey(a)));
+    final assets = [...page.assets]
+      ..sort((a, b) => _sortKey(b).compareTo(_sortKey(a)));
 
     if (mounted) {
       setState(() {
-        _allPath = allPath;
+        _allPath = page.path;
         _assets = assets;
         _hasMore = assets.length == _pageSize;
-        _isLimitedAccess = isLimited;
+        _isLimitedAccess = page.isLimited;
         _loading = false;
       });
     }
@@ -169,8 +335,10 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
 
   @override
   void dispose() {
-    _gridScrollController.removeListener(_onScroll);
-    _gridScrollController.dispose();
+    _attachedScrollController?.removeListener(_onScroll);
+    _sheetController.removeListener(_onSheetSizeChanged);
+    _sheetSettleTimer?.cancel();
+    _sheetController.dispose();
     _liveCamera?.dispose();
     super.dispose();
   }
@@ -192,117 +360,199 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
 
   void _openCameraTile() {
     _liveCamera?.dispose();
-    Navigator.pop(context, 'open_camera');
+    _closeSheet('open_camera');
   }
 
   void _sendSelected(String caption) {
-    final ordered = _assets.where((a) => _selectedOrder.containsKey(a.id)).toList()
-      ..sort((a, b) => _selectedOrder[a.id]!.compareTo(_selectedOrder[b.id]!));
-    Navigator.pop(context, MediaPickerSheetResult(ordered, caption));
+    final ordered =
+        _assets.where((a) => _selectedOrder.containsKey(a.id)).toList()..sort(
+          (a, b) => _selectedOrder[a.id]!.compareTo(_selectedOrder[b.id]!),
+        );
+    _closeSheet(MediaPickerSheetResult(ordered, caption));
+  }
+
+  /// Единая точка закрытия шторки — вместо мгновенного Navigator.pop (тогда
+  /// панель просто пропадала на месте, а не "уходила" вниз под нижний край
+  /// экрана) сперва СЖИМАЕМ её обратно в 0 через тот же
+  /// DraggableScrollableController, что и открытие, и только потом реально
+  /// снимаем route.
+  ///
+  /// _closing — защита от повторного вызова (например, drag-release ещё раз
+  /// решит "закрыть", пока предыдущее закрытие уже идёт). Future.any с
+  /// таймаутом — защита от того, что сама animateTo() может НЕ доиграть до
+  /// конца: если сразу после отпускания пальца сработает СОБСТВЕННАЯ
+  /// баллистическая прокрутка DraggableScrollableSheet (обычная реакция на
+  /// fling), она может перехватить/оборвать нашу анимацию, и её Future
+  /// тогда просто никогда не резолвится — а раз Navigator.pop() ждёт именно
+  /// его, шторка визуально пропадает (или зависает), а затемнение фона,
+  /// которое снимается только вместе с реальным pop()'ом, остаётся навсегда.
+  Future<void> _closeSheet([Object? result]) async {
+    if (_closing) return;
+    _closing = true;
+    if (_sheetController.isAttached) {
+      try {
+        await Future.any([
+          _sheetController.animateTo(
+            0.0,
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeIn,
+          ),
+          Future.delayed(const Duration(milliseconds: 400)),
+        ]);
+      } catch (_) {}
+    }
+    if (mounted) Navigator.pop(context, result);
   }
 
   @override
   Widget build(BuildContext context) {
-    final screenHeight = MediaQuery.of(context).size.height;
     final hasSelection = _selectedOrder.isNotEmpty;
 
-    return Material(
-      color: AppColors.background,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              height: 36,
-              child: Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.textMuted,
-                    borderRadius: BorderRadius.circular(2),
+    // DraggableScrollableSheet сам считает полную высоту ленты по
+    // itemCount сетки (строки × размер плитки) — без ручной арифметики
+    // "сколько там рядов" и без эйгерной постройки всех плиток разом:
+    // SliverGrid внутри CustomScrollView строит (и меряет экстент) лениво,
+    // как обычный GridView.builder.
+    //
+    // minChildSize/initialChildSize ВСЕГДА 0.0 — специально НЕ фиксируем
+    // пол на kAttachmentSheetRestFraction: ниже него панель должна тянуться
+    // пальцем напрямую (см. _onSheetSizeChanged), а не клэмпаться. Решение
+    // "закрыть/вернуть на 0.5" принимается уже по факту отпускания пальца.
+    return DraggableScrollableSheet(
+      controller: _sheetController,
+      initialChildSize: 0.0,
+      minChildSize: 0.0,
+      maxChildSize: 1.0,
+      expand: false,
+      // Закрытие обрабатываем сами (см. _onSheetSizeChanged) — этот флаг
+      // про совсем другой, автоматический механизм, которым мы не
+      // пользуемся.
+      shouldCloseOnMinExtent: false,
+      builder: (context, scrollController) {
+        _attachScrollController(scrollController);
+        return Material(
+          color: AppColors.background,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+          // Без SafeArea(bottom) — панель должна начинаться от САМОГО низа
+          // экрана и перекрывать собой зазор в 5px под полем ввода в чате
+          // позади неё, а не останавливаться, не доходя до края, оставляя
+          // этот зазор (и жестовую зону ОС) видимой щелью снизу.
+          child: Column(
+            children: [
+              SizedBox(
+                height: 36,
+                child: Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.textMuted,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
               ),
-            ),
-            if (_isLimitedAccess)
-              InkWell(
-                onTap: _requestFullAccess,
-                child: Container(
-                  width: double.infinity,
-                  color: AppColors.primary.withValues(alpha: 0.15),
-                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 14),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.info_outline, size: 16, color: AppColors.primary),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Доступны не все файлы — нажмите, чтобы разрешить полный доступ',
-                          style: const TextStyle(fontSize: 12, color: AppColors.textPrimary),
+              if (_isLimitedAccess)
+                InkWell(
+                  onTap: _requestFullAccess,
+                  child: Container(
+                    width: double.infinity,
+                    color: AppColors.primary.withValues(alpha: 0.15),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 8,
+                      horizontal: 14,
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.info_outline,
+                          size: 16,
+                          color: AppColors.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Доступны не все файлы — нажмите, чтобы разрешить полный доступ',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              Expanded(
+                // Stack вместо прежнего "сетка + панель друг под другом в
+                // Column" — панель описания теперь ЛЕЖИТ ПОВЕРХ сетки, не
+                // сдвигая её вверх при появлении. Сетка остаётся на месте
+                // целиком, просто частично перекрывается снизу.
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      // ВАЖНО: CustomScrollView со scrollController от
+                      // DraggableScrollableSheet строится ВСЕГДА, даже пока
+                      // _loading — если подменять его на время загрузки
+                      // спиннером (как было раньше), scrollController ни к
+                      // чему не подключён, DraggableScrollableController
+                      // остаётся неприкреплённым к позиции скролла, и
+                      // _openSheet()'s animateTo() падает молча (экран
+                      // просто темнеет и ничего не открывается — не строка
+                      // ошибки, а именно тишина). Спиннер теперь просто
+                      // одна из sliver'ов внутри той же самой ленты.
+                      //
+                      // Закрытие по утягиванию вниз теперь не через overscroll
+                      // (см. _onSheetSizeChanged выше) — минимума у
+                      // панели больше нет, драг вниз двигает саму панель
+                      // напрямую. NotificationListener — отдельная задача,
+                      // см. _handleListScrollNotification: докатывает панель,
+                      // если флик списка вверх упёрся в его собственный
+                      // потолок ещё со скоростью.
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: _handleListScrollNotification,
+                        child: CustomScrollView(
+                          controller: scrollController,
+                          slivers: [
+                            if (_loading)
+                              const SliverFillRemaining(
+                                hasScrollBody: false,
+                                child: Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                              )
+                            else
+                              SliverGrid(
+                                gridDelegate:
+                                    const SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: 3,
+                                      childAspectRatio: 1,
+                                    ),
+                                delegate: SliverChildBuilderDelegate(
+                                  (context, index) => index == 0
+                                      ? _buildCameraTile()
+                                      : _buildMediaTile(_assets[index - 1]),
+                                  childCount: _assets.length + 1,
+                                ),
+                              ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    if (hasSelection)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: CaptionInputBar(onSend: _sendSelected),
+                      ),
+                  ],
                 ),
               ),
-            SizedBox(
-              height: screenHeight * 0.5,
-              // Stack вместо прежнего "сетка + панель друг под другом в
-              // Column" — панель описания теперь ЛЕЖИТ ПОВЕРХ сетки, не
-              // сдвигая её вверх при появлении. Сетка остаётся на месте
-              // целиком, просто частично перекрывается снизу.
-              child: Stack(
-                children: [
-Positioned.fill(
-  child: _loading
-      ? const Center(child: CircularProgressIndicator())
-      : NotificationListener<ScrollNotification>(
-          onNotification: (notification) {
-            // Запоминаем, была ли позиция УЖЕ на самом верху в момент
-            // НАЧАЛА этого конкретного жеста — иначе долгий свайп,
-            // который просто докручивает список до верха и продолжается
-            // дальше в рамках одного и того же движения пальца, тоже
-            // закрывал бы шторку, что неверно.
-            if (notification is ScrollStartNotification) {
-              _dragStartedAtTop = notification.metrics.pixels <= 0;
-            } else if (notification is OverscrollNotification) {
-              if (_dragStartedAtTop && notification.overscroll < 0) {
-                Navigator.pop(context);
-              }
-            }
-            return false;
-          },
-          child: GridView.builder(
-            controller: _gridScrollController,
-            padding: EdgeInsets.zero,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              childAspectRatio: 1,
-            ),
-            itemCount: _assets.length + 1,
-            itemBuilder: (context, index) {
-              if (index == 0) return _buildCameraTile();
-              return _buildMediaTile(_assets[index - 1]);
-            },
+            ],
           ),
-        ),
-),
-                  if (hasSelection)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: CaptionInputBar(onSend: _sendSelected),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -310,7 +560,9 @@ Positioned.fill(
     return InkWell(
       onTap: _openCameraTile,
       child: Container(
-        decoration: BoxDecoration(border: Border.all(color: Colors.black26, width: 0.5)),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.black26, width: 0.5),
+        ),
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -349,7 +601,9 @@ Positioned.fill(
     return GestureDetector(
       onTap: () => _openAssetPreview(asset),
       child: Container(
-        decoration: BoxDecoration(border: Border.all(color: Colors.black26, width: 0.5)),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.black26, width: 0.5),
+        ),
         // LayoutBuilder даёт РЕАЛЬНЫЙ конечный размер плитки — нужен, чтобы
         // явно задать Positioned ширину/высоту тап-зоны выбора. Без этого
         // (только top+right без left/bottom) Stack отдаёт FractionallySizedBox
@@ -365,10 +619,13 @@ Positioned.fill(
                 FutureBuilder<Uint8List?>(
                   future: _thumbnailFutures.putIfAbsent(
                     asset.id,
-                    () => asset.thumbnailDataWithSize(const ThumbnailSize(200, 200)),
+                    () => asset.thumbnailDataWithSize(
+                      const ThumbnailSize(200, 200),
+                    ),
                   ),
                   builder: (context, snapshot) {
-                    if (snapshot.connectionState != ConnectionState.done || snapshot.data == null) {
+                    if (snapshot.connectionState != ConnectionState.done ||
+                        snapshot.data == null) {
                       return Container(color: AppColors.surface);
                     }
                     return Image.memory(snapshot.data!, fit: BoxFit.cover);
@@ -378,7 +635,11 @@ Positioned.fill(
                   const Positioned(
                     bottom: 4,
                     left: 4,
-                    child: Icon(Icons.play_circle_fill, color: Colors.white, size: 20),
+                    child: Icon(
+                      Icons.play_circle_fill,
+                      color: Colors.white,
+                      size: 20,
+                    ),
                   ),
                 // Тап-зона выбора занимает всю верхнюю правую четверть плитки
                 // (не только маленький кружок) — легче попасть пальцем. Тап по
@@ -401,14 +662,20 @@ Positioned.fill(
                           height: 24,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: order != null ? AppColors.primary : Colors.black45,
+                            color: order != null
+                                ? AppColors.primary
+                                : Colors.black45,
                             border: Border.all(color: Colors.white, width: 1.5),
                           ),
                           alignment: Alignment.center,
                           child: order != null
                               ? Text(
                                   '$order',
-                                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 )
                               : null,
                         ),
@@ -498,7 +765,11 @@ class _AssetPreviewScreenState extends State<_AssetPreviewScreen> {
                   child: order != null
                       ? Text(
                           '$order',
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
                         )
                       : null,
                 ),
@@ -513,7 +784,8 @@ class _AssetPreviewScreenState extends State<_AssetPreviewScreen> {
           controller: _pageController,
           itemCount: widget.assets.length,
           onPageChanged: (index) => setState(() => _currentIndex = index),
-          itemBuilder: (context, index) => _AssetPreviewPage(asset: widget.assets[index]),
+          itemBuilder: (context, index) =>
+              _AssetPreviewPage(asset: widget.assets[index]),
         ),
       ),
     );
@@ -569,7 +841,9 @@ class _AssetPreviewPageState extends State<_AssetPreviewPage> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator(color: Colors.white));
+      return const Center(
+        child: CircularProgressIndicator(color: Colors.white),
+      );
     }
     if (_videoController != null) {
       // Таймлайн вынесен ОТДЕЛЬНО от _VideoPreview и прижат к нижнему краю
@@ -595,7 +869,9 @@ class _AssetPreviewPageState extends State<_AssetPreviewPage> {
     if (_imageFile != null) {
       return Center(child: Image.file(_imageFile!, fit: BoxFit.contain));
     }
-    return const Center(child: Icon(Icons.broken_image, color: Colors.white54, size: 64));
+    return const Center(
+      child: Icon(Icons.broken_image, color: Colors.white54, size: 64),
+    );
   }
 }
 
@@ -613,7 +889,9 @@ class _VideoPreview extends StatelessWidget {
           return const CircularProgressIndicator(color: Colors.white);
         }
         return GestureDetector(
-          onTap: () => controller.value.isPlaying ? controller.pause() : controller.play(),
+          onTap: () => controller.value.isPlaying
+              ? controller.pause()
+              : controller.play(),
           child: AspectRatio(
             aspectRatio: controller.value.aspectRatio,
             child: Stack(
@@ -624,7 +902,11 @@ class _VideoPreview extends StatelessWidget {
                   valueListenable: controller,
                   builder: (context, value, _) {
                     if (value.isPlaying) return const SizedBox.shrink();
-                    return const Icon(Icons.play_arrow, color: Colors.white70, size: 64);
+                    return const Icon(
+                      Icons.play_arrow,
+                      color: Colors.white70,
+                      size: 64,
+                    );
                   },
                 ),
               ],
@@ -665,7 +947,9 @@ class _VideoSeekBarState extends State<_VideoSeekBar> {
         final durationMs = value.duration.inMilliseconds.toDouble();
         if (durationMs <= 0) return const SizedBox.shrink();
 
-        final positionMs = value.position.inMilliseconds.clamp(0, value.duration.inMilliseconds).toDouble();
+        final positionMs = value.position.inMilliseconds
+            .clamp(0, value.duration.inMilliseconds)
+            .toDouble();
         final sliderMs = (_dragValueMs ?? positionMs).clamp(0.0, durationMs);
 
         return Container(
@@ -687,8 +971,12 @@ class _VideoSeekBarState extends State<_VideoSeekBar> {
                 child: SliderTheme(
                   data: SliderTheme.of(context).copyWith(
                     trackHeight: 2,
-                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 6,
+                    ),
+                    overlayShape: const RoundSliderOverlayShape(
+                      overlayRadius: 14,
+                    ),
                   ),
                   child: Slider(
                     value: sliderMs,
@@ -699,7 +987,9 @@ class _VideoSeekBarState extends State<_VideoSeekBar> {
                     onChangeStart: (v) => setState(() => _dragValueMs = v),
                     onChanged: (v) => setState(() => _dragValueMs = v),
                     onChangeEnd: (v) {
-                      widget.controller.seekTo(Duration(milliseconds: v.round()));
+                      widget.controller.seekTo(
+                        Duration(milliseconds: v.round()),
+                      );
                       setState(() => _dragValueMs = null);
                     },
                   ),

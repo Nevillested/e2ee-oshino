@@ -32,13 +32,13 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-Future<void> _handleLogin() async {
-  FocusScope.of(context).unfocus();
-  setState(() {
+  Future<void> _handleLogin() async {
+    FocusScope.of(context).unfocus();
+    setState(() {
       _isLoading = true;
       _errorText = null;
     });
-showLoadingOverlay(context, 'Идёт авторизация, подождите');
+    showLoadingOverlay(context, 'Идёт авторизация, подождите');
 
     try {
       final token = await _apiClient.login(
@@ -53,16 +53,16 @@ showLoadingOverlay(context, 'Идёт авторизация, подождите
 
       if (!mounted) return;
       Navigator.pushAndRemoveUntil(
-  context,
-  MaterialPageRoute(builder: (context) => const HomePlaceholderScreen()),
-  (route) => false,
-);
+        context,
+        MaterialPageRoute(builder: (context) => const HomePlaceholderScreen()),
+        (route) => false,
+      );
     } catch (e) {
       setState(() {
         _errorText = e.toString();
       });
     } finally {
-  hideLoadingOverlay();
+      hideLoadingOverlay();
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -81,10 +81,7 @@ showLoadingOverlay(context, 'Идёт авторизация, подождите
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              AuthTextField(
-                controller: _loginController,
-                hintText: 'Логин',
-              ),
+              AuthTextField(controller: _loginController, hintText: 'Логин'),
               const SizedBox(height: 14),
               AuthTextField(
                 controller: _passwordController,

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/keyboard_height_store.dart';
 import '../theme/app_theme.dart';
@@ -17,13 +18,12 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
 
   bool _emojiMode = false;
   double _keyboardHeight = 280;
-
-  // Целевая зарезервированная высота — меняется ТОЛЬКО в наших явных
-  // обработчиках (нажатие иконки, тап по полю), никогда пассивно не
-  // "плывёт" за реальной анимацией закрытия клавиатуры. Именно её
-  // отсутствие раньше вызывало проседание-скачок при переключении.
-  double _targetReserve = 0;
-  bool _switchingMode = false;
+  static const _keyboardHeightSettleDelay = Duration(milliseconds: 180);
+  Timer? _keyboardHeightSettleTimer;
+  // См. build(): держит anyPanelOpen=true на те несколько кадров между
+  // тапом по иконке клавиатуры (переключение из эмодзи-режима) и моментом,
+  // когда настоящая клавиатура реально поднимется и realInset это заметит.
+  bool _awaitingKeyboardOpen = false;
 
   @override
   void initState() {
@@ -35,26 +35,18 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
   }
 
   void _onFocusChange() {
-    if (_focusNode.hasFocus) {
-      setState(() {
-        _emojiMode = false;
-        _targetReserve = _keyboardHeight;
-      });
-    } else {
-      // unfocus(), вызванный НАМИ при переключении на эмодзи, тоже
-      // порождает это событие — но раз мы уже выставили _switchingMode
-      // перед вызовом unfocus(), здесь мы просто пропускаем сброс,
-      // чтобы не занулить target между двумя нашими же setState.
-      if (_switchingMode) {
-        _switchingMode = false;
-        return;
-      }
-      setState(() => _targetReserve = 0);
+    // Резерв места (reserved в build()) сам вычисляется на лету из
+    // keyboardVisible/_emojiMode на каждой перестройке — здесь нужно
+    // только не дать эмодзи-панели остаться включённой, если фокус
+    // получило текстовое поле каким-то другим путём, не через нашу кнопку.
+    if (_focusNode.hasFocus && _emojiMode) {
+      setState(() => _emojiMode = false);
     }
   }
 
   @override
   void dispose() {
+    _keyboardHeightSettleTimer?.cancel();
     _focusNode.removeListener(_onFocusChange);
     _controller.dispose();
     _focusNode.dispose();
@@ -66,38 +58,44 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
     final realInset = MediaQuery.of(context).viewInsets.bottom;
     final keyboardVisible = realInset > 50;
 
-    if (keyboardVisible && realInset > _keyboardHeight + 1) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _keyboardHeight = realInset);
-        KeyboardHeightStore.updateKnownHeight(realInset);
+    // Измеряем высоту клавиатуры только когда она перестала МЕНЯТЬСЯ — см.
+    // тот же механизм и подробное объяснение в ChatScreen.build(): хватать
+    // первый же кадр, где realInset превысил текущее известное значение,
+    // может поймать заброс во время анимации выезда клавиатуры, а не её
+    // настоящую итоговую высоту.
+    if (keyboardVisible) {
+      _keyboardHeightSettleTimer?.cancel();
+      _keyboardHeightSettleTimer = Timer(_keyboardHeightSettleDelay, () {
+        if (!mounted) return;
+        final settled = MediaQuery.of(context).viewInsets.bottom;
+        if (settled <= 50) return;
+        if ((settled - _keyboardHeight).abs() > 1) {
+          setState(() => _keyboardHeight = settled);
+        }
+        KeyboardHeightStore.updateKnownHeight(settled);
       });
     }
 
-    // Once realInset catches up to our held target — the real keyboard has
-    // fully replaced the emoji panel we were holding space for — release the
-    // hold and go back to live-tracking realInset directly.
-    if (_switchingMode && !_emojiMode && realInset >= _targetReserve - 4) {
-      _switchingMode = false;
+    // Клавиатура и эмодзи-панель — ОДНО и то же место, одной и той же
+    // ЗАРАНЕЕ известной (закэшированной) высоты, никогда одновременно —
+    // см. подробности у того же механизма в ChatScreen.build().
+    if (_awaitingKeyboardOpen && keyboardVisible) {
+      _awaitingKeyboardOpen = false;
     }
-
-    // Резерв места либо ЖИВЬЁМ зеркалит настоящую клавиатуру (обычная печать,
-    // системный back и т.п. — realInset уже несёт в себе анимацию самой ОС,
-    // повторно анимировать поверх неё не нужно и вредно — именно это давало
-    // эффект "резинки"/отставания), либо, во время наших СОБСТВЕННЫХ
-    // переключений на эмодзи-панель и обратно (когда реальной анимации ОС,
-    // на которую можно опереться, нет), держится на зафиксированной высоте.
-    final isLiveTracking = !_emojiMode && !_switchingMode;
-    final emojiPanelOnlyVisible = !keyboardVisible && _emojiMode;
-    final reserved = isLiveTracking ? realInset : _targetReserve;
+    // realInset — общий на всё приложение; резервируем место только если
+    // клавиатуру подняло именно НАШЕ поле (см. тот же нюанс в
+    // ChatScreen.build()).
+    final anyPanelOpen =
+        (keyboardVisible && _focusNode.hasFocus) ||
+        _emojiMode ||
+        _awaitingKeyboardOpen;
+    final reserved = anyPanelOpen ? _keyboardHeight : 0.0;
 
     return PopScope(
-      canPop: !emojiPanelOnlyVisible,
+      canPop: !_emojiMode,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && emojiPanelOnlyVisible) {
-          setState(() {
-            _emojiMode = false;
-            _targetReserve = 0;
-          });
+        if (!didPop && _emojiMode) {
+          setState(() => _emojiMode = false);
         }
       },
       child: Column(
@@ -118,21 +116,19 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
                     constraints: const BoxConstraints(),
                     visualDensity: VisualDensity.compact,
                     icon: Icon(
-                      emojiPanelOnlyVisible ? Icons.keyboard : Icons.emoji_emotions_outlined,
+                      _emojiMode
+                          ? Icons.keyboard
+                          : Icons.emoji_emotions_outlined,
                       color: AppColors.textMuted,
                     ),
                     onPressed: () {
-                      if (emojiPanelOnlyVisible) {
-                        _switchingMode = true;
+                      if (_emojiMode) {
+                        _awaitingKeyboardOpen = true;
                         setState(() => _emojiMode = false);
                         _focusNode.requestFocus();
                       } else {
-                        _switchingMode = true;
                         _focusNode.unfocus();
-                        setState(() {
-                          _emojiMode = true;
-                          _targetReserve = _keyboardHeight;
-                        });
+                        setState(() => _emojiMode = true);
                       }
                     },
                   ),
@@ -166,12 +162,18 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
               ),
             ),
           ),
-          AnimatedContainer(
-            duration: isLiveTracking ? Duration.zero : const Duration(milliseconds: 220),
-            curve: Curves.easeOut,
+          // Клавиатура и эмодзи-панель — фиксированная, заранее известная
+          // высота, БЕЗ анимации (пока, по той же причине, что и в чате —
+          // сначала проверяем сам механизм). Этот блок — часть Column
+          // ВНУТРИ CaptionInputBar (текстовая форма выше него никогда не
+          // перекрывается), а сам CaptionInputBar снаружи кладётся поверх
+          // контента через Stack/Positioned(bottom: 0) — так что вырастая,
+          // он не поднимает и не сжимает то, что под ним (см.
+          // camera_capture_screen.dart/media_picker_sheet.dart).
+          Container(
             height: reserved,
             color: AppColors.surface,
-            child: reserved > 0
+            child: _emojiMode
                 ? ClipRect(
                     child: RepaintBoundary(
                       child: FullEmojiPicker(

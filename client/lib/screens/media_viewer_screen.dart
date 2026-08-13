@@ -81,14 +81,16 @@ class _MediaViewerPageState<T> extends State<_MediaViewerPage<T>> {
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator(color: Colors.white));
+          return const Center(
+            child: CircularProgressIndicator(color: Colors.white),
+          );
         }
         if (snapshot.hasError || snapshot.data == null) {
-          return const Center(child: Icon(Icons.broken_image, color: Colors.white54, size: 64));
+          return const Center(
+            child: Icon(Icons.broken_image, color: Colors.white54, size: 64),
+          );
         }
-        return Center(
-          child: Image.memory(snapshot.data!, fit: BoxFit.contain),
-        );
+        return Center(child: Image.memory(snapshot.data!, fit: BoxFit.contain));
       },
     );
   }

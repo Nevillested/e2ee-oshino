@@ -10,10 +10,12 @@ class VerticalDismissDetector extends StatefulWidget {
   const VerticalDismissDetector({super.key, required this.child});
 
   @override
-  State<VerticalDismissDetector> createState() => _VerticalDismissDetectorState();
+  State<VerticalDismissDetector> createState() =>
+      _VerticalDismissDetectorState();
 }
 
-class _VerticalDismissDetectorState extends State<VerticalDismissDetector> with SingleTickerProviderStateMixin {
+class _VerticalDismissDetectorState extends State<VerticalDismissDetector>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _dragAnimController;
   Animation<Offset>? _offsetAnim;
   Offset _dragOffset = Offset.zero;
@@ -21,10 +23,14 @@ class _VerticalDismissDetectorState extends State<VerticalDismissDetector> with 
   @override
   void initState() {
     super.initState();
-    _dragAnimController = AnimationController(vsync: this, duration: const Duration(milliseconds: 220))
-      ..addListener(() {
-        if (_offsetAnim != null) setState(() => _dragOffset = _offsetAnim!.value);
-      });
+    _dragAnimController =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 220),
+        )..addListener(() {
+          if (_offsetAnim != null)
+            setState(() => _dragOffset = _offsetAnim!.value);
+        });
   }
 
   @override
@@ -33,7 +39,8 @@ class _VerticalDismissDetectorState extends State<VerticalDismissDetector> with 
     super.dispose();
   }
 
-  void _onVerticalDragStart(DragStartDetails details) => _dragAnimController.stop();
+  void _onVerticalDragStart(DragStartDetails details) =>
+      _dragAnimController.stop();
 
   void _onVerticalDragUpdate(DragUpdateDetails details) {
     setState(() => _dragOffset += Offset(0, details.delta.dy));
@@ -42,11 +49,15 @@ class _VerticalDismissDetectorState extends State<VerticalDismissDetector> with 
   void _onVerticalDragEnd(DragEndDetails details) {
     final screenHeight = MediaQuery.of(context).size.height;
     final velocity = details.primaryVelocity ?? 0;
-    final shouldDismiss = _dragOffset.dy.abs() > screenHeight * 0.16 || velocity.abs() > 700;
+    final shouldDismiss =
+        _dragOffset.dy.abs() > screenHeight * 0.16 || velocity.abs() > 700;
 
     if (shouldDismiss) {
       final goingDown = velocity != 0 ? velocity > 0 : _dragOffset.dy >= 0;
-      _animateOffset(Offset(0, goingDown ? screenHeight : -screenHeight), thenPop: true);
+      _animateOffset(
+        Offset(0, goingDown ? screenHeight : -screenHeight),
+        thenPop: true,
+      );
     } else {
       _animateOffset(Offset.zero, thenPop: false);
     }
@@ -64,7 +75,10 @@ class _VerticalDismissDetectorState extends State<VerticalDismissDetector> with 
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
-    final progress = (_dragOffset.dy.abs() / (screenHeight * 0.5)).clamp(0.0, 1.0);
+    final progress = (_dragOffset.dy.abs() / (screenHeight * 0.5)).clamp(
+      0.0,
+      1.0,
+    );
     final opacity = 1.0 - progress * 0.6;
 
     return GestureDetector(

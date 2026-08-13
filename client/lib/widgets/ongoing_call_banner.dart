@@ -22,7 +22,8 @@ class _OngoingCallBannerState extends State<OngoingCallBanner> {
   Timer? _ticker;
 
   bool get _isRelevant =>
-      _call.state == CallState.connected && _call.currentPeerLogin == widget.peerLogin;
+      _call.state == CallState.connected &&
+      _call.currentPeerLogin == widget.peerLogin;
 
   @override
   void initState() {
@@ -71,7 +72,9 @@ class _OngoingCallBannerState extends State<OngoingCallBanner> {
           if (_call.isCallScreenVisible) return;
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => CallScreen(peerLogin: widget.peerLogin)),
+            MaterialPageRoute(
+              builder: (_) => CallScreen(peerLogin: widget.peerLogin),
+            ),
           );
         },
         child: Padding(
@@ -83,12 +86,18 @@ class _OngoingCallBannerState extends State<OngoingCallBanner> {
               const SizedBox(width: 8),
               const Text(
                 'Вернуться к экрану звонка',
-                style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: Colors.black87,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(width: 8),
               Text(
                 _durationText(),
-                style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  color: Colors.black87,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),

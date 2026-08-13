@@ -21,7 +21,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 /// CallService, никак не связанный с реальным идущим звонком. Поэтому то
 /// уведомление собрано полностью нативно, см. OngoingCallNotifier.kt
 /// (пакет call_ring_plugin) + PipService/CallRingPlugin на Dart-стороне.
-final FlutterLocalNotificationsPlugin localNotifications = FlutterLocalNotificationsPlugin();
+final FlutterLocalNotificationsPlugin localNotifications =
+    FlutterLocalNotificationsPlugin();
 
 bool _initialized = false;
 
@@ -40,6 +41,7 @@ Future<void> ensureLocalNotificationsInitialized() async {
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
     ),
     onDidReceiveNotificationResponse: _handleResponse,
-    onDidReceiveBackgroundNotificationResponse: onBackgroundNotificationResponse,
+    onDidReceiveBackgroundNotificationResponse:
+        onBackgroundNotificationResponse,
   );
 }

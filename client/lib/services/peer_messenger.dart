@@ -32,9 +32,15 @@ Future<void> sendPeerMessage(String peerDeviceId, InnerMessage inner) async {
   if (state == null) {
     final bundle = await ApiClient().getPrekeyBundle(token!, peerDeviceId);
     await PeerAccountStore.save(peerDeviceId, bundle['account_id'] as String);
-    await PeerIdentityStore.save(peerDeviceId, bundle['identity_dh_pubkey'] as String);
+    await PeerIdentityStore.save(
+      peerDeviceId,
+      bundle['identity_dh_pubkey'] as String,
+    );
 
-    final outgoing = await establishOutgoingRoot(bundle: bundle, myDeviceId: myDeviceId!);
+    final outgoing = await establishOutgoingRoot(
+      bundle: bundle,
+      myDeviceId: myDeviceId!,
+    );
     state = await RatchetState.initAsSender(
       rootKey: outgoing.rootKey,
       ephemeralKeyPair: outgoing.ephemeralKeyPair,
@@ -52,5 +58,9 @@ Future<void> sendPeerMessage(String peerDeviceId, InnerMessage inner) async {
     if (initHeader != null) ...initHeader,
   };
 
-  await WebSocketService.instance.sendEnvelope(peerDeviceId, envelope, inner.messageId);
+  await WebSocketService.instance.sendEnvelope(
+    peerDeviceId,
+    envelope,
+    inner.messageId,
+  );
 }

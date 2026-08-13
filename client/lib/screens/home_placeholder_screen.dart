@@ -10,7 +10,6 @@ import '../services/push_service.dart';
 import '../services/websocket_service.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
-import '../storage/notes_store.dart';
 import '../theme/app_theme.dart';
 import '../utils/time_format.dart';
 import '../widgets/bottom_action_bar.dart';
@@ -19,10 +18,7 @@ import '../widgets/swipe_back_page_route.dart';
 import 'chat_screen.dart';
 import 'incoming_call_screen.dart';
 import 'new_chat_screen.dart';
-import 'notes_screen.dart';
 import 'welcome_screen.dart';
-
-const _notesMarker = '__notes__';
 
 class _NoGlowScrollBehavior extends ScrollBehavior {
   @override
@@ -60,7 +56,6 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
     _webSocketService.connect(token, deviceId);
     MessageRouter.start();
     ChatStore.changes.listen((_) => _refreshChats());
-    NotesStore.changes.listen((_) => _refreshChats());
     PushService.init();
 
     CallService.instance.startListening();
@@ -145,14 +140,13 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
 
   Future<void> _refreshChats() async {
     final chats = await ChatStore.getKnownPeers();
-    final notesSummary = await NotesStore.getSummary();
-
+    // "Заметки" — обычная запись в ChatStore под фиксированным peerLogin
+    // (см. notesPeerLogin); пока в неё ни разу не писали, такой записи там
+    // ещё нет — подставляем пустую заглушку, чтобы пункт всё равно был
+    // виден и открывался (иначе новый пользователь не найдёт его вообще).
+    final hasNotes = chats.any((c) => c.peerLogin == notesPeerLogin);
     final combined = <ChatSummary>[
-      ChatSummary(
-        _notesMarker,
-        notesSummary.lastMessage,
-        notesSummary.lastTimestamp,
-      ),
+      if (!hasNotes) ChatSummary(notesPeerLogin, '', 0),
       ...chats,
     ]..sort((a, b) => b.lastTimestamp.compareTo(a.lastTimestamp));
 
@@ -190,7 +184,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
                 itemCount: _entries.length,
                 itemBuilder: (context, index) {
                   final entry = _entries[index];
-                  final isNotes = entry.peerLogin == _notesMarker;
+                  final isNotes = entry.peerLogin == notesPeerLogin;
 
                   return Container(
                     color: entry.unreadCount > 0
@@ -265,10 +259,17 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
                       ),
                       onTap: () async {
                         if (isNotes) {
+                          final myAccountId =
+                              await Session.getAccountId() ?? '';
+                          if (!context.mounted) return;
                           await Navigator.push(
                             context,
-                            MaterialPageRoute(
-                              builder: (context) => const NotesScreen(),
+                            SwipeBackPageRoute(
+                              builder: (context) => ChatScreen(
+                                peerDeviceId: '',
+                                peerAccountId: myAccountId,
+                                peerLogin: notesPeerLogin,
+                              ),
                             ),
                           );
                           return;
