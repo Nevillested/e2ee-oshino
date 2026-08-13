@@ -11,12 +11,19 @@ import '../theme/app_theme.dart';
 class VoiceMessagePlayer extends StatefulWidget {
   final bool isMine;
   final int? durationMs;
+  // Текущий шаг отправки ("Шифрование…", "Загрузка на сервер…" и т.п.,
+  // см. StoredMessage.processingStep) — не null, пока голосовое ещё
+  // отправляется. Файл при этом уже лежит локально и в принципе
+  // проигрывается (см. resolveFile), поэтому воспроизведение не блокируем
+  // — просто заменяем строку с длительностью на текущий статус.
+  final String? processingStep;
   final Future<File> Function() resolveFile;
 
   const VoiceMessagePlayer({
     super.key,
     required this.isMine,
     required this.durationMs,
+    this.processingStep,
     required this.resolveFile,
   });
 
@@ -95,6 +102,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
 
   @override
   Widget build(BuildContext context) {
+    final isProcessing = widget.processingStep != null;
     final total = _duration ?? Duration.zero;
     final progress = total.inMilliseconds > 0
         ? (_position.inMilliseconds / total.inMilliseconds).clamp(0.0, 1.0)
@@ -145,7 +153,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(2),
                   child: LinearProgressIndicator(
-                    value: progress,
+                    value: isProcessing ? null : progress,
                     minHeight: 3,
                     backgroundColor: accent.withValues(alpha: 0.2),
                     valueColor: AlwaysStoppedAnimation(accent),
@@ -153,11 +161,12 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _fmt(shownDuration),
+                  isProcessing ? widget.processingStep! : _fmt(shownDuration),
                   style: TextStyle(
                     color: accent.withValues(alpha: 0.85),
                     fontSize: 11,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),

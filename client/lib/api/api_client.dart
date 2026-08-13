@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import '../config.dart';
+import '../l10n/app_strings.dart';
 import 'dart:typed_data';
 import 'package:dio/dio.dart' as dio;
 import 'dart:io';
@@ -28,7 +29,7 @@ class ApiClient {
 
     if (response.statusCode != 200) {
       throw ApiException(
-        'Не удалось зарегистрироваться (код ${response.statusCode})',
+        '${tr('error.registerFailed')} (${response.statusCode})',
       );
     }
 
@@ -45,7 +46,7 @@ class ApiClient {
     );
 
     if (response.statusCode != 200) {
-      throw ApiException('Неверный код подтверждения');
+      throw ApiException(tr('error.wrongTotpCode'));
     }
   }
 
@@ -82,14 +83,14 @@ class ApiClient {
       );
 
       if (response.statusCode != 200 || response.data == null) {
-        throw ApiException('Не удалось загрузить файл');
+        throw ApiException(tr('error.uploadFailed'));
       }
       return response.data!;
     } on dio.DioException catch (e) {
       if (e.type == dio.DioExceptionType.cancel) {
-        throw ApiException('Отменено пользователем');
+        throw ApiException(tr('error.cancelledByUser'));
       }
-      throw ApiException('Не удалось загрузить файл');
+      throw ApiException(tr('error.uploadFailed'));
     }
   }
 
@@ -116,9 +117,9 @@ class ApiClient {
       );
     } on dio.DioException catch (e) {
       if (e.type == dio.DioExceptionType.cancel) {
-        throw ApiException('Отменено пользователем');
+        throw ApiException(tr('error.cancelledByUser'));
       }
-      throw ApiException('Не удалось скачать файл');
+      throw ApiException(tr('error.downloadFailed'));
     }
   }
 
@@ -156,14 +157,14 @@ class ApiClient {
       );
 
       if (response.statusCode != 200 || response.data == null) {
-        throw ApiException('Не удалось загрузить файл');
+        throw ApiException(tr('error.uploadFailed'));
       }
       return response.data!;
     } on dio.DioException catch (e) {
       if (e.type == dio.DioExceptionType.cancel) {
-        throw ApiException('Отменено пользователем');
+        throw ApiException(tr('error.cancelledByUser'));
       }
-      throw ApiException('Не удалось загрузить файл');
+      throw ApiException(tr('error.uploadFailed'));
     }
   }
 
@@ -180,7 +181,7 @@ class ApiClient {
     );
 
     if (response.statusCode != 200) {
-      throw ApiException('Неверный логин, пароль или код');
+      throw ApiException(tr('error.wrongCredentials'));
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -197,10 +198,10 @@ class ApiClient {
     );
 
     if (response.statusCode == 409) {
-      throw ApiException('У собеседника закончились ключи, попробуйте позже');
+      throw ApiException(tr('error.peerOutOfKeys'));
     }
     if (response.statusCode != 200) {
-      throw ApiException('Не удалось получить ключи собеседника');
+      throw ApiException(tr('error.peerKeysFailed'));
     }
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
@@ -225,7 +226,7 @@ class ApiClient {
     );
 
     if (response.statusCode != 200) {
-      throw ApiException('Не удалось зарегистрировать устройство');
+      throw ApiException(tr('error.deviceRegisterFailed'));
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -254,7 +255,7 @@ class ApiClient {
     );
 
     if (response.statusCode != 200) {
-      throw ApiException('Не удалось загрузить prekeys');
+      throw ApiException(tr('error.prekeysFailed'));
     }
   }
 
@@ -266,10 +267,10 @@ class ApiClient {
     );
 
     if (response.statusCode == 404) {
-      throw ApiException('Такого пользователя нет');
+      throw ApiException(tr('error.userNotFound'));
     }
     if (response.statusCode != 200) {
-      throw ApiException('Не удалось найти пользователя');
+      throw ApiException(tr('error.userLookupFailed'));
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -277,7 +278,7 @@ class ApiClient {
     // 1. Безопасно извлекаем account_id (преобразуем любая значение -> String, либо пустая строка)
     final rawAccountId = data['account_id'] ?? data['accountId'] ?? data['id'];
     if (rawAccountId == null) {
-      throw ApiException('Сервер не вернул account_id пользователя');
+      throw ApiException(tr('error.noAccountId'));
     }
     final String accountId = rawAccountId.toString();
 
@@ -317,7 +318,7 @@ class ApiClient {
     final response = await http.Response.fromStream(streamed);
 
     if (response.statusCode != 200) {
-      throw ApiException('Не удалось загрузить файл');
+      throw ApiException(tr('error.uploadFailed'));
     }
     return response.body;
   }
@@ -328,7 +329,7 @@ class ApiClient {
       headers: {'Authorization': 'Bearer $token'},
     );
     if (response.statusCode != 200) {
-      throw ApiException('Не удалось скачать файл');
+      throw ApiException(tr('error.downloadFailed'));
     }
     return response.bodyBytes;
   }

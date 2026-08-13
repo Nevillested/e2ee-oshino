@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../l10n/app_strings.dart';
 import '../screens/call_screen.dart';
 import '../services/call_service.dart';
 
@@ -84,9 +85,9 @@ class _OngoingCallBannerState extends State<OngoingCallBanner> {
             children: [
               const Icon(Icons.call, color: Colors.black87, size: 18),
               const SizedBox(width: 8),
-              const Text(
-                'Вернуться к экрану звонка',
-                style: TextStyle(
+              Text(
+                tr('call.returnToScreen'),
+                style: const TextStyle(
                   color: Colors.black87,
                   fontWeight: FontWeight.w600,
                 ),

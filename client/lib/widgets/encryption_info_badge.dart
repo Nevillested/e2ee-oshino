@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 
 void showEncryptionInfoBadge(BuildContext context) {
@@ -39,10 +40,8 @@ void showEncryptionInfoBadge(BuildContext context) {
                     BoxShadow(color: Colors.black26, blurRadius: 8),
                   ],
                 ),
-                child: const Text(
-                  'Переписка защищена сквозным шифрованием: ключи создаются '
-                  'и хранятся только на ваших устройствах, сервер не может '
-                  'прочитать содержимое сообщений.',
+                child: Text(
+                  tr('encryption.info'),
                   textAlign: TextAlign.right,
                   style: TextStyle(color: AppColors.textPrimary, fontSize: 13),
                 ),

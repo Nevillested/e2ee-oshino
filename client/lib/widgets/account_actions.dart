@@ -2,6 +2,7 @@ import 'package:call_ring_plugin/call_ring_plugin.dart';
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../crypto/key_store.dart';
+import '../l10n/app_strings.dart';
 import '../screens/welcome_screen.dart';
 import '../services/websocket_service.dart';
 import '../session.dart';
@@ -25,25 +26,24 @@ Future<void> confirmLogout(BuildContext context) async {
     context: context,
     builder: (context) => AlertDialog(
       backgroundColor: AppColors.surface,
-      title: const Text(
-        'Выйти из аккаунта?',
+      title: Text(
+        tr('account.logoutTitle'),
         style: TextStyle(color: AppColors.textPrimary),
       ),
-      content: const Text(
-        'Ключи шифрования будут удалены с этого устройства. '
-        'Без них восстановить переписку будет невозможно.',
+      content: Text(
+        tr('account.logoutBody'),
         style: TextStyle(color: AppColors.textMuted),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context, false),
-          child: const Text('Отмена'),
+          child: Text(tr('common.cancel')),
         ),
         TextButton(
           onPressed: () => Navigator.pop(context, true),
-          child: const Text(
-            'Я понимаю, выйти из аккаунта',
-            style: TextStyle(color: Colors.red),
+          child: Text(
+            tr('account.logoutConfirm'),
+            style: const TextStyle(color: Colors.red),
           ),
         ),
       ],
@@ -60,25 +60,24 @@ Future<void> confirmDeleteAccount(BuildContext context) async {
     context: context,
     builder: (context) => AlertDialog(
       backgroundColor: AppColors.surface,
-      title: const Text(
-        'Удалить аккаунт?',
+      title: Text(
+        tr('account.deleteTitle'),
         style: TextStyle(color: AppColors.textPrimary),
       ),
-      content: const Text(
-        'Аккаунт будет безвозвратно удалён с сервера. Собеседники увидят '
-        'вас как «Удалённый аккаунт». Это действие нельзя отменить.',
+      content: Text(
+        tr('account.deleteBody'),
         style: TextStyle(color: AppColors.textMuted),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context, false),
-          child: const Text('Отмена'),
+          child: Text(tr('common.cancel')),
         ),
         TextButton(
           onPressed: () => Navigator.pop(context, true),
-          child: const Text(
-            'Удалить аккаунт навсегда',
-            style: TextStyle(color: Colors.red),
+          child: Text(
+            tr('account.deleteConfirm'),
+            style: const TextStyle(color: Colors.red),
           ),
         ),
       ],
@@ -101,50 +100,10 @@ Future<void> confirmDeleteAccount(BuildContext context) async {
 
   if (!success) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Нет соединения с сервером — удаление аккаунта возможно только онлайн',
-        ),
-      ),
+      SnackBar(content: Text(tr('account.deleteOfflineError'))),
     );
     return;
   }
 
   await _wipeLocalDataAndGoToWelcome(context);
-}
-
-void showSettingsSheet(BuildContext context) {
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: AppColors.surface,
-    builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.logout, color: Colors.red),
-            title: const Text(
-              'Выйти из аккаунта',
-              style: TextStyle(color: Colors.red),
-            ),
-            onTap: () {
-              Navigator.pop(sheetContext);
-              confirmLogout(context);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.delete_forever, color: Colors.red),
-            title: const Text(
-              'Удалить аккаунт',
-              style: TextStyle(color: Colors.red),
-            ),
-            onTap: () {
-              Navigator.pop(sheetContext);
-              confirmDeleteAccount(context);
-            },
-          ),
-        ],
-      ),
-    ),
-  );
 }

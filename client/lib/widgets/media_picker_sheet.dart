@@ -5,6 +5,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:video_player/video_player.dart';
+import '../l10n/app_strings.dart';
 import '../services/media_asset_cache.dart';
 import '../theme/app_theme.dart';
 import 'caption_input_bar.dart';
@@ -464,7 +465,7 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(
+                        Icon(
                           Icons.info_outline,
                           size: 16,
                           color: AppColors.primary,
@@ -472,8 +473,8 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Доступны не все файлы — нажмите, чтобы разрешить полный доступ',
-                            style: const TextStyle(
+                            tr('media.limitedAccess'),
+                            style: TextStyle(
                               fontSize: 12,
                               color: AppColors.textPrimary,
                             ),

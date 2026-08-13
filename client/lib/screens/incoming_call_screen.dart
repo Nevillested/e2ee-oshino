@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../l10n/app_strings.dart';
 import '../services/call_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/theme_reactive.dart';
 import 'call_screen.dart';
 
 class IncomingCallScreen extends StatefulWidget {
@@ -66,6 +68,10 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return ThemeReactive(builder: (context) => _build(context));
+  }
+
+  Widget _build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -76,14 +82,11 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
             const SizedBox(height: 20),
             Text(
               peerLogin,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 24,
-              ),
+              style: TextStyle(color: AppColors.textPrimary, fontSize: 24),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Входящий звонок',
+            Text(
+              tr('call.incoming'),
               style: TextStyle(color: AppColors.textMuted),
             ),
             const Spacer(),

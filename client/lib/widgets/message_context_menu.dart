@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import '../l10n/app_strings.dart';
 import '../storage/reaction_usage_store.dart';
 import '../theme/app_theme.dart';
 
@@ -448,43 +449,43 @@ class _ActionsList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = <_ActionItem>[
-      const _ActionItem(Icons.reply, 'Ответить', MessageMenuAction.reply),
+      _ActionItem(Icons.reply, tr('action.reply'), MessageMenuAction.reply),
       if (showCopy)
-        const _ActionItem(
+        _ActionItem(
           Icons.copy_outlined,
-          'Копировать',
+          tr('action.copy'),
           MessageMenuAction.copy,
         ),
       isPinned
-          ? const _ActionItem(
+          ? _ActionItem(
               Icons.push_pin_outlined,
-              'Открепить',
+              tr('action.unpin'),
               MessageMenuAction.unpin,
             )
-          : const _ActionItem(
+          : _ActionItem(
               Icons.push_pin_outlined,
-              'Закрепить',
+              tr('action.pin'),
               MessageMenuAction.pin,
             ),
-      const _ActionItem(
+      _ActionItem(
         Icons.forward_outlined,
-        'Переслать',
+        tr('action.forward'),
         MessageMenuAction.forward,
       ),
       if (showEdit)
-        const _ActionItem(
+        _ActionItem(
           Icons.edit_outlined,
-          'Изменить',
+          tr('action.edit'),
           MessageMenuAction.edit,
         ),
-      const _ActionItem(
+      _ActionItem(
         Icons.check_circle_outline,
-        'Выбрать',
+        tr('action.select'),
         MessageMenuAction.select,
       ),
-      const _ActionItem(
+      _ActionItem(
         Icons.delete_outline,
-        'Удалить',
+        tr('action.delete'),
         MessageMenuAction.delete,
         color: Colors.redAccent,
       ),

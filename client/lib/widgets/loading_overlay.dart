@@ -26,7 +26,7 @@ void showLoadingOverlay(BuildContext context, String message) {
                   const SizedBox(height: 12),
                   Text(
                     message,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppColors.textPrimary,
                       fontSize: 15,
                       fontWeight: FontWeight.normal,

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_text_field.dart';
+import '../widgets/theme_reactive.dart';
 import 'login_screen.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -71,17 +73,20 @@ class _VerifyTotpScreenState extends State<VerifyTotpScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return ThemeReactive(builder: (context) => _build(context));
+  }
+
+  Widget _build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Подтверждение')),
+      appBar: AppBar(title: Text(tr('totp.title'))),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
-                'Отсканируй эту ссылку в приложении-аутентификаторе '
-                '(Google Authenticator, Aegis и т.п.), затем введи текущий код:',
+              Text(
+                tr('totp.scanInstruction'),
                 style: TextStyle(color: AppColors.textMuted),
               ),
               const SizedBox(height: 20),
@@ -101,11 +106,8 @@ class _VerifyTotpScreenState extends State<VerifyTotpScreen> {
               ),
               const SizedBox(height: 20),
               Text(
-                'Или введи секретный код вручную:',
-                style: const TextStyle(
-                  color: AppColors.textMuted,
-                  fontSize: 13,
-                ),
+                tr('totp.manualEntry'),
+                style: TextStyle(color: AppColors.textMuted, fontSize: 13),
               ),
               const SizedBox(height: 8),
               Row(
@@ -113,7 +115,7 @@ class _VerifyTotpScreenState extends State<VerifyTotpScreen> {
                   Expanded(
                     child: SelectableText(
                       _extractSecret(widget.totpUrl),
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppColors.textPrimary,
                         fontSize: 16,
                         letterSpacing: 1.5,
@@ -121,13 +123,13 @@ class _VerifyTotpScreenState extends State<VerifyTotpScreen> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.copy, color: AppColors.primary),
+                    icon: Icon(Icons.copy, color: AppColors.primary),
                     onPressed: () {
                       Clipboard.setData(
                         ClipboardData(text: _extractSecret(widget.totpUrl)),
                       );
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Код скопирован')),
+                        SnackBar(content: Text(tr('totp.codeCopied'))),
                       );
                     },
                   ),
@@ -136,7 +138,7 @@ class _VerifyTotpScreenState extends State<VerifyTotpScreen> {
               const SizedBox(height: 24),
               AuthTextField(
                 controller: _codeController,
-                hintText: 'Код из аутентификатора',
+                hintText: tr('auth.totpHint'),
                 keyboardType: TextInputType.number,
               ),
               if (_errorText != null) ...[
@@ -155,7 +157,7 @@ class _VerifyTotpScreenState extends State<VerifyTotpScreen> {
                           color: Colors.white,
                         ),
                       )
-                    : const Text('Подтвердить'),
+                    : Text(tr('totp.confirm')),
               ),
             ],
           ),

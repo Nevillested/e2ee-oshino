@@ -7,6 +7,7 @@ import 'package:proximity_sensor/proximity_sensor.dart';
 import 'package:uuid/uuid.dart';
 import '../crypto/key_store.dart';
 import '../crypto/message_envelope.dart';
+import '../l10n/app_strings.dart';
 import 'websocket_service.dart';
 import '../api/api_client.dart';
 import '../session.dart';
@@ -360,7 +361,7 @@ class CallService {
     // убрать.
     if (s == CallState.connected) {
       CallRingPlugin.showOngoingCallNotification(
-        currentPeerLogin ?? 'собеседником',
+        currentPeerLogin ?? tr('call.otherParty'),
       );
     } else if (s == CallState.idle) {
       CallRingPlugin.hideOngoingCallNotification();
@@ -537,17 +538,17 @@ class CallService {
     _isOutgoingCall = true;
 
     _setState(CallState.outgoingRinging);
-    _setStatus('Устанавливаем защищённое соединение...');
+    _setStatus(tr('call.securingConnection'));
 
     await _createPeerConnection();
-    _setStatus('Включаем микрофон...');
+    _setStatus(tr('call.enablingMic'));
     await _openLocalAudio();
 
-    _setStatus('Формируем вызов...');
+    _setStatus(tr('call.buildingOffer'));
     final offer = await _peerConnection!.createOffer();
     await _peerConnection!.setLocalDescription(offer);
 
-    _setStatus('Звоним...');
+    _setStatus(tr('call.ringing'));
     await _send('call_offer', {'sdp': offer.sdp});
   }
 
@@ -558,7 +559,7 @@ class CallService {
     videoEnabled = false;
     remoteVideoEnabled = false;
 
-    _setStatus('Устанавливаем защищённое соединение...');
+    _setStatus(tr('call.securingConnection'));
     await _createPeerConnection();
     await _peerConnection!.setRemoteDescription(
       RTCSessionDescription(_pendingOfferSdp!, 'offer'),
@@ -569,15 +570,15 @@ class CallService {
     }
     _pendingRemoteCandidates.clear();
 
-    _setStatus('Включаем микрофон...');
+    _setStatus(tr('call.enablingMic'));
     await _openLocalAudio();
 
-    _setStatus('Формируем ответ...');
+    _setStatus(tr('call.buildingAnswer'));
     final answer = await _peerConnection!.createAnswer();
     await _peerConnection!.setLocalDescription(answer);
 
     await _send('call_answer', {'sdp': answer.sdp});
-    _setStatus('Соединяемся...');
+    _setStatus(tr('call.connecting'));
     _setState(CallState.connected);
   }
 

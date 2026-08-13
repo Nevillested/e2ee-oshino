@@ -17,9 +17,9 @@ Future<AttachmentPickType?> showAttachmentSheet(BuildContext context) {
           }
         },
         child: Container(
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             color: AppColors.surface,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
           ),
           child: SafeArea(
             top: false,
@@ -80,7 +80,7 @@ Widget _tile(
         children: [
           Icon(icon, color: AppColors.primary, size: 32),
           const SizedBox(height: 8),
-          Text(label, style: const TextStyle(color: AppColors.textPrimary)),
+          Text(label, style: TextStyle(color: AppColors.textPrimary)),
         ],
       ),
     ),

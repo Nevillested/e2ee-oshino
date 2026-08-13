@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_text_field.dart';
+import '../widgets/theme_reactive.dart';
 import 'verify_totp_screen.dart';
 import '../widgets/loading_overlay.dart';
 
@@ -34,7 +36,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _isLoading = true;
       _errorText = null;
     });
-    showLoadingOverlay(context, 'Идёт регистрация, подождите');
+    showLoadingOverlay(context, tr('auth.registering'));
 
     try {
       final totpUrl = await _apiClient.register(
@@ -68,19 +70,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return ThemeReactive(builder: (context) => _build(context));
+  }
+
+  Widget _build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Регистрация')),
+      appBar: AppBar(title: Text(tr('register.title'))),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              AuthTextField(controller: _loginController, hintText: 'Логин'),
+              AuthTextField(
+                controller: _loginController,
+                hintText: tr('auth.loginHint'),
+              ),
               const SizedBox(height: 14),
               AuthTextField(
                 controller: _passwordController,
-                hintText: 'Пароль',
+                hintText: tr('auth.passwordHint'),
                 obscureText: _passwordHidden,
                 suffixIcon: IconButton(
                   icon: Icon(
@@ -110,7 +119,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           color: Colors.white,
                         ),
                       )
-                    : const Text('Далее'),
+                    : Text(tr('common.next')),
               ),
             ],
           ),

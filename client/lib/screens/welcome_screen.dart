@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
+import '../widgets/theme_reactive.dart';
 import 'login_screen.dart';
 import 'register_screen.dart';
 
@@ -8,6 +10,10 @@ class WelcomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return ThemeReactive(builder: (context) => _build(context));
+  }
+
+  Widget _build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -15,7 +21,7 @@ class WelcomeScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text(
+              Text(
                 'Oshinobu',
                 style: TextStyle(
                   fontSize: 32,
@@ -33,7 +39,7 @@ class WelcomeScreen extends StatelessWidget {
                     ),
                   );
                 },
-                child: const Text('Войти'),
+                child: Text(tr('welcome.login')),
               ),
               const SizedBox(height: 12),
               OutlinedButton(
@@ -47,13 +53,13 @@ class WelcomeScreen extends StatelessWidget {
                 },
                 style: OutlinedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 52),
-                  side: const BorderSide(color: AppColors.primary),
+                  side: BorderSide(color: AppColors.primary),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-                child: const Text(
-                  'Регистрация',
+                child: Text(
+                  tr('welcome.register'),
                   style: TextStyle(
                     color: AppColors.primary,
                     fontWeight: FontWeight.w600,

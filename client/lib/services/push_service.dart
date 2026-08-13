@@ -6,11 +6,12 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../api/api_client.dart';
 import '../config.dart';
 import '../crypto/key_store.dart';
+import '../l10n/app_strings.dart';
 import '../session.dart';
+import '../storage/locale_store.dart';
 import 'local_notifications.dart';
 
 const _messagesChannelId = 'messages';
-const _messagesChannelName = 'Сообщения';
 
 /// Push-уведомления через FCM — стадия 1: только обычные сообщения.
 ///
@@ -121,6 +122,12 @@ class PushService {
 /// поэтому не полагается на PushService, а сам создаёт себе всё необходимое.
 @pragma('vm:entry-point')
 Future<void> pushBackgroundHandler(RemoteMessage message) async {
+  // Отдельный изолят — AppStrings.locale тут ещё не читан, статическое
+  // поле стартует со значением по умолчанию (см. LocaleStore). Без этого
+  // push "У вас новое сообщение" всегда приходил бы по-русски, даже если
+  // пользователь выбрал английский.
+  await LocaleStore.init();
+
   final type = message.data['type'];
   if (type != 'message' && type != 'call' && type != 'call_cancel') return;
 
@@ -153,11 +160,11 @@ Future<void> pushBackgroundHandler(RemoteMessage message) async {
     ),
   );
 
-  const details = NotificationDetails(
+  final details = NotificationDetails(
     android: AndroidNotificationDetails(
       _messagesChannelId,
-      _messagesChannelName,
-      channelDescription: 'Новые сообщения',
+      tr('push.messagesChannelName'),
+      channelDescription: tr('push.messagesChannelDescription'),
       importance: Importance.high,
       priority: Priority.high,
     ),
@@ -167,5 +174,5 @@ Future<void> pushBackgroundHandler(RemoteMessage message) async {
   // в фоне ради экономии времени/риска, поэтому не знаем ни отправителя,
   // ни текста. Открыв приложение, пользователь увидит реальное сообщение
   // как обычно.
-  await notifications.show(0, 'Oshinobu', 'У вас новое сообщение', details);
+  await notifications.show(0, 'Oshinobu', tr('push.newMessageBody'), details);
 }

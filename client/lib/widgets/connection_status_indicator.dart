@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../l10n/app_strings.dart';
 import '../services/websocket_service.dart';
 import '../theme/app_theme.dart';
 
@@ -36,13 +37,13 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
   String _text(ConnectionStatus status) {
     switch (status) {
       case ConnectionStatus.waitingForNetwork:
-        return 'Ожидание интернета…';
+        return tr('connection.waitingForNetwork');
       case ConnectionStatus.connecting:
-        return 'Подключение к серверу…';
+        return tr('connection.connecting');
       case ConnectionStatus.connected:
-        return 'Подключено';
+        return tr('connection.connected');
       case ConnectionStatus.reconnecting:
-        return 'Переподключение…';
+        return tr('connection.reconnecting');
     }
   }
 
@@ -53,7 +54,7 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Text(
         _text(status),
-        style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+        style: TextStyle(color: AppColors.textMuted, fontSize: 12),
       ),
     );
   }

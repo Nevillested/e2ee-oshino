@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
+import '../l10n/app_strings.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_text_field.dart';
+import '../widgets/theme_reactive.dart';
 import 'home_placeholder_screen.dart';
 import '../device_setup.dart';
 import '../widgets/loading_overlay.dart';
@@ -38,7 +40,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _isLoading = true;
       _errorText = null;
     });
-    showLoadingOverlay(context, 'Идёт авторизация, подождите');
+    showLoadingOverlay(context, tr('auth.loggingIn'));
 
     try {
       final token = await _apiClient.login(
@@ -73,19 +75,26 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return ThemeReactive(builder: (context) => _build(context));
+  }
+
+  Widget _build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Вход')),
+      appBar: AppBar(title: Text(tr('login.title'))),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              AuthTextField(controller: _loginController, hintText: 'Логин'),
+              AuthTextField(
+                controller: _loginController,
+                hintText: tr('auth.loginHint'),
+              ),
               const SizedBox(height: 14),
               AuthTextField(
                 controller: _passwordController,
-                hintText: 'Пароль',
+                hintText: tr('auth.passwordHint'),
                 obscureText: _passwordHidden,
                 suffixIcon: IconButton(
                   icon: Icon(
@@ -102,7 +111,7 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 14),
               AuthTextField(
                 controller: _totpController,
-                hintText: 'Код из аутентификатора',
+                hintText: tr('auth.totpHint'),
                 keyboardType: TextInputType.number,
               ),
               if (_errorText != null) ...[
@@ -121,7 +130,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           color: Colors.white,
                         ),
                       )
-                    : const Text('Войти'),
+                    : Text(tr('welcome.login')),
               ),
             ],
           ),

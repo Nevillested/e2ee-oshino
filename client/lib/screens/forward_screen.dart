@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
+import '../l10n/app_strings.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/swipe_back_page_route.dart';
+import '../widgets/theme_reactive.dart';
 import 'chat_screen.dart';
 
 /// Список чатов пользователя для пересылки — выбор одного открывает этот
@@ -73,8 +75,12 @@ class _ForwardScreenState extends State<ForwardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return ThemeReactive(builder: (context) => _build(context));
+  }
+
+  Widget _build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Переслать')),
+      appBar: AppBar(title: Text(tr('forward.title'))),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView.builder(
@@ -84,12 +90,12 @@ class _ForwardScreenState extends State<ForwardScreen> {
                 return ListTile(
                   leading: const CircleAvatar(child: Icon(Icons.person)),
                   title: Text(
-                    entry.isDeleted ? 'Удалённый аккаунт' : entry.peerLogin,
-                    style: const TextStyle(color: AppColors.textPrimary),
+                    entry.isDeleted ? tr('home.deletedAccount') : entry.peerLogin,
+                    style: TextStyle(color: AppColors.textPrimary),
                   ),
                   subtitle: Text(
                     entry.lastMessage,
-                    style: const TextStyle(color: AppColors.textMuted),
+                    style: TextStyle(color: AppColors.textMuted),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),

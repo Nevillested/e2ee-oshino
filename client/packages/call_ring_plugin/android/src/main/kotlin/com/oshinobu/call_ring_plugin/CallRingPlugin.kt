@@ -65,7 +65,8 @@ class CallRingPlugin :
                 result.success(null)
             }
             "showOngoingCall" -> {
-                val peerLogin = call.argument<String>("peerLogin") ?: "собеседником"
+                val peerLogin = call.argument<String>("peerLogin")
+                    ?: (if (AppLocale.isRussian(appContext)) "собеседником" else "the other party")
                 Log.d(TAG, "showOngoingCall() called, peerLogin=$peerLogin")
                 // Через foreground-сервис, а не прямой notify() — иначе
                 // процесс ничем не защищён от смахивания задачи из

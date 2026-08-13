@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../l10n/app_strings.dart';
 import '../services/keyboard_height_store.dart';
 import '../theme/app_theme.dart';
 import 'full_emoji_picker.dart';
@@ -140,12 +141,14 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
                       onTap: () {
                         if (_emojiMode) setState(() => _emojiMode = false);
                       },
-                      style: const TextStyle(color: AppColors.textPrimary),
-                      decoration: const InputDecoration(
-                        hintText: 'Добавьте описание',
+                      style: TextStyle(color: AppColors.textPrimary),
+                      decoration: InputDecoration(
+                        hintText: tr('chat.captionHint'),
                         border: InputBorder.none,
                         isDense: true,
-                        contentPadding: EdgeInsets.symmetric(vertical: 12),
+                        contentPadding: const EdgeInsets.symmetric(
+                          vertical: 12,
+                        ),
                         hintStyle: TextStyle(color: AppColors.textMuted),
                       ),
                     ),
@@ -155,7 +158,7 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
                     padding: const EdgeInsets.all(6),
                     constraints: const BoxConstraints(),
                     visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.send, color: AppColors.primary),
+                    icon: Icon(Icons.send, color: AppColors.primary),
                     onPressed: () => widget.onSend(_controller.text.trim()),
                   ),
                 ],

@@ -35,7 +35,6 @@ import androidx.core.app.NotificationCompat
 object OngoingCallNotifier {
     private const val TAG = "OngoingCallNotifier"
     const val CHANNEL_ID = "ongoing_call"
-    private const val CHANNEL_NAME = "Активный звонок"
     const val NOTIFICATION_ID = 900
 
     // Тот же ключ, что и EXTRA_OPEN_CALL_SCREEN в MainActivity.kt (отдельный
@@ -44,9 +43,11 @@ object OngoingCallNotifier {
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val ru = AppLocale.isRussian(context)
+        val channelName = if (ru) "Активный звонок" else "Active call"
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channel = NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Показывается, пока идёт разговор"
+        val channel = NotificationChannel(CHANNEL_ID, channelName, NotificationManager.IMPORTANCE_LOW).apply {
+            description = if (ru) "Показывается, пока идёт разговор" else "Shown while a call is in progress"
         }
         nm.createNotificationChannel(channel)
     }
@@ -76,15 +77,16 @@ object OngoingCallNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
+        val ru = AppLocale.isRussian(context)
         return NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle("Oshinobu")
-            .setContentText("Идёт разговор с $peerLogin")
+            .setContentText(if (ru) "Идёт разговор с $peerLogin" else "Call in progress with $peerLogin")
             .setSmallIcon(context.applicationInfo.icon)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setOngoing(true)
             .setAutoCancel(false)
             .setContentIntent(contentPendingIntent)
-            .addAction(0, "Завершить звонок", endCallPendingIntent)
+            .addAction(0, if (ru) "Завершить звонок" else "End call", endCallPendingIntent)
             .build()
     }
 }

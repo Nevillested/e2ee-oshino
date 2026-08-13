@@ -2,9 +2,11 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import '../l10n/app_strings.dart';
 import '../services/call_service.dart';
 import '../services/pip_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/theme_reactive.dart';
 
 class CallScreen extends StatefulWidget {
   final String peerLogin;
@@ -161,15 +163,21 @@ class _CallScreenState extends State<CallScreen> {
     // Пока соединение ещё не установлено (дозвон, автопринятие звонка из
     // уведомления, обмен SDP/ICE-кандидатами WebRTC) — живой статус из
     // CallService, чтобы не выглядело, будто приложение просто зависло.
-    return _call.status.isNotEmpty ? _call.status : 'Вызов...';
+    return _call.status.isNotEmpty ? _call.status : tr('call.dialing');
   }
 
   @override
   Widget build(BuildContext context) {
+    return ThemeReactive(builder: (context) => _build(context));
+  }
+
+  Widget _build(BuildContext context) {
     if (!_renderersReady) {
-      return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(child: CircularProgressIndicator(color: Colors.white)),
+      return Scaffold(
+        backgroundColor: AppColors.background,
+        body: Center(
+          child: CircularProgressIndicator(color: AppColors.textPrimary),
+        ),
       );
     }
 
@@ -178,7 +186,7 @@ class _CallScreenState extends State<CallScreen> {
     final screenSize = MediaQuery.of(context).size;
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: AppColors.background,
       body: SafeArea(
         child: Stack(
           children: [
@@ -200,15 +208,15 @@ class _CallScreenState extends State<CallScreen> {
                           const SizedBox(height: 16),
                           Text(
                             widget.peerLogin,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: AppColors.textPrimary,
                               fontSize: 22,
                             ),
                           ),
                           const SizedBox(height: 8),
                           Text(
                             _statusText(),
-                            style: const TextStyle(color: Colors.white70),
+                            style: TextStyle(color: AppColors.textMuted),
                           ),
                         ],
                       ),
@@ -277,14 +285,14 @@ class _CallScreenState extends State<CallScreen> {
                       borderRadius: BorderRadius.circular(12),
                       child: _call.videoEnabled
                           ? RTCVideoView(_localRenderer, mirror: true)
-                          : const Center(
+                          : Center(
                               child: Padding(
-                                padding: EdgeInsets.all(8),
+                                padding: const EdgeInsets.all(8),
                                 child: Text(
-                                  'Ваша камера выключена',
+                                  tr('call.cameraOff'),
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
-                                    color: Colors.white70,
+                                    color: AppColors.textMuted,
                                     fontSize: 11,
                                   ),
                                 ),
@@ -303,7 +311,7 @@ class _CallScreenState extends State<CallScreen> {
               top: 8,
               right: 8,
               child: IconButton(
-                icon: const Icon(Icons.close_fullscreen, color: Colors.white),
+                icon: Icon(Icons.close_fullscreen, color: AppColors.textPrimary),
                 iconSize: 20,
                 onPressed: () => PipService.enterPipNow(),
               ),
@@ -368,7 +376,11 @@ class _CallScreenState extends State<CallScreen> {
           color: background ?? AppColors.surface,
           shape: BoxShape.circle,
         ),
-        child: Icon(icon, color: Colors.white),
+        // На красной кнопке (завершить звонок) фон всегда фиксированный —
+        // белая иконка корректна в обеих темах. На остальных фон теперь
+        // AppColors.surface (белый в светлой теме) — там нужен цвет текста
+        // самой темы, иначе снова белым по белому.
+        child: Icon(icon, color: background != null ? Colors.white : AppColors.textPrimary),
       ),
     );
   }

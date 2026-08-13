@@ -3,6 +3,7 @@ import 'package:call_ring_plugin/call_ring_plugin.dart';
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../crypto/key_store.dart';
+import '../l10n/app_strings.dart';
 import '../services/call_service.dart';
 import '../services/message_router.dart';
 import '../services/pip_service.dart';
@@ -15,9 +16,11 @@ import '../utils/time_format.dart';
 import '../widgets/bottom_action_bar.dart';
 import '../widgets/connection_status_indicator.dart';
 import '../widgets/swipe_back_page_route.dart';
+import '../widgets/theme_reactive.dart';
 import 'chat_screen.dart';
 import 'incoming_call_screen.dart';
 import 'new_chat_screen.dart';
+import 'settings_screen.dart';
 import 'welcome_screen.dart';
 
 class _NoGlowScrollBehavior extends ScrollBehavior {
@@ -41,6 +44,14 @@ class HomePlaceholderScreen extends StatefulWidget {
 class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
   final _webSocketService = WebSocketService.instance;
   List<ChatSummary> _entries = [];
+
+  // Настройки показываются не отдельным route, а "обратной стороной" этого
+  // же экрана — панель снизу всегда одна и та же (см. build), меняется
+  // только иконка на ней и то, что видно при развороте карточки (см.
+  // _buildFlippableBody).
+  bool _showSettings = false;
+
+  void _toggleSettings() => setState(() => _showSettings = !_showSettings);
 
   @override
   void initState() {
@@ -79,7 +90,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
     // "принять/отклонить".
     CallService.instance.incomingCalls.listen((info) async {
       final currentToken = await Session.getToken();
-      String peerLogin = 'Неизвестный';
+      String peerLogin = tr('common.unknown');
       if (currentToken != null) {
         final owner = await ApiClient().getDeviceOwnerInfo(
           currentToken,
@@ -156,46 +167,126 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return ThemeReactive(builder: (context) => _build(context));
+  }
+
+  Widget _build(BuildContext context) {
     final barHeight = MediaQuery.of(context).size.height / 15;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const ConnectionStatusIndicator(),
-        centerTitle: false,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const NewChatScreen()),
-              );
-            },
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: ScrollConfiguration(
-              behavior: _NoGlowScrollBehavior(),
-              child: ListView.builder(
+    return PopScope(
+      // На "обратной стороне" (настройки) системный back должен сначала
+      // развернуть карточку обратно к чатам, а не сразу закрывать
+      // приложение — это то же самое действие, что и тап по иконке на
+      // нижней панели.
+      canPop: !_showSettings,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _toggleSettings();
+      },
+      child: Scaffold(
+        appBar: _showSettings
+            ? AppBar(title: Text(tr('settings.title')))
+            : AppBar(
+                title: const ConnectionStatusIndicator(),
+                centerTitle: false,
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const NewChatScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: Padding(
                 padding: EdgeInsets.only(bottom: barHeight),
-                itemCount: _entries.length,
-                itemBuilder: (context, index) {
-                  final entry = _entries[index];
-                  final isNotes = entry.peerLogin == notesPeerLogin;
+                child: _buildFlippableBody(),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: BottomActionBar(
+                // Иконка на панели — это иконка ДРУГОЙ, ещё не открытой
+                // стороны: находясь в чатах, показываем шестерёнку
+                // (открыть настройки), находясь в настройках — иконку
+                // чатов (вернуться).
+                icon: _showSettings
+                    ? Icons.chat_bubble_outline
+                    : Icons.settings,
+                onTap: _toggleSettings,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-                  return Container(
+  /// "Fade through color" — заказанная замена прежнему 3D-перевороту:
+  /// вместо вращения по Y старое содержимое гаснет ЗА сплошным цветом
+  /// (тем же, что и фон экрана — не белым, как в оригинальном примере: тот
+  /// был написан под always-light UI, у нас же есть тёмная тема, и белая
+  /// вспышка в ней выглядела бы чужеродно), а новое проступает поверх него.
+  /// AnimatedSwitcher вызывает transitionBuilder ОТДЕЛЬНО для уходящего и
+  /// приходящего виджета (в отличие от PageRouteBuilder в присланном
+  /// примере, где "child" — только новая страница, а старая остаётся под
+  /// ней сама по себе) — здесь один и тот же приём просто применён к
+  /// обеим сторонам разом: у каждой свой цветовой слой гаснет/проступает
+  /// синхронно с её же содержимым.
+  Widget _buildFlippableBody() {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 400),
+      transitionBuilder: (child, animation) {
+        final curved = CurvedAnimation(parent: animation, curve: Curves.easeOut);
+        return Stack(
+          children: [
+            FadeTransition(
+              opacity: Tween<double>(begin: 1, end: 0).animate(curved),
+              child: Container(color: AppColors.background),
+            ),
+            FadeTransition(
+              opacity: Tween<double>(begin: 0, end: 1).animate(curved),
+              child: child,
+            ),
+          ],
+        );
+      },
+      child: KeyedSubtree(
+        key: ValueKey(_showSettings),
+        child: _showSettings ? const SettingsContent() : _buildChatList(),
+      ),
+    );
+  }
+
+  Widget _buildChatList() {
+    return ScrollConfiguration(
+      behavior: _NoGlowScrollBehavior(),
+      child: ListView.builder(
+        itemCount: _entries.length,
+        itemBuilder: (context, index) {
+          final entry = _entries[index];
+          final isNotes = entry.peerLogin == notesPeerLogin;
+
+          return Container(
                     color: entry.unreadCount > 0
                         ? AppColors.primary.withValues(alpha: 0.12)
                         : Colors.transparent,
                     child: ListTile(
                       title: Text(
                         isNotes
-                            ? 'Заметки'
+                            ? tr('home.notes')
                             : (entry.isDeleted
-                                  ? 'Удалённый аккаунт'
+                                  ? tr('home.deletedAccount')
                                   : entry.peerLogin),
                         style: TextStyle(
                           color: AppColors.textPrimary,
@@ -315,16 +406,6 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
                   );
                 },
               ),
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: const BottomActionBar(),
-          ),
-        ],
-      ),
     );
   }
 }

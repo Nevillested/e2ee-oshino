@@ -54,7 +54,7 @@ class AttachmentTray extends StatelessWidget {
                             alignment: Alignment.center,
                             child: Text(
                               _extensionOf(att.fileName),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: AppColors.textPrimary,
                                 fontWeight: FontWeight.bold,
                               ),

@@ -161,12 +161,17 @@ class CallRingService : Service() {
         Log.d(TAG, "buildNotification: currentCallId=$currentCallId")
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val ru = AppLocale.isRussian(this)
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Входящие звонки",
+                if (ru) "Входящие звонки" else "Incoming calls",
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
-                description = "Уведомление о входящем звонке, даже если приложение закрыто"
+                description = if (ru) {
+                    "Уведомление о входящем звонке, даже если приложение закрыто"
+                } else {
+                    "Incoming call notification, even when the app is closed"
+                }
                 // Звук крутит сам сервис через MediaPlayer (по кругу) —
                 // системный одноразовый звук канала тут не нужен.
                 setSound(null, null)
@@ -221,7 +226,7 @@ class CallRingService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Oshinobu")
-            .setContentText("Входящий звонок")
+            .setContentText(if (AppLocale.isRussian(this)) "Входящий звонок" else "Incoming call")
             .setSmallIcon(applicationInfo.icon)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)

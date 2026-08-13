@@ -33,7 +33,8 @@ import android.util.Log
  */
 class OngoingCallService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val peerLogin = intent?.getStringExtra(EXTRA_PEER_LOGIN) ?: "собеседником"
+        val peerLogin = intent?.getStringExtra(EXTRA_PEER_LOGIN)
+            ?: (if (AppLocale.isRussian(this)) "собеседником" else "the other party")
         Log.d(TAG, "onStartCommand: peerLogin=$peerLogin")
 
         val notification = OngoingCallNotifier.buildNotification(this, peerLogin)

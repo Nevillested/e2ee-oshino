@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/swipe_back_page_route.dart';
+import '../widgets/theme_reactive.dart';
 import 'chat_screen.dart';
 import '../storage/peer_account_store.dart';
 
@@ -94,8 +96,12 @@ class _NewChatScreenState extends State<NewChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return ThemeReactive(builder: (context) => _build(context));
+  }
+
+  Widget _build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Новый чат')),
+      appBar: AppBar(title: Text(tr('newChat.title'))),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -103,12 +109,12 @@ class _NewChatScreenState extends State<NewChatScreen> {
           children: [
             AuthTextField(
               controller: _loginController,
-              hintText: 'Логин собеседника',
+              hintText: tr('newChat.loginHint'),
             ),
             const SizedBox(height: 14),
             ElevatedButton(
               onPressed: _isLoading ? null : _search,
-              child: const Text('Найти'),
+              child: Text(tr('newChat.search')),
             ),
             if (_errorText != null) ...[
               const SizedBox(height: 14),
@@ -123,7 +129,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
                   return Container(
                     margin: const EdgeInsets.symmetric(vertical: 6),
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(
+                      gradient: LinearGradient(
                         colors: [AppColors.primary, AppColors.primaryDark],
                       ),
                       borderRadius: BorderRadius.circular(16),

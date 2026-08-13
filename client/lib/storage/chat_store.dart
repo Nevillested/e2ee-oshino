@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../l10n/app_strings.dart';
 
 /// "Заметки" — переписка с самим собой: полноправный чат в ChatStore под
 /// этим фиксированным peerLogin (не настоящий логин — такой строка не
@@ -263,15 +264,47 @@ class ChatStore {
     );
   }
 
+  // Каждое из addMessage/addMessages/_replace/deleteMessages читает ВЕСЬ
+  // список сообщений пира, меняет его в памяти и пишет обратно целиком —
+  // без сериализации это классический lost update: если два вызова для
+  // ОДНОГО peerLogin пересекаются по времени (что и происходит при быстрой
+  // отправке нескольких сообщений подряд — вставка следующего "sending"
+  // стартует раньше, чем успевает записаться статус "sent" предыдущего),
+  // тот, что запишет свою копию списка ПОЗЖЕ, перезатирает изменение
+  // первого его же более старым снимком. Внешне это выглядело как
+  // сообщение, навсегда застрявшее на статусе "sending", хотя собеседник
+  // его уже получил — апдейт статуса просто был молча затёрт. Очередь
+  // по peerLogin ниже гарантирует, что для одного и того же чата такие
+  // операции всегда выполняются строго одна за другой.
+  static final Map<String, Future<void>> _peerLocks = {};
+
+  static Future<T> _withPeerLock<T>(
+    String peerLogin,
+    Future<T> Function() action,
+  ) {
+    final previous = _peerLocks[peerLogin] ?? Future<void>.value();
+    final completer = Completer<void>();
+    _peerLocks[peerLogin] = previous.then((_) => completer.future);
+    return previous.then((_) async {
+      try {
+        return await action();
+      } finally {
+        completer.complete();
+      }
+    });
+  }
+
   static Future<void> addMessage(
     String peerLogin,
     StoredMessage message, {
     String? accountId,
     bool incrementUnread = false,
   }) async {
-    final messages = await getMessages(peerLogin);
-    messages.add(message);
-    await _writeMessages(peerLogin, messages);
+    await _withPeerLock(peerLogin, () async {
+      final messages = await getMessages(peerLogin);
+      messages.add(message);
+      await _writeMessages(peerLogin, messages);
+    });
     await _touchPeer(
       peerLogin,
       message.text,
@@ -291,16 +324,18 @@ class ChatStore {
     bool incrementUnread = false,
   }) async {
     if (newMessages.isEmpty) return;
-    final messages = await getMessages(peerLogin);
-    messages.addAll(newMessages);
-    await _writeMessages(peerLogin, messages);
+    await _withPeerLock(peerLogin, () async {
+      final messages = await getMessages(peerLogin);
+      messages.addAll(newMessages);
+      await _writeMessages(peerLogin, messages);
+    });
     final last = newMessages.reduce(
       (a, b) => a.timestamp >= b.timestamp ? a : b,
     );
     await _touchPeer(
       peerLogin,
       last.isMedia
-          ? (last.isFile ? (last.fileName ?? '📎 Файл') : '📷 Фото')
+          ? (last.isFile ? (last.fileName ?? '📎 ${tr('media.file')}') : '📷 ${tr('media.photo')}')
           : last.text,
       last.timestamp,
       accountId: accountId,
@@ -324,9 +359,9 @@ class ChatStore {
     // чатов (ChatSummary) — сам пузырь звонка в чате рендерится отдельно
     // и это поле не читает.
     final preview = switch (outcome) {
-      'answered' => '📞 Звонок',
-      'missed' => '📞 Пропущенный звонок',
-      _ => '📞 Не отвечает',
+      'answered' => '📞 ${tr('call.answered')}',
+      'missed' => '📞 ${tr('call.missed')}',
+      _ => '📞 ${tr('call.noAnswer')}',
     };
     return addMessage(
       peerLogin,
@@ -350,11 +385,13 @@ class ChatStore {
     String messageId,
     StoredMessage Function(StoredMessage old) update,
   ) async {
-    final messages = await getMessages(peerLogin);
-    final index = messages.indexWhere((m) => m.messageId == messageId);
-    if (index == -1) return;
-    messages[index] = update(messages[index]);
-    await _writeMessages(peerLogin, messages);
+    await _withPeerLock(peerLogin, () async {
+      final messages = await getMessages(peerLogin);
+      final index = messages.indexWhere((m) => m.messageId == messageId);
+      if (index == -1) return;
+      messages[index] = update(messages[index]);
+      await _writeMessages(peerLogin, messages);
+    });
     _changesController.add(null);
   }
 
@@ -453,9 +490,11 @@ class ChatStore {
   ) async {
     if (messageIds.isEmpty) return;
     final ids = messageIds.toSet();
-    final messages = await getMessages(peerLogin);
-    messages.removeWhere((m) => ids.contains(m.messageId));
-    await _writeMessages(peerLogin, messages);
+    await _withPeerLock(peerLogin, () async {
+      final messages = await getMessages(peerLogin);
+      messages.removeWhere((m) => ids.contains(m.messageId));
+      await _writeMessages(peerLogin, messages);
+    });
     _changesController.add(null);
   }
 

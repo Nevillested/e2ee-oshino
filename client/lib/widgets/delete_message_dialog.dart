@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 
 class DeleteConfirmResult {
@@ -35,8 +36,8 @@ class _DeleteMessagesDialogState extends State<_DeleteMessagesDialog> {
       titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
       contentPadding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
       actionsPadding: const EdgeInsets.fromLTRB(8, 0, 12, 8),
-      title: const Text(
-        'Удалить сообщение?',
+      title: Text(
+        tr('deleteMessage.title'),
         style: TextStyle(
           color: AppColors.textPrimary,
           fontSize: 16,
@@ -64,8 +65,8 @@ class _DeleteMessagesDialogState extends State<_DeleteMessagesDialog> {
               const SizedBox(width: 10),
               Flexible(
                 child: Text(
-                  'Также удалить у ${widget.peerName}',
-                  style: const TextStyle(
+                  '${tr('deleteMessage.alsoForPeer')} ${widget.peerName}',
+                  style: TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: 14,
                   ),
@@ -78,16 +79,16 @@ class _DeleteMessagesDialogState extends State<_DeleteMessagesDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text(
-            'Отмена',
+          child: Text(
+            tr('common.cancel'),
             style: TextStyle(color: AppColors.primary, fontSize: 15),
           ),
         ),
         TextButton(
           onPressed: () =>
               Navigator.of(context).pop(DeleteConfirmResult(_alsoForPeer)),
-          child: const Text(
-            'Удалить',
+          child: Text(
+            tr('action.delete'),
             style: TextStyle(color: AppColors.primary, fontSize: 15),
           ),
         ),

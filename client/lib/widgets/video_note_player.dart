@@ -11,6 +11,8 @@ class VideoNotePlayer extends StatefulWidget {
   final int? durationMs;
   final double compactSize;
   final double expandedSize;
+  // См. VoiceMessagePlayer.processingStep — тот же смысл, для видео-кружка.
+  final String? processingStep;
 
   const VideoNotePlayer({
     super.key,
@@ -18,6 +20,7 @@ class VideoNotePlayer extends StatefulWidget {
     required this.durationMs,
     this.compactSize = 200,
     required this.expandedSize,
+    this.processingStep,
   });
 
   @override
@@ -150,6 +153,46 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
                     child: Text(
                       _fmt(widget.durationMs),
                       style: const TextStyle(color: Colors.white, fontSize: 11),
+                    ),
+                  ),
+                ),
+              if (widget.processingStep != null)
+                Positioned(
+                  left: 8,
+                  right: 8,
+                  bottom: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 10,
+                          height: 10,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.5,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        Flexible(
+                          child: Text(
+                            widget.processingStep!,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),

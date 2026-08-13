@@ -1,9 +1,15 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'account_actions.dart';
 
+/// Единственная нижняя панель, общая для обеих "сторон" HomePlaceholderScreen
+/// (список чатов / настройки, см. _buildFlippableBody) — при развороте
+/// карточки сама панель не крутится вместе с содержимым, меняется только
+/// её иконка (см. вызывающую сторону).
 class BottomActionBar extends StatelessWidget {
-  const BottomActionBar({super.key});
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const BottomActionBar({super.key, required this.icon, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -18,10 +24,8 @@ class BottomActionBar extends StatelessWidget {
             children: [
               Expanded(
                 child: InkWell(
-                  onTap: () => showSettingsSheet(context),
-                  child: const Center(
-                    child: Icon(Icons.settings, color: Colors.white),
-                  ),
+                  onTap: onTap,
+                  child: Center(child: Icon(icon, color: Colors.white)),
                 ),
               ),
             ],
