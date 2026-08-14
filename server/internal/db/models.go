@@ -25,6 +25,12 @@ type ChatMute struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type ContactBlock struct {
+	AccountID     pgtype.UUID
+	PeerAccountID pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
 type Device struct {
 	ID                  pgtype.UUID
 	AccountID           pgtype.UUID

@@ -121,6 +121,38 @@ func isPushMuted(ctx context.Context, queries *db.Queries, toDeviceUUID pgtype.U
 	return muted
 }
 
+// isBlockedEitherWay — заблокировал ли кто-то из этой пары другого, в
+// любую сторону (см. таблицу contact_blocks / NewBlockContactHandler).
+// В отличие от мьюта, блокировка запрещает доставку целиком — и обычных
+// сообщений, и звонков (см. вызовы ниже) — а не просто глушит push:
+// клиент по своему обычному UI и так не даёт набрать сообщение
+// заблокированному/блокирующему собеседнику, эта проверка — подстраховка
+// на случай изменённого клиента.
+func isBlockedEitherWay(ctx context.Context, queries *db.Queries, toDeviceUUID pgtype.UUID, senderDeviceId string) bool {
+	recipientInfo, err := queries.GetLoginByDeviceID(ctx, toDeviceUUID)
+	if err != nil {
+		return false
+	}
+
+	var senderDeviceUUID pgtype.UUID
+	if err := senderDeviceUUID.Scan(senderDeviceId); err != nil {
+		return false
+	}
+	senderInfo, err := queries.GetLoginByDeviceID(ctx, senderDeviceUUID)
+	if err != nil {
+		return false
+	}
+
+	blocked, err := queries.IsBlockedEitherWay(ctx, db.IsBlockedEitherWayParams{
+		AccountID:     recipientInfo.AccountID,
+		PeerAccountID: senderInfo.AccountID,
+	})
+	if err != nil {
+		return false
+	}
+	return blocked
+}
+
 // notifyPresenceSubscribers — рассылает живое обновление статуса
 // deviceID всем, кто сейчас на него подписан (и сам при этом в сети —
 // если подписчик не в сети, ему просто нечего писать, он всё равно не
@@ -332,6 +364,16 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 
 			if MessageType == "message" {
 
+				var toDeviceUUIDForBlockCheck pgtype.UUID
+				if err := toDeviceUUIDForBlockCheck.Scan(NewWSMsgFrom.ToDeviceId); err == nil &&
+					isBlockedEitherWay(r.Context(), queries, toDeviceUUIDForBlockCheck, DeviceID) {
+					// Заблокировано в любую сторону — ни доставлять, ни ставить в
+					// очередь: обычный клиент и так не даёт набрать сообщение
+					// (см. композер-заглушку в chat_screen.dart), это подстраховка
+					// на случай изменённого клиента.
+					continue
+				}
+
 				if Status == true {
 
 					deliveryID := generateDeliveryID()
@@ -370,6 +412,19 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 				}
 
 			} else if MessageType == "call_offer" {
+
+				var toDeviceUUIDForBlockCheck pgtype.UUID
+				if err := toDeviceUUIDForBlockCheck.Scan(NewWSMsgFrom.ToDeviceId); err == nil &&
+					isBlockedEitherWay(r.Context(), queries, toDeviceUUIDForBlockCheck, DeviceID) {
+					// Заблокировано в любую сторону — звонок не проходит вообще,
+					// ни живьём, ни отложенным дозвоном: отвечаем отправителю так
+					// же, как если бы получатель был недоступен.
+					if write_error := respondCallUnavailable(r.Context(), ws_object); write_error != nil {
+						log.Printf("ошибка отправки ответа отправителю: %v", write_error)
+						break readLoop
+					}
+					continue
+				}
 
 				// call_offer — единственный кадр звонка, чья тихая потеря
 				// фатальна: без него звонок просто никогда не зазвонит, без
