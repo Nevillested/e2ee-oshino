@@ -59,6 +59,26 @@ func (q *Queries) GetAccountAvatarKey(ctx context.Context, id pgtype.UUID) (pgty
 	return avatar_object_key, err
 }
 
+const getAccountByEmail = `-- name: GetAccountByEmail :one
+SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key FROM accounts WHERE email = $1
+`
+
+func (q *Queries) GetAccountByEmail(ctx context.Context, email pgtype.Text) (Account, error) {
+	row := q.db.QueryRow(ctx, getAccountByEmail, email)
+	var i Account
+	err := row.Scan(
+		&i.ID,
+		&i.Login,
+		&i.PasswordHash,
+		&i.TotpSecret,
+		&i.CreatedAt,
+		&i.Language,
+		&i.Email,
+		&i.AvatarObjectKey,
+	)
+	return i, err
+}
+
 const getAccountByID = `-- name: GetAccountByID :one
 SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key FROM accounts WHERE id = $1
 `

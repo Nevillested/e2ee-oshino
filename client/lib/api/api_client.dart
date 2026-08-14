@@ -302,6 +302,45 @@ class ApiClient {
     }
   }
 
+  /// POST /account/email/request — первый шаг привязки НОВОЙ почты: сервер
+  /// проверяет, что она не занята другим аккаунтом, и шлёт код на неё.
+  /// Сама почта пока не сохраняется — только после requestEmailConfirm.
+  Future<void> requestEmailVerification(String token, String email) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/account/email/request'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'email': email}),
+    );
+    if (response.statusCode == 409) {
+      throw ApiException(tr('error.emailTaken'));
+    }
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.emailVerifyRequestFailed'));
+    }
+  }
+
+  /// POST /account/email/confirm — второй шаг: код верный → сервер реально
+  /// записывает почту в accounts.email.
+  Future<void> confirmEmailVerification(String token, String code) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/account/email/confirm'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'code': code}),
+    );
+    if (response.statusCode == 409) {
+      throw ApiException(tr('error.emailTaken'));
+    }
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.recoveryWrongCode'));
+    }
+  }
+
   /// POST /account/avatar — фото профиля НЕ шифруется (см. комментарий в
   /// account_avatar.go на сервере) — видно всем контактам как есть.
   Future<void> uploadAvatar(String token, Uint8List jpegBytes) async {

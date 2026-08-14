@@ -36,6 +36,16 @@ type Device struct {
 	IdentityDhSignature []byte
 }
 
+type EmailVerificationToken struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	Email     string
+	TokenHash string
+	ExpiresAt pgtype.Timestamptz
+	Attempts  int32
+	CreatedAt pgtype.Timestamptz
+}
+
 type MediaFile struct {
 	ID                  pgtype.UUID
 	UploadedByAccountID pgtype.UUID

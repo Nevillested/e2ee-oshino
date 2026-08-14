@@ -22,11 +22,10 @@ func smtpConfig() (host, port, user, password, from string) {
 		os.Getenv("SMTP_FROM")
 }
 
-// SendPasswordResetCode — письмо с одноразовым кодом восстановления
-// пароля. net/smtp.SendMail сам делает STARTTLS, если сервер его
-// поддерживает (Mailcow на 587-м порту — поддерживает), отдельно
-// настраивать TLS не нужно.
-func SendPasswordResetCode(toEmail, code string) error {
+// sendPlainText — общая отправка простого текстового письма. net/smtp.SendMail
+// сам делает STARTTLS, если сервер его поддерживает (Mailcow на 587-м
+// порту — поддерживает), отдельно настраивать TLS не нужно.
+func sendPlainText(toEmail, subjectRaw, body string) error {
 	host, port, user, password, from := smtpConfig()
 
 	// Заголовки письма формально должны быть 7-битным ASCII (RFC 5322) —
@@ -34,12 +33,7 @@ func SendPasswordResetCode(toEmail, code string) error {
 	// почтовых клиентов и спам-фильтров могут отобразить его криво или
 	// заподозрить неладное. Тело письма — обычный UTF-8, там это разрешено
 	// явным Content-Type.
-	subject := mime.QEncoding.Encode("UTF-8", "Восстановление пароля Oshinobu")
-	body := fmt.Sprintf(
-		"Код для восстановления пароля: %s\r\n\r\n"+
-			"Код действителен 30 минут. Если вы не запрашивали восстановление — просто проигнорируйте это письмо.",
-		code,
-	)
+	subject := mime.QEncoding.Encode("UTF-8", subjectRaw)
 
 	msg := []byte(
 		"From: " + from + "\r\n" +
@@ -53,4 +47,28 @@ func SendPasswordResetCode(toEmail, code string) error {
 	auth := smtp.PlainAuth("", user, password, host)
 	addr := host + ":" + port
 	return smtp.SendMail(addr, auth, from, []string{toEmail}, msg)
+}
+
+// SendPasswordResetCode — письмо с одноразовым кодом восстановления пароля.
+func SendPasswordResetCode(toEmail, code string) error {
+	body := fmt.Sprintf(
+		"Код для восстановления пароля: %s\r\n\r\n"+
+			"Код действителен 30 минут. Если вы не запрашивали восстановление — просто проигнорируйте это письмо.",
+		code,
+	)
+	return sendPlainText(toEmail, "Восстановление пароля Oshinobu", body)
+}
+
+// SendEmailVerificationCode — письмо с кодом подтверждения новой почты,
+// указанной в настройках (см. account_email_verification.go). Пока код не
+// введён верно, сама почта в accounts.email ещё не записана.
+func SendEmailVerificationCode(toEmail, code string) error {
+	body := fmt.Sprintf(
+		"Код подтверждения почты: %s\r\n\r\n"+
+			"Введите его в приложении Oshinobu, чтобы привязать эту почту к своему "+
+			"аккаунту. Код действителен 30 минут. Если вы не запрашивали "+
+			"подтверждение — просто проигнорируйте это письмо.",
+		code,
+	)
+	return sendPlainText(toEmail, "Подтверждение почты Oshinobu", body)
 }

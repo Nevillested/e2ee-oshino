@@ -250,8 +250,32 @@ class AppStrings {
       AppLocale.en: 'Invalid email format',
     },
     'email.saved': {
-      AppLocale.ru: 'Почта сохранена',
-      AppLocale.en: 'Email saved',
+      AppLocale.ru: 'Почта подтверждена и сохранена',
+      AppLocale.en: 'Email confirmed and saved',
+    },
+    'email.removed': {
+      AppLocale.ru: 'Почта удалена',
+      AppLocale.en: 'Email removed',
+    },
+    'email.sendCode': {
+      AppLocale.ru: 'Отправить код',
+      AppLocale.en: 'Send code',
+    },
+    'email.removeButton': {
+      AppLocale.ru: 'Убрать почту',
+      AppLocale.en: 'Remove email',
+    },
+    'email.codeSentTo': {
+      AppLocale.ru: 'Код отправлен на',
+      AppLocale.en: 'Code sent to',
+    },
+    'error.emailTaken': {
+      AppLocale.ru: 'Эта почта уже привязана к другому аккаунту',
+      AppLocale.en: 'This email is already linked to another account',
+    },
+    'error.emailVerifyRequestFailed': {
+      AppLocale.ru: 'Не удалось отправить код подтверждения',
+      AppLocale.en: 'Failed to send the confirmation code',
     },
 
     'error.muteFailed': {

@@ -87,6 +87,8 @@ func main() {
 	mux.HandleFunc("POST /calls/decline", api.NewDeclineCallHandler(queries, registry, pendingCalls))
 	mux.HandleFunc("PUT /account/language", api.NewUpdateLanguageHandler(queries))
 	mux.HandleFunc("PUT /account/email", api.NewUpdateEmailHandler(queries))
+	mux.HandleFunc("POST /account/email/request", api.NewRequestEmailVerificationHandler(queries))
+	mux.HandleFunc("POST /account/email/confirm", api.NewConfirmEmailVerificationHandler(queries))
 	mux.HandleFunc("POST /account/avatar", api.NewUploadAvatarHandler(queries, minioClient))
 	mux.HandleFunc("GET /account/avatar/{account_id}", api.NewGetAvatarHandler(queries, minioClient))
 	mux.HandleFunc("POST /chats/mute", api.NewMuteChatHandler(queries))

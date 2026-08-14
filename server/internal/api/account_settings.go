@@ -55,11 +55,16 @@ type UpdateEmailRequest struct {
 
 // Простая проверка формата — не полноценная валидация RFC 5322 (она и не
 // нужна тут), просто отсекает явный мусор до того, как значение уйдёт в
-// базу. Реальная отправка кода восстановления на эту почту — отдельная,
-// пока не реализованная часть (нужен SMTP/почтовый сервис), сейчас это
-// только хранение адреса на будущее.
+// базу. Используется и здесь, и в account_email_verification.go.
 var emailFormatRe = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
+// NewUpdateEmailHandler — PUT /account/email. Теперь только для СНЯТИЯ
+// почты (пустая строка) — установка новой почты требует подтверждения
+// владения (см. account_email_verification.go, POST /account/email/request
+// и /confirm), иначе запись в accounts.email могла бы указывать на чужой
+// адрес, которым пользователь не владеет. Непустое значение сюда сознательно
+// отклоняется — на случай, если клиент по ошибке (или в обход UI) стукнется
+// напрямую.
 func NewUpdateEmailHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var Session, err = CheckToken(w, r, queries)
@@ -74,21 +79,14 @@ func NewUpdateEmailHandler(queries *db.Queries) func(http.ResponseWriter, *http.
 		}
 
 		var Email = strings.TrimSpace(Req.Email)
-		var EmailValue pgtype.Text
-		if Email == "" {
-			// Пустая строка — снять почту с аккаунта (поле опциональное).
-			EmailValue = pgtype.Text{Valid: false}
-		} else {
-			if !emailFormatRe.MatchString(Email) {
-				http.Error(w, "Неверный формат почты", http.StatusBadRequest)
-				return
-			}
-			EmailValue = pgtype.Text{String: Email, Valid: true}
+		if Email != "" {
+			http.Error(w, "Для установки почты используйте подтверждение по коду", http.StatusBadRequest)
+			return
 		}
 
 		var SqlErr = queries.UpdateAccountEmail(r.Context(), db.UpdateAccountEmailParams{
 			ID:    Session.AccountID,
-			Email: EmailValue,
+			Email: pgtype.Text{Valid: false},
 		})
 		if SqlErr != nil {
 			http.Error(w, "Ошибка сохранения почты", http.StatusInternalServerError)

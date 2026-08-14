@@ -56,7 +56,7 @@ func NewRecoverRequestHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 			return
 		}
 
-		token, genErr := auth.GenerateRecoveryToken()
+		token, genErr := auth.GenerateVerificationCode()
 		if genErr != nil {
 			log.Printf("не удалось сгенерировать код восстановления: %v", genErr)
 			http.Error(w, "Ошибка генерации кода", http.StatusInternalServerError)
@@ -69,7 +69,7 @@ func NewRecoverRequestHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 
 		_, createErr := queries.CreatePasswordResetToken(r.Context(), db.CreatePasswordResetTokenParams{
 			AccountID: account.ID,
-			TokenHash: hashRecoveryToken(token),
+			TokenHash: hashVerificationCode(token),
 			ExpiresAt: pgtype.Timestamptz{
 				Time:             time.Now().Add(recoveryTokenTTL),
 				InfinityModifier: pgtype.Finite,
@@ -195,7 +195,7 @@ func checkRecoveryToken(ctx context.Context, queries *db.Queries, login, token s
 		return false, account, nil
 	}
 
-	providedHash := hashRecoveryToken(strings.ToUpper(strings.TrimSpace(token)))
+	providedHash := hashVerificationCode(strings.ToUpper(strings.TrimSpace(token)))
 	match := subtle.ConstantTimeCompare([]byte(providedHash), []byte(stored.TokenHash)) == 1
 	if !match {
 		_ = queries.IncrementPasswordResetAttempts(ctx, stored.ID)
@@ -205,7 +205,7 @@ func checkRecoveryToken(ctx context.Context, queries *db.Queries, login, token s
 	return true, account, nil
 }
 
-func hashRecoveryToken(token string) string {
+func hashVerificationCode(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return base64.StdEncoding.EncodeToString(sum[:])
 }

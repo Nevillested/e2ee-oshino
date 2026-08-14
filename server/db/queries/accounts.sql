@@ -29,3 +29,6 @@ UPDATE accounts SET password_hash = $2 WHERE id = $1;
 
 -- name: UpdateAccountTotpSecret :exec
 UPDATE accounts SET totp_secret = $2 WHERE id = $1;
+
+-- name: GetAccountByEmail :one
+SELECT * FROM accounts WHERE email = $1;
