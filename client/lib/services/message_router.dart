@@ -273,9 +273,13 @@ class MessageRouter {
       // Реакция/пин/правка/удаление — служебные события, не самостоятельные
       // сообщения: не заслуживают звука, даже если чат закрыт (собеседник
       // увидит их, когда сам откроет чат — специально идти проверять их не
-      // нужно).
+      // нужно). Замьюченный чат тоже не должен звучать — раньше эта
+      // проверка тут отсутствовала: мьют реально гасил только push (когда
+      // приложение закрыто/свёрнуто), а живое сообщение по уже открытому
+      // WebSocket-соединению всё равно проигрывало звук.
       if (!chatIsOpen && !_silentTypes.contains(inner.type)) {
-        SoundService.playMessageSound();
+        final muted = await ChatStore.isChatMuted(ownerInfo.login);
+        if (!muted) SoundService.playMessageSound();
       }
     } catch (e, stackTrace) {
       debugPrint('MessageRouter: ошибка обработки сообщения: $e\n$stackTrace');

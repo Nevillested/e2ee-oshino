@@ -29,8 +29,14 @@ type LoginResponse struct {
 	Language string `json:"language"`
 }
 
-func NewLoginHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
+func NewLoginHandler(queries *db.Queries, limiter *LoginRateLimiter) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+
+		var ip = clientIP(r)
+		if !limiter.Allowed(ip) {
+			http.Error(w, "Слишком много неудачных попыток входа, попробуйте позже", http.StatusTooManyRequests)
+			return
+		}
 
 		//объявляем переменную, где будут храниться данные логина и кода TOTP, которые пришли от клиента в JSON-формате
 		var NewDataFromClient LoginRequest
@@ -57,6 +63,7 @@ func NewLoginHandler(queries *db.Queries) func(http.ResponseWriter, *http.Reques
 
 		//проверяем ошибки, при запросе к бд, если есть, даем пользователю ответ со статусом 500
 		if SqlError != nil {
+			limiter.RecordFailure(ip)
 			http.Error(w, "Ошибка поиска пользователя", http.StatusInternalServerError)
 			return
 		}
@@ -98,6 +105,7 @@ func NewLoginHandler(queries *db.Queries) func(http.ResponseWriter, *http.Reques
 
 		//отправляем результат
 		if CheckCodeResult && PWDCheck == 1 {
+			limiter.RecordSuccess(ip)
 
 			//генерируем срез в 32 байта
 			var tokenBytes = make([]byte, 32)
@@ -156,6 +164,7 @@ func NewLoginHandler(queries *db.Queries) func(http.ResponseWriter, *http.Reques
 			json.NewEncoder(w).Encode(NewLoginResponse)
 
 		} else {
+			limiter.RecordFailure(ip)
 			http.Error(w, "Неверные данные входа", http.StatusUnauthorized)
 		}
 

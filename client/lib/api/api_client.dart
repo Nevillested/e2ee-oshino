@@ -245,6 +245,9 @@ class ApiClient {
       }),
     );
 
+    if (response.statusCode == 429) {
+      throw ApiException(tr('error.tooManyLoginAttempts'));
+    }
     if (response.statusCode != 200) {
       throw ApiException(tr('error.wrongCredentials'));
     }

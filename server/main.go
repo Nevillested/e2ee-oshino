@@ -63,6 +63,10 @@ func main() {
 	//очередь отложенных (ещё не доставленных) звонков для оффлайн-получателей
 	var pendingCalls = api.NewPendingCallRegistry()
 
+	//rate-limit по IP на /login — раньше от перебора паролей были защищены
+	//только коды восстановления, сам вход в аккаунт — нет
+	var loginLimiter = api.NewLoginRateLimiter()
+
 	/*
 	  mux.HandleFunc - принимает на вход строку и функцию, тем самым сопоставляя моршрут.
 	  То есть если через http пришло что-то вроде /qwsdfg ты мы этому значению сопоставляем функцию, которую нужно вызвать
@@ -71,7 +75,7 @@ func main() {
 	mux.HandleFunc("GET /ws", api.NewWebSocketHandler(queries, registry, ackRegistry, pendingCalls))
 	mux.HandleFunc("POST /register", api.NewRegisterHandler(queries))
 	mux.HandleFunc("POST /verify-totp", api.NewVerifyTOTPHandler(queries))
-	mux.HandleFunc("POST /login", api.NewLoginHandler(queries))
+	mux.HandleFunc("POST /login", api.NewLoginHandler(queries, loginLimiter))
 	mux.HandleFunc("POST /register-device", api.NewRegisterDeviceHandler(queries, registry))
 	mux.HandleFunc("POST /prekeys/upload", api.NewUploadPrekeysHandler(queries))
 	mux.HandleFunc("GET /devices/{device_id}/prekey-bundle", api.NewGetPrekeyBundleHandler(queries))

@@ -678,6 +678,17 @@ class ChatStore {
     });
   }
 
+  /// Замьючен ли чат локально — используется, чтобы не проигрывать звук
+  /// входящего сообщения, пока приложение открыто (см. message_router.dart:
+  /// сам мьют на сервере подавляет только push, когда приложение закрыто/
+  /// свёрнуто — про звук ЖИВОГО сообщения, пришедшего по уже открытому
+  /// WebSocket-соединению, сервер знать не может и не должен).
+  static Future<bool> isChatMuted(String peerLogin) async {
+    final peers = await getKnownPeers();
+    final existing = peers.where((p) => p.peerLogin == peerLogin);
+    return existing.isNotEmpty && existing.first.muted;
+  }
+
   /// Локальный флаг мьюта — серверный вызов (ApiClient.muteChat/unmuteChat,
   /// нужен для подавления push) делает вызывающий код отдельно, эта функция
   /// только сохраняет состояние для локального UI (иконка/текст пункта меню).

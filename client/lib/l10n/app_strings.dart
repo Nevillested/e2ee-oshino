@@ -207,6 +207,10 @@ class AppStrings {
       AppLocale.ru: 'Неверный логин, пароль или код',
       AppLocale.en: 'Incorrect login, password or code',
     },
+    'error.tooManyLoginAttempts': {
+      AppLocale.ru: 'Слишком много неудачных попыток входа, попробуйте позже',
+      AppLocale.en: 'Too many failed login attempts, try again later',
+    },
     'error.peerOutOfKeys': {
       AppLocale.ru: 'У собеседника закончились ключи, попробуйте позже',
       AppLocale.en: "The other party is out of keys, try again later",
