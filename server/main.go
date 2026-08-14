@@ -98,8 +98,8 @@ func main() {
 	mux.HandleFunc("POST /account/recover/verify", api.NewRecoverVerifyHandler(queries))
 	mux.HandleFunc("POST /account/recover/reset", api.NewRecoverResetHandler(queries))
 	mux.HandleFunc("PUT /account/password", api.NewChangePasswordHandler(queries))
-	mux.HandleFunc("POST /contacts/block", api.NewBlockContactHandler(queries))
-	mux.HandleFunc("POST /contacts/unblock", api.NewUnblockContactHandler(queries))
+	mux.HandleFunc("POST /contacts/block", api.NewBlockContactHandler(queries, registry))
+	mux.HandleFunc("POST /contacts/unblock", api.NewUnblockContactHandler(queries, registry))
 	mux.HandleFunc("GET /contacts/blocked", api.NewGetBlockedContactsHandler(queries))
 
 	//сохраняем в переменную и запускаем HTTP-сервер на порту 8080. ListenAndServe - блокирующая функция, которая будет работать до тех пор, пока сервер не будет остановлен или не произойдет ошибка

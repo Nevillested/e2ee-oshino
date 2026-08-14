@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"server/internal/db"
 
+	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -12,7 +15,53 @@ type ContactBlockRequest struct {
 	PeerAccountID string `json:"peer_account_id"`
 }
 
-func NewBlockContactHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
+// notifyBlockStatusChanged — уведомляет ВСЕ устройства затронутого
+// аккаунта, что что-то в блокировках изменилось (без деталей — кто именно,
+// в какую сторону: сервер остаётся единственным источником истины, см.
+// ApiClient.getBlockedContacts/_refreshBlockStatusFromServer на клиенте,
+// сигнал только говорит "перепроверь прямо сейчас, не жди следующего
+// подключения"). Устройство в сети — пишем в сокет напрямую, как обычный
+// relay; не в сети — кладём в ТУ ЖЕ очередь pending_messages, что и
+// обычные зашифрованные сообщения (см. queuePendingMessage в
+// websocket.go), и оно само придёт при следующем подключении (см.
+// GetPendingMessages в NewWebSocketHandler) — раньше вместо этого сигнал
+// для офлайн-устройства просто пропадал, полагаясь на то, что клиент
+// сам когда-нибудь спросит сервер заново; теперь доставка гарантирована
+// той же дорогой, что и у любого другого сообщения. Без push — как и
+// остальные служебные control-сигналы (реакция/пин/удаление), будить
+// закрытое приложение ради этого не нужно.
+func notifyBlockStatusChanged(ctx context.Context, queries *db.Queries, registry *ConnectionRegistry, accountID pgtype.UUID) {
+	devices, err := queries.GetDevicesByAccount(ctx, accountID)
+	if err != nil {
+		log.Printf("notifyBlockStatusChanged: не удалось получить устройства аккаунта: %v", err)
+		return
+	}
+
+	msgBytes, err := json.Marshal(WSMsgTo{Type: "block_status_changed"})
+	if err != nil {
+		return
+	}
+
+	for _, device := range devices {
+		conn, online := registry.Get(device.ID.String())
+		if online {
+			if writeErr := conn.Write(ctx, websocket.MessageText, msgBytes); writeErr != nil {
+				log.Printf("notifyBlockStatusChanged: ошибка отправки устройству, ставим в очередь: %v", writeErr)
+				online = false
+			}
+		}
+		if !online {
+			if saveErr := queries.SavePendingMessage(ctx, db.SavePendingMessageParams{
+				ToDeviceID: device.ID,
+				Ciphertext: string(msgBytes),
+			}); saveErr != nil {
+				log.Printf("notifyBlockStatusChanged: не удалось поставить сигнал в очередь: %v", saveErr)
+			}
+		}
+	}
+}
+
+func NewBlockContactHandler(queries *db.Queries, registry *ConnectionRegistry) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var Session, err = CheckToken(w, r, queries)
 		if err != nil {
@@ -40,11 +89,13 @@ func NewBlockContactHandler(queries *db.Queries) func(http.ResponseWriter, *http
 			return
 		}
 
+		notifyBlockStatusChanged(r.Context(), queries, registry, PeerID)
+
 		w.WriteHeader(http.StatusOK)
 	}
 }
 
-func NewUnblockContactHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
+func NewUnblockContactHandler(queries *db.Queries, registry *ConnectionRegistry) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var Session, err = CheckToken(w, r, queries)
 		if err != nil {
@@ -71,6 +122,8 @@ func NewUnblockContactHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 			http.Error(w, "Ошибка снятия блокировки", http.StatusInternalServerError)
 			return
 		}
+
+		notifyBlockStatusChanged(r.Context(), queries, registry, PeerID)
 
 		w.WriteHeader(http.StatusOK)
 	}
