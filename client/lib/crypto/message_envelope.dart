@@ -246,6 +246,19 @@ class InnerMessage {
     );
   }
 
+  /// "Удалить диалог у обоих" — идёт ДОПОЛНИТЕЛЬНО к InnerMessage.delete со
+  /// всеми id (тот стирает сами сообщения), этот же говорит получателю
+  /// убрать САМ ЧАТ из списка целиком, а не просто оставить его пустым —
+  /// см. ChatStore.removeChat на принимающей стороне.
+  factory InnerMessage.deleteChat() {
+    return InnerMessage(
+      messageId: _uuid.v4(),
+      type: 'delete_chat',
+      sentAt: DateTime.now().millisecondsSinceEpoch,
+      body: '{}',
+    );
+  }
+
   String encode() => jsonEncode({
     'message_id': messageId,
     'type': type,

@@ -7,7 +7,15 @@ import 'package:flutter/material.dart';
 /// вызывает Navigator.pop, иначе плавно возвращается на место.
 class VerticalDismissDetector extends StatefulWidget {
   final Widget child;
-  const VerticalDismissDetector({super.key, required this.child});
+  // false, пока фото внутри увеличено (см. MediaViewerScreen) — иначе
+  // попытка подвигать увеличенное фото пальцем вверх/вниз наполовину
+  // срывалась бы в закрытие просмотрщика, деля жест с этим детектором.
+  final bool enabled;
+  const VerticalDismissDetector({
+    super.key,
+    required this.child,
+    this.enabled = true,
+  });
 
   @override
   State<VerticalDismissDetector> createState() =>
@@ -83,9 +91,9 @@ class _VerticalDismissDetectorState extends State<VerticalDismissDetector>
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onVerticalDragStart: _onVerticalDragStart,
-      onVerticalDragUpdate: _onVerticalDragUpdate,
-      onVerticalDragEnd: _onVerticalDragEnd,
+      onVerticalDragStart: widget.enabled ? _onVerticalDragStart : null,
+      onVerticalDragUpdate: widget.enabled ? _onVerticalDragUpdate : null,
+      onVerticalDragEnd: widget.enabled ? _onVerticalDragEnd : null,
       child: Transform.translate(
         offset: _dragOffset,
         child: Opacity(opacity: opacity, child: widget.child),

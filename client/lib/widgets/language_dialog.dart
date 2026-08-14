@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import '../api/api_client.dart';
 import '../l10n/app_locale.dart';
 import '../l10n/app_strings.dart';
+import '../session.dart';
 import '../storage/locale_store.dart';
 import '../theme/app_theme.dart';
 
@@ -39,6 +41,21 @@ Future<void> showLanguageDialog(BuildContext context) async {
 
   if (selected == null || selected == AppStrings.locale) return;
   await LocaleStore.setLocale(selected);
+
+  // Сохраняем и на сервере — задел под будущий вход с нескольких
+  // устройств (см. обсуждение в чате). Неудача тут не должна мешать
+  // локальному переключению языка — молча логируем через catch и всё
+  // равно показываем локальный результат.
+  final token = await Session.getToken();
+  if (token != null) {
+    try {
+      await ApiClient().updateLanguage(
+        token,
+        selected == AppLocale.ru ? 'ru' : 'en',
+      );
+    } catch (_) {}
+  }
+
   if (!context.mounted) return;
   // Часть экранов/виджетов не переподписана на смену языка "на лету" (см.
   // обсуждение в чате) — честно предупреждаем, а не делаем вид, что везде

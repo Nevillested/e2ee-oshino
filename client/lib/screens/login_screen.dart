@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
+import '../l10n/app_locale.dart';
 import '../l10n/app_strings.dart';
 import '../session.dart';
+import '../storage/locale_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/theme_reactive.dart';
@@ -43,14 +45,21 @@ class _LoginScreenState extends State<LoginScreen> {
     showLoadingOverlay(context, tr('auth.loggingIn'));
 
     try {
-      final token = await _apiClient.login(
+      final result = await _apiClient.login(
         _loginController.text.trim(),
         _passwordController.text,
         _totpController.text.trim(),
       );
+      final token = result.token;
 
       await Session.saveToken(token);
       await Session.saveLogin(_loginController.text.trim());
+      // Язык, сохранённый на сервере, — источник истины при входе, даже
+      // если на этом устройстве до этого стоял другой (например, только
+      // что переустановили приложение).
+      await LocaleStore.setLocale(
+        result.language == 'ru' ? AppLocale.ru : AppLocale.en,
+      );
       await ensureDeviceRegistered(_apiClient, token);
 
       if (!mounted) return;

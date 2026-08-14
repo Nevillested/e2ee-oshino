@@ -41,9 +41,15 @@ class WebSocketService {
 
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   final _callController = StreamController<Map<String, dynamic>>.broadcast();
+  final _presenceController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
   Stream<Map<String, dynamic>> get callSignals => _callController.stream;
+  // "presence" (появление/уход собеседника) и "typing" (печатает прямо
+  // сейчас) — см. WSMsgPresence/WSMsgTypingRelay на сервере, отдаются как
+  // есть (сырой decoded JSON), разбор — на стороне chat_screen.dart.
+  Stream<Map<String, dynamic>> get presenceEvents => _presenceController.stream;
   bool get isConnected => _channel != null;
 
   final _sessionInvalidController = StreamController<void>.broadcast();
@@ -124,6 +130,11 @@ class WebSocketService {
         try {
           final outer = jsonDecode(raw as String) as Map<String, dynamic>;
           final type = outer['Type'] as String?;
+
+          if (type == 'presence' || type == 'typing') {
+            _presenceController.add(outer);
+            return;
+          }
 
           if (type != null && type.startsWith('call_')) {
             // Только call_offer приходит с DeliveryId (сервер ждёт от нас
@@ -248,6 +259,36 @@ class WebSocketService {
       'Type': type,
     };
     _channel?.sink.add(jsonEncode(message));
+  }
+
+  /// Подписка на живой статус устройства собеседника (см.
+  /// "presence_subscribe" на сервере) — сервер тут же отвечает текущим
+  /// статусом (см. presenceEvents), а дальше присылает обновления сам, пока
+  /// не придёт unsubscribePresence или это соединение не оборвётся. Если
+  /// канал сейчас не поднят — просто no-op: подписываться не на чем, а
+  /// когда соединение восстановится, вызывающая сторона (chat_screen)
+  /// подпишется заново по statusUpdates.
+  void subscribePresence(String peerDeviceId) {
+    _channel?.sink.add(
+      jsonEncode({'Type': 'presence_subscribe', 'ToDeviceId': peerDeviceId}),
+    );
+  }
+
+  void unsubscribePresence(String peerDeviceId) {
+    _channel?.sink.add(
+      jsonEncode({
+        'Type': 'presence_unsubscribe',
+        'ToDeviceId': peerDeviceId,
+      }),
+    );
+  }
+
+  /// "Я сейчас печатаю" — чистый relay без очереди/подтверждения, вызывающая
+  /// сторона сама решает, как часто слать (см. троттлинг в chat_screen.dart).
+  void sendTyping(String peerDeviceId) {
+    _channel?.sink.add(
+      jsonEncode({'Type': 'typing', 'ToDeviceId': peerDeviceId}),
+    );
   }
 
   Future<void> flushOutbox() async {

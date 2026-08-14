@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/account_actions.dart';
+import '../widgets/avatar_settings_tile.dart';
 import '../widgets/default_reaction_dialog.dart';
+import '../widgets/email_dialog.dart';
 import '../widgets/language_dialog.dart';
 import '../widgets/theme_dialog.dart';
 
@@ -17,6 +19,15 @@ class SettingsContent extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: [
+        const AvatarSettingsTile(),
+        ListTile(
+          leading: Icon(Icons.email_outlined, color: AppColors.textMuted),
+          title: Text(
+            tr('settings.email'),
+            style: TextStyle(color: AppColors.textPrimary),
+          ),
+          onTap: () => showEmailDialog(context),
+        ),
         ListTile(
           leading: Icon(
             Icons.emoji_emotions_outlined,

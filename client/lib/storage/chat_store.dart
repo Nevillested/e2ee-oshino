@@ -225,6 +225,17 @@ class ChatSummary {
   int unreadCount;
   String? pinnedMessageId;
 
+  /// Когда ЧАТ (не отдельное сообщение — см. pinnedMessageId выше) был
+  /// закреплён в списке чатов — null, если не закреплён. Момент закрепления
+  /// нужен, а не просто bool: несколько закреплённых чатов сортируются
+  /// между собой по свежести закрепления (см. ChatStore.compareForList).
+  int? chatPinnedAt;
+
+  /// Уведомления по этому чату выключены — как локально (не проигрывать
+  /// звук/вибрацию на новое сообщение), так и на сервере (см.
+  /// ApiClient.muteChat — сервер не шлёт будящий push, пока чат замьючен).
+  bool muted;
+
   ChatSummary(
     this.peerLogin,
     this.lastMessage,
@@ -234,6 +245,8 @@ class ChatSummary {
     this.isDeleted = false,
     this.unreadCount = 0,
     this.pinnedMessageId,
+    this.chatPinnedAt,
+    this.muted = false,
   });
 }
 
@@ -285,6 +298,34 @@ class ChatStore {
     final previous = _peerLocks[peerLogin] ?? Future<void>.value();
     final completer = Completer<void>();
     _peerLocks[peerLogin] = previous.then((_) => completer.future);
+    return previous.then((_) async {
+      try {
+        return await action();
+      } finally {
+        completer.complete();
+      }
+    });
+  }
+
+  // То же самое, но для ОБЩЕГО индекса чатов (known_peers) — setPinned,
+  // setChatPinned, setChatMuted, _touchPeer, clearHistory, removeChat и
+  // остальные ниже все читают ВЕСЬ список чатов, меняют один элемент и
+  // пишут список обратно целиком. Раньше это не было сериализовано вообще:
+  // если, например, "Очистить историю" (читает peers, сбрасывает превью,
+  // пишет обратно) и одновременно пришедшее сообщение (_touchPeer — тоже
+  // читает peers, обновляет своё превью, пишет обратно) пересекались по
+  // времени, тот вызов, что записывал СВОЙ более старый снимок списка
+  // ПОЗЖЕ, тихо затирал изменение первого — внешне это выглядело как
+  // "превью последнего сообщения не очистилось". Один общий лок на весь
+  // индекс (а не per-peer, как выше) — раз это один и тот же файл в
+  // хранилище, сериализовать нужно ВСЕ операции над ним между собой, а не
+  // только для одного и того же peerLogin.
+  static Future<void>? _peersLock;
+
+  static Future<T> _withPeersLock<T>(Future<T> Function() action) {
+    final previous = _peersLock ?? Future<void>.value();
+    final completer = Completer<void>();
+    _peersLock = previous.then((_) => completer.future);
     return previous.then((_) async {
       try {
         return await action();
@@ -490,26 +531,168 @@ class ChatStore {
   ) async {
     if (messageIds.isEmpty) return;
     final ids = messageIds.toSet();
+    var remaining = const <StoredMessage>[];
     await _withPeerLock(peerLogin, () async {
       final messages = await getMessages(peerLogin);
       messages.removeWhere((m) => ids.contains(m.messageId));
+      remaining = messages;
       await _writeMessages(peerLogin, messages);
     });
-    _changesController.add(null);
+    // Превью последнего сообщения в списке чатов могло указывать как раз на
+    // одно из только что удалённых (это касается и своего удаления, и
+    // входящего control-сообщения 'delete' от собеседника, см.
+    // message_router.dart) — пересчитываем его по тому, что реально
+    // осталось, иначе список продолжал бы показывать текст уже удалённого
+    // сообщения как ни в чём не бывало.
+    await _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
+      if (existing.isEmpty) {
+        _changesController.add(null);
+        return;
+      }
+      if (remaining.isEmpty) {
+        existing.first.lastMessage = '';
+        existing.first.lastTimestamp = 0;
+      } else {
+        final last = remaining.reduce(
+          (a, b) => a.timestamp >= b.timestamp ? a : b,
+        );
+        existing.first.lastMessage = last.text;
+        existing.first.lastTimestamp = last.timestamp;
+      }
+      await _writePeers(peers);
+    });
   }
 
   /// null — открепить. Один закреп на чат; новый вызов просто заменяет
   /// старый идентификатор.
-  static Future<void> setPinned(String peerLogin, String? messageId) async {
-    final peers = await getKnownPeers();
-    final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
-    if (existing.isEmpty) {
-      if (messageId == null) return;
-      peers.add(ChatSummary(peerLogin, '', 0, pinnedMessageId: messageId));
-    } else {
-      existing.first.pinnedMessageId = messageId;
-    }
-    await _writePeers(peers);
+  static Future<void> setPinned(String peerLogin, String? messageId) {
+    return _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
+      if (existing.isEmpty) {
+        if (messageId == null) return;
+        peers.add(ChatSummary(peerLogin, '', 0, pinnedMessageId: messageId));
+      } else {
+        existing.first.pinnedMessageId = messageId;
+      }
+      await _writePeers(peers);
+    });
+  }
+
+  /// Закрепление ЧАТА в списке чатов (не путать с setPinned выше — то
+  /// закрепляет одно СООБЩЕНИЕ внутри уже открытого чата, баннером сверху
+  /// переписки). См. ChatSummary.chatPinnedAt — момент закрепления, а не
+  /// просто флаг, ради сортировки нескольких закреплённых чатов между собой.
+  static Future<void> setChatPinned(String peerLogin, bool pinned) {
+    return _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
+      if (existing.isEmpty) {
+        if (!pinned) return;
+        peers.add(
+          ChatSummary(
+            peerLogin,
+            '',
+            0,
+            chatPinnedAt: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+      } else {
+        existing.first.chatPinnedAt = pinned
+            ? DateTime.now().millisecondsSinceEpoch
+            : null;
+      }
+      await _writePeers(peers);
+    });
+  }
+
+  /// Локальный флаг мьюта — серверный вызов (ApiClient.muteChat/unmuteChat,
+  /// нужен для подавления push) делает вызывающий код отдельно, эта функция
+  /// только сохраняет состояние для локального UI (иконка/текст пункта меню).
+  static Future<void> setChatMuted(String peerLogin, bool muted) {
+    return _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
+      if (existing.isEmpty) return;
+      existing.first.muted = muted;
+      await _writePeers(peers);
+    });
+  }
+
+  /// Сверяет локальные флаги мьюта со списком account_id, замьюченных на
+  /// сервере (см. ApiClient.getMutedChats) — вызывается один раз при
+  /// подключении, чтобы локальное состояние не разъезжалось с серверным
+  /// (например, после переустановки приложения — сама переписка и так
+  /// теряется, но мьют, once поставленный, должен остаться в силе).
+  static Future<void> syncMutedFromServer(Set<String> mutedAccountIds) {
+    return _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      var changed = false;
+      for (final p in peers) {
+        final shouldBeMuted =
+            p.lastKnownAccountId != null &&
+            mutedAccountIds.contains(p.lastKnownAccountId);
+        if (p.muted != shouldBeMuted) {
+          p.muted = shouldBeMuted;
+          changed = true;
+        }
+      }
+      if (changed) await _writePeers(peers);
+    });
+  }
+
+  /// Очищает историю чата, но саму запись в списке чатов оставляет (в
+  /// отличие от removeChat ниже) — ровно то же самое, что "удалить все
+  /// сообщения", просто по всем id разом (включая записи о звонках — они
+  /// хранятся в том же списке, что и обычные сообщения, никакого особого
+  /// статуса у них нет); сама отправка control-сообщения собеседнику (если
+  /// отмечена галочка "у обоих") — забота вызывающего кода.
+  static Future<void> clearHistory(String peerLogin) async {
+    await _withPeerLock(peerLogin, () async {
+      await _writeMessages(peerLogin, []);
+    });
+    await _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
+      if (existing.isNotEmpty) {
+        existing.first.lastMessage = '';
+        existing.first.lastTimestamp = 0;
+        await _writePeers(peers);
+      } else {
+        _changesController.add(null);
+      }
+    });
+  }
+
+  /// В отличие от clearHistory — ещё и убирает сам чат из списка. Сообщения
+  /// собеседнику (если отмечена галочка "у обоих") отправляет вызывающий код
+  /// ДО этого вызова — сама эта функция только чистит локальное хранилище.
+  static Future<void> removeChat(String peerLogin) async {
+    await _withPeerLock(peerLogin, () async {
+      await _storage.delete(key: _messagesKey(peerLogin));
+    });
+    await _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      peers.removeWhere((p) => p.peerLogin == peerLogin);
+      await _writePeers(peers);
+    });
+  }
+
+  /// Порядок в списке чатов: сначала закреплённые (самые свежезакреплённые
+  /// — в самом верху), затем остальные — по времени последнего сообщения,
+  /// как и раньше. Общая точка и для getKnownPeers, и для
+  /// HomePlaceholderScreen._refreshChats (там ещё подмешивается
+  /// синтетическая запись "Заметок", которую тоже нужно сортировать по тем
+  /// же правилам).
+  static int compareForList(ChatSummary a, ChatSummary b) {
+    final aPinned = a.chatPinnedAt;
+    final bPinned = b.chatPinnedAt;
+    if (aPinned != null && bPinned != null) return bPinned.compareTo(aPinned);
+    if (aPinned != null) return -1;
+    if (bPinned != null) return 1;
+    return b.lastTimestamp.compareTo(a.lastTimestamp);
   }
 
   static Future<void> _touchPeer(
@@ -518,57 +701,59 @@ class ChatStore {
     int timestamp, {
     String? accountId,
     bool incrementUnread = false,
-  }) async {
-    final peers = await getKnownPeers();
-    final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
-    if (existing.isNotEmpty) {
-      existing.first.lastMessage = lastMessage;
-      existing.first.lastTimestamp = timestamp;
-      if (accountId != null) existing.first.lastKnownAccountId = accountId;
-      if (incrementUnread) existing.first.unreadCount += 1;
-    } else {
-      peers.add(
-        ChatSummary(
-          peerLogin,
-          lastMessage,
-          timestamp,
-          lastKnownAccountId: accountId,
-          unreadCount: incrementUnread ? 1 : 0,
-        ),
-      );
-    }
-    await _writePeers(peers);
+  }) {
+    return _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
+      if (existing.isNotEmpty) {
+        existing.first.lastMessage = lastMessage;
+        existing.first.lastTimestamp = timestamp;
+        if (accountId != null) existing.first.lastKnownAccountId = accountId;
+        if (incrementUnread) existing.first.unreadCount += 1;
+      } else {
+        peers.add(
+          ChatSummary(
+            peerLogin,
+            lastMessage,
+            timestamp,
+            lastKnownAccountId: accountId,
+            unreadCount: incrementUnread ? 1 : 0,
+          ),
+        );
+      }
+      await _writePeers(peers);
+    });
   }
 
-  static Future<void> clearUnread(String peerLogin) async {
-    final peers = await getKnownPeers();
-    final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
-    if (existing.isEmpty) return;
-    if (existing.first.unreadCount == 0) return;
-    existing.first.unreadCount = 0;
-    await _writePeers(peers);
+  static Future<void> clearUnread(String peerLogin) {
+    return _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
+      if (existing.isEmpty) return;
+      if (existing.first.unreadCount == 0) return;
+      existing.first.unreadCount = 0;
+      await _writePeers(peers);
+    });
   }
 
-  static Future<void> setPeerDeletedStatus(
-    String peerLogin,
-    bool isDeleted,
-  ) async {
-    final peers = await getKnownPeers();
-    final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
-    if (existing.isEmpty) return;
-    existing.first.isDeleted = isDeleted;
-    await _writePeers(peers);
+  static Future<void> setPeerDeletedStatus(String peerLogin, bool isDeleted) {
+    return _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
+      if (existing.isEmpty) return;
+      existing.first.isDeleted = isDeleted;
+      await _writePeers(peers);
+    });
   }
 
-  static Future<void> setLastKnownDeviceId(
-    String peerLogin,
-    String deviceId,
-  ) async {
-    final peers = await getKnownPeers();
-    final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
-    if (existing.isEmpty) return;
-    existing.first.lastKnownDeviceId = deviceId;
-    await _writePeers(peers);
+  static Future<void> setLastKnownDeviceId(String peerLogin, String deviceId) {
+    return _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
+      if (existing.isEmpty) return;
+      existing.first.lastKnownDeviceId = deviceId;
+      await _writePeers(peers);
+    });
   }
 
   static Future<void> _writePeers(List<ChatSummary> peers) async {
@@ -586,6 +771,8 @@ class ChatStore {
                 'is_deleted': p.isDeleted,
                 'unread': p.unreadCount,
                 'pinned_message_id': p.pinnedMessageId,
+                'chat_pinned_at': p.chatPinnedAt,
+                'muted': p.muted,
               },
             )
             .toList(),
@@ -609,9 +796,11 @@ class ChatStore {
             isDeleted: e['is_deleted'] as bool? ?? false,
             unreadCount: e['unread'] as int? ?? 0,
             pinnedMessageId: e['pinned_message_id'] as String?,
+            chatPinnedAt: e['chat_pinned_at'] as int?,
+            muted: e['muted'] as bool? ?? false,
           ),
         )
         .toList()
-      ..sort((a, b) => b.lastTimestamp.compareTo(a.lastTimestamp));
+      ..sort(compareForList);
   }
 }

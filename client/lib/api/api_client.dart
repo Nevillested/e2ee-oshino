@@ -168,8 +168,13 @@ class ApiClient {
     }
   }
 
-  /// POST /login — вход. Возвращает сырой токен сессии.
-  Future<String> login(String login, String password, String totpCode) async {
+  /// POST /login — вход. Возвращает токен сессии и текущий язык, сохранённый
+  /// на сервере (см. LocaleStore — вызывающая сторона применяет его сразу).
+  Future<({String token, String language})> login(
+    String login,
+    String password,
+    String totpCode,
+  ) async {
     final response = await http.post(
       Uri.parse('${ApiConfig.baseUrl}/login'),
       headers: {'Content-Type': 'application/json'},
@@ -185,7 +190,130 @@ class ApiClient {
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
-    return data['token'] as String;
+    return (
+      token: data['token'] as String,
+      language: data['language'] as String? ?? 'en',
+    );
+  }
+
+  /// PUT /account/language — язык теперь хранится на сервере, а не только
+  /// локально (задел под будущий вход с нескольких устройств).
+  Future<void> updateLanguage(String token, String language) async {
+    final response = await http.put(
+      Uri.parse('${ApiConfig.baseUrl}/account/language'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'language': language}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.languageSaveFailed'));
+    }
+  }
+
+  /// PUT /account/email — почта для восстановления доступа (опционально).
+  /// Пустая строка снимает почту с аккаунта.
+  Future<void> updateEmail(String token, String email) async {
+    final response = await http.put(
+      Uri.parse('${ApiConfig.baseUrl}/account/email'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'email': email}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.emailSaveFailed'));
+    }
+  }
+
+  /// POST /account/avatar — фото профиля НЕ шифруется (см. комментарий в
+  /// account_avatar.go на сервере) — видно всем контактам как есть.
+  Future<void> uploadAvatar(String token, Uint8List jpegBytes) async {
+    final client = dio.Dio();
+    final formData = dio.FormData.fromMap({
+      'file': dio.MultipartFile.fromBytes(jpegBytes, filename: 'avatar.jpg'),
+    });
+    try {
+      final response = await client.post(
+        '${ApiConfig.baseUrl}/account/avatar',
+        data: formData,
+        options: dio.Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      if (response.statusCode != 200) {
+        throw ApiException(tr('error.uploadFailed'));
+      }
+    } on dio.DioException {
+      throw ApiException(tr('error.uploadFailed'));
+    }
+  }
+
+  /// GET /account/avatar/{account_id} — null, если у аккаунта нет фото
+  /// профиля (404) или запрос не удался — вызывающая сторона в этом
+  /// случае показывает заглушку, а не бросает исключение выше.
+  Future<Uint8List?> getAvatar(String token, String accountId) async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('${ApiConfig.baseUrl}/account/avatar/$accountId'),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) return null;
+      return response.bodyBytes;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// POST /chats/mute — полный мьют, включая push при закрытом приложении
+  /// (решение сервера, кому будить, зависит от этой отметки).
+  Future<void> muteChat(String token, String peerAccountId) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/chats/mute'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'peer_account_id': peerAccountId}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.muteFailed'));
+    }
+  }
+
+  Future<void> unmuteChat(String token, String peerAccountId) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/chats/unmute'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'peer_account_id': peerAccountId}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.muteFailed'));
+    }
+  }
+
+  /// GET /chats/muted — список account_id замьюченных собеседников, чтобы
+  /// восстановить локальное отображение (иконка в списке чатов) при
+  /// старте приложения.
+  Future<List<String>> getMutedChats(String token) async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('${ApiConfig.baseUrl}/chats/muted'),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) return [];
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return (data['peer_account_ids'] as List<dynamic>).cast<String>();
+    } catch (_) {
+      return [];
+    }
   }
 
   Future<Map<String, dynamic>> getPrekeyBundle(
@@ -427,9 +555,16 @@ class ApiClient {
     return response.statusCode == 200;
   }
 
-  Future<({String accountId, String login})?> getMyAccountInfo(
-    String token,
-  ) async {
+  Future<
+    ({
+      String accountId,
+      String login,
+      String language,
+      String? email,
+      bool hasAvatar,
+    })?
+  >
+  getMyAccountInfo(String token) async {
     try {
       final response = await http
           .get(
@@ -442,6 +577,9 @@ class ApiClient {
       return (
         accountId: data['account_id'] as String,
         login: data['login'] as String,
+        language: data['language'] as String? ?? 'en',
+        email: data['email'] as String?,
+        hasAvatar: data['has_avatar'] as bool? ?? false,
       );
     } catch (_) {
       return null;

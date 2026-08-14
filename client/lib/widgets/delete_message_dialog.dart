@@ -7,19 +7,36 @@ class DeleteConfirmResult {
   const DeleteConfirmResult(this.alsoForPeer);
 }
 
+/// title/confirmLabel — по умолчанию текст про удаление ОДНОГО/нескольких
+/// сообщений (исходный сценарий), но тот же диалог с чекбоксом "у
+/// собеседника тоже" 1-в-1 подходит и для очистки истории, и для удаления
+/// всего чата целиком (см. showChatListContextMenu в home_placeholder_screen)
+/// — там передаются свои формулировки.
 Future<DeleteConfirmResult?> showDeleteMessagesDialog(
   BuildContext context, {
   required String peerName,
+  String? title,
+  String? confirmLabel,
 }) {
   return showDialog<DeleteConfirmResult>(
     context: context,
-    builder: (context) => _DeleteMessagesDialog(peerName: peerName),
+    builder: (context) => _DeleteMessagesDialog(
+      peerName: peerName,
+      title: title,
+      confirmLabel: confirmLabel,
+    ),
   );
 }
 
 class _DeleteMessagesDialog extends StatefulWidget {
   final String peerName;
-  const _DeleteMessagesDialog({required this.peerName});
+  final String? title;
+  final String? confirmLabel;
+  const _DeleteMessagesDialog({
+    required this.peerName,
+    this.title,
+    this.confirmLabel,
+  });
 
   @override
   State<_DeleteMessagesDialog> createState() => _DeleteMessagesDialogState();
@@ -37,7 +54,7 @@ class _DeleteMessagesDialogState extends State<_DeleteMessagesDialog> {
       contentPadding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
       actionsPadding: const EdgeInsets.fromLTRB(8, 0, 12, 8),
       title: Text(
-        tr('deleteMessage.title'),
+        widget.title ?? tr('deleteMessage.title'),
         style: TextStyle(
           color: AppColors.textPrimary,
           fontSize: 16,
@@ -88,7 +105,7 @@ class _DeleteMessagesDialogState extends State<_DeleteMessagesDialog> {
           onPressed: () =>
               Navigator.of(context).pop(DeleteConfirmResult(_alsoForPeer)),
           child: Text(
-            tr('action.delete'),
+            widget.confirmLabel ?? tr('action.delete'),
             style: TextStyle(color: AppColors.primary, fontSize: 15),
           ),
         ),

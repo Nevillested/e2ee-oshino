@@ -1,10 +1,13 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
+import '../services/avatar_cache.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_text_field.dart';
+import '../widgets/avatar_settings_tile.dart';
 import '../widgets/swipe_back_page_route.dart';
 import '../widgets/theme_reactive.dart';
 import 'chat_screen.dart';
@@ -135,7 +138,7 @@ class _NewChatScreenState extends State<NewChatScreen> {
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: ListTile(
-                      leading: const Icon(Icons.person, color: Colors.white),
+                      leading: _SearchResultAvatar(accountId: _peerAccountId),
                       title: Text(
                         _loginController.text.trim(),
                         style: const TextStyle(
@@ -165,6 +168,42 @@ class _NewChatScreenState extends State<NewChatScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Фото профиля найденного пользователя — тот же кэш, что и в списке чатов
+/// (см. _ChatAvatarLeading в home_placeholder_screen.dart), но заглушка —
+/// светлая: строка результата тут сама залита градиентом AppColors.primary
+/// → primaryDark, а обычная (акцентного же цвета) заглушка на нём попросту
+/// не видна — сливается с фоном.
+class _SearchResultAvatar extends StatelessWidget {
+  final String? accountId;
+
+  const _SearchResultAvatar({required this.accountId});
+
+  static const _placeholderColor = Colors.white;
+  static const _placeholderBackground = Color.fromRGBO(255, 255, 255, 0.25);
+
+  @override
+  Widget build(BuildContext context) {
+    final id = accountId;
+    if (id == null || id.isEmpty) {
+      return const AvatarThumbnail(
+        bytes: null,
+        placeholderColor: _placeholderColor,
+        placeholderBackground: _placeholderBackground,
+      );
+    }
+    return FutureBuilder<Uint8List?>(
+      future: AvatarCache.get(id),
+      builder: (context, snapshot) {
+        return AvatarThumbnail(
+          bytes: snapshot.data,
+          placeholderColor: _placeholderColor,
+          placeholderBackground: _placeholderBackground,
+        );
+      },
     );
   }
 }

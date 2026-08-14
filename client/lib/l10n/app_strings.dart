@@ -118,6 +118,55 @@ class AppStrings {
       AppLocale.en: 'Selected',
     },
 
+    'presence.online': {AppLocale.ru: 'в сети', AppLocale.en: 'online'},
+    'presence.typing': {
+      AppLocale.ru: 'печатает…',
+      AppLocale.en: 'typing…',
+    },
+    'presence.justNow': {
+      AppLocale.ru: 'только что',
+      AppLocale.en: 'just now',
+    },
+    'presence.minutesAgoSuffix': {
+      AppLocale.ru: 'мин. назад',
+      AppLocale.en: 'min ago',
+    },
+
+    'chatMenu.pin': {AppLocale.ru: 'Закрепить', AppLocale.en: 'Pin'},
+    'chatMenu.unpin': {AppLocale.ru: 'Открепить', AppLocale.en: 'Unpin'},
+    'chatMenu.mute': {
+      AppLocale.ru: 'Выключить уведомления',
+      AppLocale.en: 'Mute notifications',
+    },
+    'chatMenu.unmute': {
+      AppLocale.ru: 'Включить уведомления',
+      AppLocale.en: 'Unmute notifications',
+    },
+    'chatMenu.clearHistory': {
+      AppLocale.ru: 'Очистить историю',
+      AppLocale.en: 'Clear history',
+    },
+    'chatMenu.deleteChat': {
+      AppLocale.ru: 'Удалить диалог',
+      AppLocale.en: 'Delete chat',
+    },
+    'chatMenu.clearHistoryTitle': {
+      AppLocale.ru: 'Очистить историю переписки?',
+      AppLocale.en: 'Clear chat history?',
+    },
+    'chatMenu.clearHistoryConfirm': {
+      AppLocale.ru: 'Очистить',
+      AppLocale.en: 'Clear',
+    },
+    'chatMenu.deleteChatTitle': {
+      AppLocale.ru: 'Удалить диалог?',
+      AppLocale.en: 'Delete this chat?',
+    },
+    'chatMenu.deleteChatConfirm': {
+      AppLocale.ru: 'Удалить',
+      AppLocale.en: 'Delete',
+    },
+
     'error.registerFailed': {
       AppLocale.ru: 'Не удалось зарегистрироваться',
       AppLocale.en: 'Failed to register',
@@ -168,6 +217,43 @@ class AppStrings {
     },
     'forward.title': {AppLocale.ru: 'Переслать', AppLocale.en: 'Forward'},
 
+    'error.languageSaveFailed': {
+      AppLocale.ru: 'Не удалось сохранить язык',
+      AppLocale.en: 'Failed to save language',
+    },
+    'error.emailSaveFailed': {
+      AppLocale.ru: 'Не удалось сохранить почту',
+      AppLocale.en: 'Failed to save email',
+    },
+    'email.title': {
+      AppLocale.ru: 'Почта для восстановления',
+      AppLocale.en: 'Recovery email',
+    },
+    'email.description': {
+      AppLocale.ru:
+          'Если вы забудете пароль, код для восстановления доступа придёт '
+          'на эту почту. Поле необязательное.',
+      AppLocale.en:
+          'If you forget your password, a recovery code will be sent to '
+          'this email. This field is optional.',
+    },
+    'email.hint': {
+      AppLocale.ru: 'you@example.com',
+      AppLocale.en: 'you@example.com',
+    },
+    'email.invalid': {
+      AppLocale.ru: 'Неверный формат почты',
+      AppLocale.en: 'Invalid email format',
+    },
+    'email.saved': {
+      AppLocale.ru: 'Почта сохранена',
+      AppLocale.en: 'Email saved',
+    },
+
+    'error.muteFailed': {
+      AppLocale.ru: 'Не удалось изменить уведомления',
+      AppLocale.en: 'Failed to change notifications',
+    },
     'error.noAccountId': {
       AppLocale.ru: 'Сервер не вернул account_id пользователя',
       AppLocale.en: "Server did not return the user's account_id",
@@ -342,6 +428,18 @@ class AppStrings {
     },
     'settings.language': {AppLocale.ru: 'Язык', AppLocale.en: 'Language'},
     'settings.theme': {AppLocale.ru: 'Тема', AppLocale.en: 'Theme'},
+    'settings.avatar': {
+      AppLocale.ru: 'Фото профиля',
+      AppLocale.en: 'Profile photo',
+    },
+    'settings.avatarUploadFailed': {
+      AppLocale.ru: 'Не удалось загрузить фото',
+      AppLocale.en: 'Failed to upload photo',
+    },
+    'settings.email': {
+      AppLocale.ru: 'Почта для восстановления',
+      AppLocale.en: 'Recovery email',
+    },
     'settings.backToChats': {
       AppLocale.ru: 'Вернуться к чатам',
       AppLocale.en: 'Back to chats',

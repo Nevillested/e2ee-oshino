@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart'
     show Clipboard, ClipboardData, HapticFeedback, KeyboardInsertedContent;
 import 'package:open_file/open_file.dart';
@@ -39,6 +41,7 @@ import '../storage/media_cache.dart';
 import '../storage/peer_account_store.dart';
 import '../storage/peer_identity_store.dart';
 import '../theme/app_theme.dart';
+import '../utils/presence_format.dart';
 import '../utils/time_format.dart';
 import '../storage/default_reaction_store.dart';
 import '../widgets/delete_message_dialog.dart';
@@ -46,6 +49,7 @@ import '../widgets/full_emoji_picker.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../widgets/message_context_menu.dart';
 import '../widgets/ongoing_call_banner.dart';
+import '../widgets/particle_shatter_overlay.dart';
 import '../widgets/swipe_back_page_route.dart';
 import '../widgets/theme_reactive.dart';
 import '../widgets/video_note_player.dart';
@@ -160,6 +164,30 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, List<String>> _groupIdsByRepId = {};
   String? _dragSelectLastHoverId;
 
+  // Ключи RepaintBoundary вокруг пузыря каждого сообщения (по тому же
+  // представительскому id, что и _messageKeys) — используются только для
+  // снимка изображения перед particle-shatter анимацией удаления, см.
+  // _captureShatterImages в _deleteMessages.
+  final Map<String, GlobalKey> _shatterBoundaryKeys = {};
+
+  // Представительские id пузырей, которые прямо сейчас "растворяются" в
+  // частицах (см. _deleteMessages) — такой пузырь ещё числится в
+  // _messages/списке (место в ленте не схлопывается раньше времени), но
+  // рисуется невидимым (Opacity 0, см. _wrapInteractive): сам эффект летит
+  // поверх, ровно на его месте.
+  final Set<String> _dissolvingMessageIds = {};
+
+  // Живой статус собеседника (онлайн/офлайн/печатает), см. _handlePresenceEvent
+  // — null, пока сервер ещё не ответил на подписку (presence_subscribe).
+  bool? _peerOnline;
+  int? _peerLastSeenMs;
+  bool _peerTyping = false;
+  Timer? _peerTypingClearTimer;
+  StreamSubscription<Map<String, dynamic>>? _presenceSub;
+  StreamSubscription<ConnectionStatus>? _wsStatusSub;
+  Timer? _presenceTickTimer;
+  DateTime? _lastTypingSentAt;
+
   // Голосовые/видео-сообщения (запись) — см. _beginRecording и всё, что
   // рядом. _recCameraSelected — какая иконка сейчас показана в состоянии
   // покоя (false=микрофон, true=камера), переключается одиночным тапом.
@@ -233,6 +261,76 @@ class _ChatScreenState extends State<ChatScreen> {
     // открытия шторки вложений, отсюда промелькивающий спиннер поверх
     // открывающей анимации.
     MediaAssetCache.prefetch();
+
+    if (!_isNotes) {
+      _subscribePeerPresence();
+      _presenceSub = WebSocketService.instance.presenceEvents.listen(
+        _handlePresenceEvent,
+      );
+      // Пересоздавшееся соединение (после обрыва сети и т.п.) не помнит,
+      // что нас надо было переподписать — сервер отвечает актуальным
+      // статусом только В МОМЕНТ подписки, поэтому подписываемся заново на
+      // каждое новое "connected".
+      _wsStatusSub = WebSocketService.instance.statusUpdates.listen((status) {
+        if (status == ConnectionStatus.connected) _subscribePeerPresence();
+      });
+      // "N минут назад" должно само устаревать по часам, даже если больше
+      // никаких событий от собеседника не приходит — просто перерисовываем
+      // текст статуса раз в полминуты, дешевле не завязываться на точный
+      // момент смены "0 → 1 минуту назад".
+      _presenceTickTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  void _subscribePeerPresence() {
+    WebSocketService.instance.subscribePresence(_currentPeerDeviceId);
+  }
+
+  void _handlePresenceEvent(Map<String, dynamic> event) {
+    if (event['FromDeviceId'] != _currentPeerDeviceId) return;
+    final type = event['Type'] as String?;
+
+    if (type == 'presence') {
+      final online = event['Online'] as bool? ?? false;
+      final lastSeenMs = (event['LastSeenMs'] as num?)?.toInt() ?? 0;
+      if (!mounted) return;
+      setState(() {
+        _peerOnline = online;
+        _peerLastSeenMs = lastSeenMs;
+        // Собеседник только что появился в сети — значит, точно не
+        // "печатает" из предыдущей сессии; свежий "typing" при необходимости
+        // придёт отдельным кадром следом.
+        if (online) _peerTyping = false;
+      });
+      return;
+    }
+
+    if (type == 'typing') {
+      _peerTypingClearTimer?.cancel();
+      if (mounted) setState(() => _peerTyping = true);
+      // Явного "закончил печатать" от сервера нет (чистый relay) — считаем,
+      // что печать закончилась, если новый пинг не пришёл в течение
+      // разумного окна (как в Телеграме/WhatsApp).
+      _peerTypingClearTimer = Timer(const Duration(seconds: 4), () {
+        if (mounted) setState(() => _peerTyping = false);
+      });
+    }
+  }
+
+  // Троттлинг исходящих "печатает" — шлём не чаще раза в 3 секунды, а не на
+  // каждое нажатие клавиши: получателю всё равно не нужна такая точность,
+  // а трафика/будильников в его WS-обработчике становится на порядок меньше.
+  void _maybeSendTyping() {
+    if (_isNotes) return;
+    final now = DateTime.now();
+    if (_lastTypingSentAt != null &&
+        now.difference(_lastTypingSentAt!) < const Duration(seconds: 3)) {
+      return;
+    }
+    _lastTypingSentAt = now;
+    WebSocketService.instance.sendTyping(_currentPeerDeviceId);
   }
 
   void _onFocusChange() {
@@ -251,6 +349,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (hasText != _hasText) {
       setState(() => _hasText = hasText);
     }
+    if (hasText) _maybeSendTyping();
   }
 
   Future<void> _loadKnownDeletedStatus() async {
@@ -580,6 +679,15 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Если среди удаляемых — закреплённое сообщение, открепляем его в шапке:
   /// у себя всегда (раз сообщения больше нет), у собеседника — только если
   /// удаление реально дошло и до него ("у собеседника тоже").
+  ///
+  /// Порядок событий намеренно именно такой, а не "пузырь мгновенно исчез,
+  /// а частицы появились поверх пустого места": (1) снимаем пузырь картинкой
+  /// (2) СРАЗУ же прячем сам пузырь (Opacity 0, но место в списке остаётся —
+  /// см. _dissolvingMessageIds) и запускаем частицы ровно на его месте — со
+  /// стороны выглядит так, будто сообщение само превращается в пыль, ничего
+  /// не оставляя (3) и только когда частицы долетели, по-настоящему удаляем
+  /// сообщение из списка — вот тогда соседние сообщения и сдвигаются на
+  /// освободившееся место, а не раньше.
   Future<void> _deleteMessages(List<String> ids) async {
     if (ids.isEmpty) return;
 
@@ -588,6 +696,21 @@ class _ChatScreenState extends State<ChatScreen> {
       peerName: widget.peerLogin,
     );
     if (result == null || !mounted) return;
+
+    final shatterCaptures = await _captureShatterImages(ids);
+
+    if (shatterCaptures.isNotEmpty && mounted) {
+      setState(() {
+        _dissolvingMessageIds.addAll(shatterCaptures.map((c) => c.messageId));
+      });
+    }
+    final effectFutures = mounted
+        ? shatterCaptures
+              .map(
+                (c) => showShatterEffect(context, image: c.image, rect: c.rect),
+              )
+              .toList()
+        : const <Future<void>>[];
 
     final deletingPinned =
         _pinnedMessageId != null && ids.contains(_pinnedMessageId);
@@ -605,9 +728,51 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _pinnedMessageId = null);
       await ChatStore.setPinned(widget.peerLogin, null);
     }
+
+    if (effectFutures.isNotEmpty) await Future.wait(effectFutures);
+
     await ChatStore.deleteMessages(widget.peerLogin, ids);
     if (_selectionMode) _exitSelectionMode();
     await _loadHistory();
+
+    if (mounted) {
+      setState(() {
+        _dissolvingMessageIds.removeAll(
+          shatterCaptures.map((c) => c.messageId),
+        );
+      });
+    }
+  }
+
+  /// Снимки пузырей сообщений [ids], которые сейчас реально отрисованы на
+  /// экране (см. _shatterBoundaryKeys в _wrapInteractive) — по одному на
+  /// bubble, а не на id: у сгруппированных сообщений один общий пузырь
+  /// зарегистрирован только под id представителя группы, остальные id
+  /// группы просто не находят себе ключ и пропускаются, чтобы не снимать
+  /// один и тот же пузырь несколько раз. messageId в результате — id
+  /// представителя (тот же, что ключ в _shatterBoundaryKeys/_messageKeys) —
+  /// именно по нему _wrapInteractive проверяет _dissolvingMessageIds.
+  Future<List<({ui.Image image, Rect rect, String messageId})>>
+  _captureShatterImages(List<String> ids) async {
+    final pixelRatio = MediaQuery.of(context).devicePixelRatio;
+    final captures = <({ui.Image image, Rect rect, String messageId})>[];
+    for (final id in ids) {
+      final renderObject = _shatterBoundaryKeys[id]?.currentContext
+          ?.findRenderObject();
+      if (renderObject is! RenderRepaintBoundary) continue;
+      try {
+        final image = await renderObject.toImage(pixelRatio: pixelRatio);
+        final position = renderObject.localToGlobal(Offset.zero);
+        captures.add((
+          image: image,
+          rect: position & renderObject.size,
+          messageId: id,
+        ));
+      } catch (_) {
+        // boundary мог не успеть ни разу отрисоваться — просто без эффекта.
+      }
+    }
+    return captures;
   }
 
   void _openForward(List<String> texts) {
@@ -663,6 +828,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final showCopy = !msg.isMedia && !msg.isCallLog;
     final isPinned = _pinnedMessageId == msg.messageId;
 
+    HapticFeedback.mediumImpact();
     final selection = await showMessageContextMenu(
       context,
       tapPosition: tapPosition,
@@ -2963,9 +3129,29 @@ class _ChatScreenState extends State<ChatScreen> {
     final ids = groupMessageIds ?? [targetMsg.messageId];
     _groupIdsByRepId[targetMsg.messageId] = ids;
     final isSelected = _selectedMessageIds.contains(targetMsg.messageId);
-    final content = Stack(
-      clipBehavior: Clip.none,
-      children: [bubble, _reactionBadges(myReaction, peerReaction, isMine)],
+    // RepaintBoundary — снимок именно этого пузыря нужен, если сообщение
+    // удалят: см. _captureShatterImages в _deleteMessages.
+    final shatterKey = _shatterBoundaryKeys.putIfAbsent(
+      targetMsg.messageId,
+      () => GlobalKey(),
+    );
+    // Пока идёт particle-shatter анимация удаления этого пузыря (см.
+    // _deleteMessages) — он невидим, но НЕ убран из дерева: Opacity 0
+    // держит за собой прежний размер/место в ленте, а частицы летят прямо
+    // поверх него, создавая впечатление, что сообщение само рассыпалось.
+    final isDissolving = _dissolvingMessageIds.contains(targetMsg.messageId);
+    final content = RepaintBoundary(
+      key: shatterKey,
+      child: IgnorePointer(
+        ignoring: isDissolving,
+        child: Opacity(
+          opacity: isDissolving ? 0 : 1,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [bubble, _reactionBadges(myReaction, peerReaction, isMine)],
+          ),
+        ),
+      ),
     );
 
     // Точка последнего onTapDown этого конкретного сообщения — локальная
@@ -3347,7 +3533,53 @@ class _ChatScreenState extends State<ChatScreen> {
     _textController.dispose();
     _textFocusNode.dispose();
     _scrollController.dispose();
+    if (!_isNotes) {
+      WebSocketService.instance.unsubscribePresence(_currentPeerDeviceId);
+    }
+    _presenceSub?.cancel();
+    _wsStatusSub?.cancel();
+    _presenceTickTimer?.cancel();
+    _peerTypingClearTimer?.cancel();
     super.dispose();
+  }
+
+  /// Заголовок обычной (не выбора) шапки чата — логин собеседника, а под
+  /// ним, по центру, статус: "печатает…" / "в сети" / когда был последний
+  /// раз (см. formatPresenceStatus). Для "Заметок" статуса нет и не будет —
+  /// это переписка с самим собой, там нечему быть "в сети".
+  Widget _buildAppBarTitle() {
+    final title = Text(
+      _isNotes
+          ? tr('home.notes')
+          : (_isPeerDeleted ? tr('home.deletedAccount') : widget.peerLogin),
+    );
+    if (_isNotes || _isPeerDeleted) return title;
+
+    final status = formatPresenceStatus(
+      typing: _peerTyping,
+      online: _peerOnline,
+      lastSeenMs: _peerLastSeenMs,
+    );
+    if (status.isEmpty) return title;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        title,
+        Text(
+          status,
+          style: TextStyle(
+            fontSize: 12,
+            color: _peerTyping
+                ? AppColors.primary
+                : Theme.of(context).appBarTheme.foregroundColor?.withValues(
+                    alpha: 0.7,
+                  ),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildPinnedBanner() {
@@ -3598,13 +3830,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     )
                   : AppBar(
                       key: const ValueKey('normal_appbar'),
-                      title: Text(
-                        _isNotes
-                            ? tr('home.notes')
-                            : (_isPeerDeleted
-                                  ? tr('home.deletedAccount')
-                                  : widget.peerLogin),
-                      ),
+                      centerTitle: true,
+                      title: _buildAppBarTitle(),
                       actions: _isNotes
                           ? null
                           : [
@@ -3952,7 +4179,11 @@ class _SelectionCheckmarkState extends State<_SelectionCheckmark>
         padding: const EdgeInsets.symmetric(horizontal: 6),
         child: Icon(
           widget.selected ? Icons.check_circle : Icons.radio_button_unchecked,
-          color: widget.selected ? AppColors.primary : AppColors.textMuted,
+          // Ярко-зелёный для выбранного — раньше был акцентный цвет темы
+          // (синеватый), из-за чего плохо отличался от остального UI.
+          color: widget.selected
+              ? const Color(0xFF00E676)
+              : AppColors.textMuted,
           size: 22,
         ),
       ),

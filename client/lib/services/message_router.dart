@@ -18,7 +18,7 @@ import 'websocket_service.dart';
 
 /// Служебные типы control-сообщений — синхронизируются как обычно, но не
 /// считаются "сообщением" для звукового уведомления (см. _processIncoming).
-const _silentTypes = {'reaction', 'pin', 'edit', 'delete'};
+const _silentTypes = {'reaction', 'pin', 'edit', 'delete', 'delete_chat'};
 
 class MessageRouter {
   static bool _started = false;
@@ -240,6 +240,11 @@ class MessageRouter {
         final targetIds =
             (data['target_ids'] as List<dynamic>?)?.cast<String>() ?? const [];
         await ChatStore.deleteMessages(ownerInfo.login, targetIds);
+      } else if (inner.type == 'delete_chat') {
+        // Собеседник удалил у себя весь диалог с галочкой "у обоих" — у нас
+        // тоже убираем сам чат из списка (см. InnerMessage.deleteChat), а не
+        // просто оставляем его пустым, как после обычной очистки истории.
+        await ChatStore.removeChat(ownerInfo.login);
       }
 
       // Реакция/пин/правка/удаление — служебные события, не самостоятельные
