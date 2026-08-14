@@ -10,6 +10,7 @@ import '../widgets/theme_reactive.dart';
 import 'home_placeholder_screen.dart';
 import '../device_setup.dart';
 import '../widgets/loading_overlay.dart';
+import 'forgot_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -140,6 +141,20 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       )
                     : Text(tr('welcome.login')),
+              ),
+              const SizedBox(height: 10),
+              TextButton(
+                onPressed: _isLoading
+                    ? null
+                    : () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const ForgotPasswordScreen(),
+                          ),
+                        );
+                      },
+                child: Text(tr('recovery.forgotPassword')),
               ),
             ],
           ),

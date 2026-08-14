@@ -172,8 +172,8 @@ class AppStrings {
       AppLocale.en: 'Failed to register',
     },
     'error.loginTaken': {
-      AppLocale.ru: 'Пользователь с таким логином уже существует',
-      AppLocale.en: 'A user with this login already exists',
+      AppLocale.ru: 'Пользователь с таким логином уже зарегистрирован',
+      AppLocale.en: 'A user with this login is already registered',
     },
     'error.wrongTotpCode': {
       AppLocale.ru: 'Неверный код подтверждения',
@@ -282,6 +282,70 @@ class AppStrings {
     'register.title': {
       AppLocale.ru: 'Регистрация',
       AppLocale.en: 'Registration',
+    },
+
+    'recovery.forgotPassword': {
+      AppLocale.ru: 'Забыли пароль?',
+      AppLocale.en: 'Forgot password?',
+    },
+    'recovery.title': {
+      AppLocale.ru: 'Восстановление пароля',
+      AppLocale.en: 'Password recovery',
+    },
+    'recovery.sendCode': {
+      AppLocale.ru: 'Отправить код',
+      AppLocale.en: 'Send code',
+    },
+    'recovery.requestSentInfo': {
+      AppLocale.ru:
+          'Если у аккаунта указана почта, на неё отправлен код восстановления',
+      AppLocale.en:
+          'If the account has an email on file, a recovery code has been sent to it',
+    },
+    'recovery.codeTitle': {
+      AppLocale.ru: 'Введите код',
+      AppLocale.en: 'Enter code',
+    },
+    'recovery.codeHint': {
+      AppLocale.ru: 'Код из письма',
+      AppLocale.en: 'Code from the email',
+    },
+    'recovery.confirmCode': {
+      AppLocale.ru: 'Подтвердить',
+      AppLocale.en: 'Confirm',
+    },
+    'recovery.newPasswordTitle': {
+      AppLocale.ru: 'Новый пароль',
+      AppLocale.en: 'New password',
+    },
+    'recovery.newPasswordHint': {
+      AppLocale.ru: 'Новый пароль',
+      AppLocale.en: 'New password',
+    },
+    'recovery.confirmPasswordHint': {
+      AppLocale.ru: 'Повторите пароль',
+      AppLocale.en: 'Confirm password',
+    },
+    'recovery.save': {AppLocale.ru: 'Сохранить', AppLocale.en: 'Save'},
+    'recovery.passwordsDontMatch': {
+      AppLocale.ru: 'Пароли не совпадают',
+      AppLocale.en: 'Passwords do not match',
+    },
+    'recovery.passwordTooShort': {
+      AppLocale.ru: 'Пароль слишком короткий (минимум 6 символов)',
+      AppLocale.en: 'Password is too short (minimum 6 characters)',
+    },
+    'recovery.success': {
+      AppLocale.ru: 'Пароль изменён, теперь можно войти',
+      AppLocale.en: 'Password changed, you can now log in',
+    },
+    'error.recoveryRequestFailed': {
+      AppLocale.ru: 'Не удалось отправить запрос',
+      AppLocale.en: 'Failed to send request',
+    },
+    'error.recoveryWrongCode': {
+      AppLocale.ru: 'Неверный или истёкший код',
+      AppLocale.en: 'Invalid or expired code',
     },
 
     'home.notes': {AppLocale.ru: 'Заметки', AppLocale.en: 'Notes'},

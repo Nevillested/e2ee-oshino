@@ -40,6 +40,56 @@ class ApiClient {
     return data['totp_url'] as String;
   }
 
+  /// POST /account/recover/request — запросить код восстановления пароля.
+  /// Сервер всегда отвечает 200 независимо от того, есть ли такой логин и
+  /// указана ли у него почта (см. комментарий на сервере) — поэтому здесь
+  /// нет отдельной обработки "не найдено"/"нет почты", ошибка возможна
+  /// только сетевая.
+  Future<void> requestPasswordRecovery(String login) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/account/recover/request'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'login': login}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.recoveryRequestFailed'));
+    }
+  }
+
+  /// POST /account/recover/verify — проверить код восстановления, не
+  /// расходуя его (реальная смена пароля — отдельный вызов ниже).
+  Future<void> verifyRecoveryCode(String login, String token) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/account/recover/verify'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'login': login, 'token': token}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.recoveryWrongCode'));
+    }
+  }
+
+  /// POST /account/recover/reset — задать новый пароль по коду
+  /// восстановления. Код на сервере одноразовый — расходуется этим вызовом.
+  Future<void> resetPasswordWithRecoveryCode(
+    String login,
+    String token,
+    String newPassword,
+  ) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/account/recover/reset'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'login': login,
+        'token': token,
+        'new_password': newPassword,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.recoveryWrongCode'));
+    }
+  }
+
   /// POST /verify-totp — подтверждение первого TOTP-кода после регистрации.
   Future<void> verifyTotp(String login, String code) async {
     final response = await http.post(

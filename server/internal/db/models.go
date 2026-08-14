@@ -53,6 +53,15 @@ type OneTimePrekey struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type PasswordResetToken struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	TokenHash string
+	ExpiresAt pgtype.Timestamptz
+	Attempts  int32
+	CreatedAt pgtype.Timestamptz
+}
+
 type PendingMessage struct {
 	ID         pgtype.UUID
 	ToDeviceID pgtype.UUID

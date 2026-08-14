@@ -89,7 +89,7 @@ func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 			//а не общее "ошибка регистрации".
 			var pgErr *pgconn.PgError
 			if errors.As(NewRegAccError, &pgErr) && pgErr.Code == "23505" {
-				http.Error(w, "Пользователь с таким логином уже существует", http.StatusConflict)
+				http.Error(w, "Пользователь с таким логином уже зарегистрирован", http.StatusConflict)
 				return
 			}
 			http.Error(w, "Ошибка регистрации аккаунта", http.StatusInternalServerError)
