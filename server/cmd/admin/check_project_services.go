@@ -1,9 +1,15 @@
 // check_project_services.go — пункт меню "Проверить состояние служб
-// проекта" в этой же утилите (см. main.go). Смотрит на всё, от чего
-// реально зависит работа приложения:
-//   - systemd-служба самого Go-сервера (oshinobu-server);
-//   - PostgreSQL — на этой же VPS (postgresql@18-main), просто слушает на
-//     приватном интерфейсе;
+// проекта" в этой же утилите (см. main.go). Список служб и портов сверен
+// по факту с сервером (systemctl list-units, ss -tlnp), а не угадан —
+// смотрит на всё, от чего реально зависит работа приложения:
+//   - systemd-служба самого Go-сервера (oshinobu-server) — и отдельно
+//     HTTP-запрос к его собственному /health, раз уж он есть: "процесс
+//     жив" и "отвечает на запросы" — разные вещи, процесс может висеть
+//     задеадлоченным, оставаясь formally "active" для systemd;
+//   - nginx — реверс-прокси перед oshinobu-server (порты 80/443);
+//   - PostgreSQL — на этой же VPS (postgresql@18-main), слушает на
+//     127.0.0.1:5432;
+//   - coturn — TURN/STUN-сервер для звонков (порт 3478);
 //   - e2ee-frps — FRP-сервер на этой VPS, принимает туннель от сетевого
 //     хранилища в Японии, где реально крутится MinIO; если эта служба
 //     упадёт, MinIO станет недоступен даже если сам NAS в полном порядке —
@@ -14,6 +20,10 @@
 //     раньше резался провайдером, стоит держать под наблюдением на случай,
 //     если блокировку внезапно вернут или что-то изменится на их стороне.
 //
+// Сознательно НЕ проверяются: общесистемные службы ОС (ssh, cron, chrony,
+// fail2ban, cloud-init и т.п.) — они не специфичны для проекта, это
+// заботы обычного администрирования сервера, а не эта утилита.
+//
 // Все проверки — только чтение/сетевые пробы, ничего не меняют.
 package main
 
@@ -21,6 +31,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -39,13 +50,45 @@ func runCheckServices(ctx context.Context) {
 	fmt.Println()
 
 	checkSystemdService("oshinobu-server")
+	checkAppHealth(ctx)
+	checkSystemdService("nginx")
 	checkSystemdService("postgresql@18-main")
 	checkPostgres(ctx)
+	checkSystemdService("coturn")
 	checkSystemdService("e2ee-frps")
 	checkMinio(ctx)
 	checkSMTP()
 
 	fmt.Println()
+}
+
+// checkAppHealth — реальный HTTP-запрос к собственному /health сервера
+// (см. api.NewHealthHandler в main.go), в обход nginx, напрямую на
+// localhost:8080 — тот же порт, что слушает сам процесс (см. ss -tlnp на
+// сервере). Отличает "процесс жив по мнению systemd" от "реально отвечает
+// на запросы".
+func checkAppHealth(ctx context.Context) {
+	ctxTimeout, cancel := context.WithTimeout(ctx, serviceCheckTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctxTimeout, http.MethodGet, "http://localhost:8080/health", nil)
+	if err != nil {
+		printResult("oshinobu-server /health", false, err.Error())
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		printResult("oshinobu-server /health", false, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		printResult("oshinobu-server /health", false, fmt.Sprintf("ответил статусом %d", resp.StatusCode))
+		return
+	}
+	printResult("oshinobu-server /health", true, "отвечает 200 OK")
 }
 
 // checkSystemdService — active говорит "работает прямо сейчас", enabled —
