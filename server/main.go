@@ -91,6 +91,7 @@ func main() {
 	mux.HandleFunc("POST /account/email/confirm", api.NewConfirmEmailVerificationHandler(queries))
 	mux.HandleFunc("POST /account/avatar", api.NewUploadAvatarHandler(queries, minioClient))
 	mux.HandleFunc("DELETE /account/avatar", api.NewDeleteAvatarHandler(queries, minioClient))
+	mux.HandleFunc("GET /account/avatar", api.NewGetMyAvatarHandler(queries, minioClient))
 	mux.HandleFunc("GET /account/avatar/{account_id}", api.NewGetAvatarHandler(queries, minioClient))
 	mux.HandleFunc("POST /chats/mute", api.NewMuteChatHandler(queries))
 	mux.HandleFunc("POST /chats/unmute", api.NewUnmuteChatHandler(queries))

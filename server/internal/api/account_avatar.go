@@ -100,6 +100,36 @@ func NewDeleteAvatarHandler(queries *db.Queries, minioClient *minio.Client) func
 	}
 }
 
+// serveAvatar — общая часть для "отдать аватар по id" и "отдать СВОЙ
+// аватар": ищет ключ объекта в БД и стримит сам файл из MinIO.
+func serveAvatar(ctx context.Context, w http.ResponseWriter, queries *db.Queries, minioClient *minio.Client, accountID pgtype.UUID) {
+	var avatarKey, SqlErr = queries.GetAccountAvatarKey(ctx, accountID)
+	if SqlErr != nil {
+		if errors.Is(SqlErr, pgx.ErrNoRows) {
+			http.Error(w, "Аккаунт не найден", http.StatusNotFound)
+		} else {
+			http.Error(w, "Ошибка поиска аккаунта", http.StatusInternalServerError)
+		}
+		return
+	}
+	if !avatarKey.Valid {
+		http.Error(w, "У аккаунта нет фото профиля", http.StatusNotFound)
+		return
+	}
+
+	object, ObjErr := minioClient.GetObject(ctx, os.Getenv("MINIO_BUCKET"), avatarKey.String, minio.GetObjectOptions{})
+	if ObjErr != nil {
+		http.Error(w, "Ошибка получения файла", http.StatusInternalServerError)
+		return
+	}
+	defer object.Close()
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	if _, CopyErr := io.Copy(w, object); CopyErr != nil {
+		log.Printf("ошибка отдачи аватара: %v", CopyErr)
+	}
+}
+
 // Отдать аватар любого аккаунта по его ID — доступ проверяем только на
 // уровне "это вообще авторизованный пользователь приложения" (как и
 // остальные запросы), без дополнительных ограничений: фото профиля не
@@ -118,30 +148,26 @@ func NewGetAvatarHandler(queries *db.Queries, minioClient *minio.Client) func(ht
 			return
 		}
 
-		var avatarKey, SqlErr = queries.GetAccountAvatarKey(r.Context(), accountID)
-		if SqlErr != nil {
-			if errors.Is(SqlErr, pgx.ErrNoRows) {
-				http.Error(w, "Аккаунт не найден", http.StatusNotFound)
-			} else {
-				http.Error(w, "Ошибка поиска аккаунта", http.StatusInternalServerError)
-			}
-			return
-		}
-		if !avatarKey.Valid {
-			http.Error(w, "У аккаунта нет фото профиля", http.StatusNotFound)
+		serveAvatar(r.Context(), w, queries, minioClient, accountID)
+	}
+}
+
+// Отдать СВОЙ аватар — account_id берётся из сессии (токена), а не из
+// того, что прислал клиент. Существует ИМЕННО из-за того, что локальный
+// кэш account_id на клиенте (см. Session.getAccountId на клиенте) может
+// устареть (например, после пересоздания аккаунтов при чистке базы) и
+// разойтись с тем, что реально означает текущий токен — раньше клиент для
+// "своего" аватара пользовался тем же GET /account/avatar/{account_id},
+// что и для чужих, подставляя туда СВОЙ закэшированный (и потенциально
+// битый) id; этот эндпоинт делает то же самое, что уже работает для
+// загрузки/удаления — доверяет только токену.
+func NewGetMyAvatarHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var Session, err = CheckToken(w, r, queries)
+		if err != nil {
 			return
 		}
 
-		object, ObjErr := minioClient.GetObject(r.Context(), os.Getenv("MINIO_BUCKET"), avatarKey.String, minio.GetObjectOptions{})
-		if ObjErr != nil {
-			http.Error(w, "Ошибка получения файла", http.StatusInternalServerError)
-			return
-		}
-		defer object.Close()
-
-		w.Header().Set("Content-Type", "image/jpeg")
-		if _, CopyErr := io.Copy(w, object); CopyErr != nil {
-			log.Printf("ошибка отдачи аватара: %v", CopyErr)
-		}
+		serveAvatar(r.Context(), w, queries, minioClient, Session.AccountID)
 	}
 }
