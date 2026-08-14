@@ -1,15 +1,13 @@
 package api
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"log"
 	"net/http"
+	"server/internal/auth"
 	"server/internal/db"
 
 	"github.com/pquerna/otp/totp"
-	"golang.org/x/crypto/argon2"
 )
 
 type RegisterRequest struct {
@@ -39,21 +37,15 @@ func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 			return
 		}
 
-		//make - это  встроенная функция Go которая используется для создания срезов байт нужного размера. В данном случае мы создаем срез байт длиной 16, который будет использоваться для хранения случайного ключа.
-		var salt = make([]byte, 16)
+		//хеширование пароля (argon2id + соль, формат "hash$salt") — общая
+		//функция в internal/auth, её же использует ручной сброс пароля в
+		//cmd/admin, чтобы параметры хеширования не могли разойтись.
+		var NewHashSalt, HashError = auth.HashPassword(newRegisterRequest.Password)
 
-		//rand.Read - это функция из пакета crypto/rand, которая заполняет срез байт случайными значениями. Она использует криптографически безопасный генератор случайных чисел, что делает её подходящей для генерации ключей и других чувствительных данных.
-		//по сути - мы делаем случаный ключ длиной 16 байт, который будет использоваться в качестве соли для хэширования пароля
-		rand.Read(salt)
-
-		//за параметры смотри доку https://pkg.go.dev/golang.org/x/crypto/argon2
-		hash := argon2.IDKey([]byte(newRegisterRequest.Password), salt, 1, 64*1024, 4, 32)
-
-		var hashS string = base64.StdEncoding.EncodeToString(hash)
-
-		var saltS string = base64.StdEncoding.EncodeToString(salt)
-
-		var NewHashSalt string = hashS + "$" + saltS
+		if HashError != nil {
+			http.Error(w, "Ошибка хеширования пароля", http.StatusInternalServerError)
+			return
+		}
 
 		//создаем структуру для генерации ключа TOTP (Time-based One-Time Password), который будет использоваться для двухфакторной аутентификации. В структуре указываем имя нашего приложения и имя аккаунта (AccountName), которые будут отображаться в приложении для генерации одноразовых паролей (например, Google Authenticator).
 		var NewGenerateOptions = totp.GenerateOpts{Issuer: "OShinobu", AccountName: newRegisterRequest.Login}

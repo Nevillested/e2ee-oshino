@@ -140,3 +140,31 @@ func (q *Queries) UpdateAccountLanguage(ctx context.Context, arg UpdateAccountLa
 	_, err := q.db.Exec(ctx, updateAccountLanguage, arg.ID, arg.Language)
 	return err
 }
+
+const updateAccountPasswordHash = `-- name: UpdateAccountPasswordHash :exec
+UPDATE accounts SET password_hash = $2 WHERE id = $1
+`
+
+type UpdateAccountPasswordHashParams struct {
+	ID           pgtype.UUID
+	PasswordHash string
+}
+
+func (q *Queries) UpdateAccountPasswordHash(ctx context.Context, arg UpdateAccountPasswordHashParams) error {
+	_, err := q.db.Exec(ctx, updateAccountPasswordHash, arg.ID, arg.PasswordHash)
+	return err
+}
+
+const updateAccountTotpSecret = `-- name: UpdateAccountTotpSecret :exec
+UPDATE accounts SET totp_secret = $2 WHERE id = $1
+`
+
+type UpdateAccountTotpSecretParams struct {
+	ID         pgtype.UUID
+	TotpSecret string
+}
+
+func (q *Queries) UpdateAccountTotpSecret(ctx context.Context, arg UpdateAccountTotpSecretParams) error {
+	_, err := q.db.Exec(ctx, updateAccountTotpSecret, arg.ID, arg.TotpSecret)
+	return err
+}

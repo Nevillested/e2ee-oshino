@@ -23,3 +23,9 @@ UPDATE accounts SET avatar_object_key = $2 WHERE id = $1;
 
 -- name: GetAccountAvatarKey :one
 SELECT avatar_object_key FROM accounts WHERE id = $1;
+
+-- name: UpdateAccountPasswordHash :exec
+UPDATE accounts SET password_hash = $2 WHERE id = $1;
+
+-- name: UpdateAccountTotpSecret :exec
+UPDATE accounts SET totp_secret = $2 WHERE id = $1;
