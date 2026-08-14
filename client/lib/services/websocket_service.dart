@@ -44,6 +44,7 @@ class WebSocketService {
   final _presenceController =
       StreamController<Map<String, dynamic>>.broadcast();
   final _blockStatusController = StreamController<void>.broadcast();
+  final _avatarChangedController = StreamController<String>.broadcast();
 
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
   Stream<Map<String, dynamic>> get callSignals => _callController.stream;
@@ -57,6 +58,12 @@ class WebSocketService {
   // перезапрашивают актуальное состояние (см. ApiClient.getBlockedContacts)
   // вместо того чтобы ждать следующего открытия чата.
   Stream<void> get blockStatusEvents => _blockStatusController.stream;
+  // "avatar_changed" — у кого-то (см. AccountId в самом сообщении)
+  // поменялось фото профиля (см. notifyAvatarChanged на сервере) — тоже
+  // без реального фото внутри, только account_id, для которого нужно
+  // сбросить локальный кэш (см. AvatarCache.invalidate) и перезапросить
+  // заново.
+  Stream<String> get avatarChangedEvents => _avatarChangedController.stream;
   bool get isConnected => _channel != null;
 
   final _sessionInvalidController = StreamController<void>.broadcast();
@@ -145,6 +152,12 @@ class WebSocketService {
 
           if (type == 'block_status_changed') {
             _blockStatusController.add(null);
+            return;
+          }
+
+          if (type == 'avatar_changed') {
+            final accountId = outer['AccountId'] as String?;
+            if (accountId != null) _avatarChangedController.add(accountId);
             return;
           }
 

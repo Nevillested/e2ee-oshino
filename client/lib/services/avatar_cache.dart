@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import '../api/api_client.dart';
 import '../session.dart';
@@ -30,6 +31,17 @@ class AvatarCache {
   // загрузил новое фото. TTL — простой, без нового серверного сигнала,
   // способ рано или поздно (в течение нескольких минут) это заметить.
   static const _ttl = Duration(minutes: 3);
+
+  // Живой сигнал (см. WebSocketService.avatarChangedEvents/home_placeholder_
+  // screen.dart) вызывает invalidate() сразу же — TTL выше остаётся только
+  // подстраховкой на случай, если этот сигнал по какой-то причине не
+  // дошёл (например, оба устройства были офлайн в момент отправки).
+  // Виджеты, показывающие ЧУЖОЙ аватар (см. _OtherAvatarLeading в
+  // home_placeholder_screen.dart, шапка чата в chat_screen.dart),
+  // слушают этот стрим и перезапрашивают немедленно, а не ждут, пока их
+  // FutureBuilder сам когда-нибудь перестроится.
+  static final _changesController = StreamController<String>.broadcast();
+  static Stream<String> get changes => _changesController.stream;
 
   /// null — либо у аккаунта нет фото, либо запрос не удался; вызывающая
   /// сторона в обоих случаях показывает заглушку, различать не нужно.
@@ -69,5 +81,6 @@ class AvatarCache {
     _cache.remove(accountId);
     _cachedAt.remove(accountId);
     _generation[accountId] = (_generation[accountId] ?? 0) + 1;
+    _changesController.add(accountId);
   }
 }

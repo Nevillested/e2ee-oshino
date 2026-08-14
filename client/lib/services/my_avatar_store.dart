@@ -46,14 +46,12 @@ class MyAvatarStore {
   /// Сразу после успешной загрузки нового фото — без похода на сервер за
   /// тем, что мы туда только что сами и отправили.
   static void setUploaded(Uint8List bytes) {
-    debugPrint('MyAvatarStore.setUploaded: ${bytes.length} байт');
     notifier.value = bytes;
   }
 
   /// Сразу после успешного удаления — тем же принципом: сами знаем
   /// результат, повторно спрашивать сервер незачем.
   static void setRemoved() {
-    debugPrint('MyAvatarStore.setRemoved');
     notifier.value = null;
   }
 }

@@ -55,7 +55,14 @@ class MessageRouter {
 
       if (state == null) {
         final rootKey = await establishIncomingSessionRaw(envelope);
-        if (rootKey == null) return;
+        if (rootKey == null) {
+          debugPrint(
+            'MessageRouter: нет локальной сессии для senderDeviceId='
+            '$senderDeviceId, а конверт не содержит данных для нового '
+            'X3DH-хендшейка — сообщение отброшено, расшифровать нечем',
+          );
+          return;
+        }
         await PeerIdentityStore.save(
           senderDeviceId,
           envelope['sender_identity_dh_pubkey'] as String,

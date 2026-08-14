@@ -88,6 +88,13 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
     _webSocketService.blockStatusEvents.listen(
       (_) => unawaited(_syncBlockedContacts(token)),
     );
+    // Живой сигнал "у кого-то поменялось фото профиля" (см.
+    // notifyAvatarChanged на сервере) — сбрасываем локальный кэш для этого
+    // account_id сразу же (см. AvatarCache.invalidate), а не ждём, пока
+    // истечёт TTL (тот остаётся только подстраховкой на случай пропущенного
+    // сигнала). Своё же фото сюда не попадает — оно живёт в MyAvatarStore,
+    // не в AvatarCache.
+    _webSocketService.avatarChangedEvents.listen(AvatarCache.invalidate);
 
     CallService.instance.startListening();
 
@@ -724,6 +731,25 @@ class _OtherAvatarLeading extends StatefulWidget {
 
 class _OtherAvatarLeadingState extends State<_OtherAvatarLeading> {
   late Future<Uint8List?> _future = _resolve();
+  StreamSubscription<String>? _changesSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenForChanges();
+  }
+
+  // Живой сигнал (см. AvatarCache.changes/_connect() в этом файле) — если
+  // ИМЕННО этот accountId только что обновился где-то ещё, перезапрашиваем
+  // сразу, а не ждём, пока строка списка перестроится сама по себе (а без
+  // смены accountId она бы и не перестроилась).
+  void _listenForChanges() {
+    _changesSub = AvatarCache.changes.listen((changedId) {
+      if (changedId == widget.accountId && mounted) {
+        setState(() => _future = _resolve());
+      }
+    });
+  }
 
   Future<Uint8List?> _resolve() async {
     final id = widget.accountId;
@@ -737,6 +763,12 @@ class _OtherAvatarLeadingState extends State<_OtherAvatarLeading> {
     if (old.accountId != widget.accountId) {
       _future = _resolve();
     }
+  }
+
+  @override
+  void dispose() {
+    _changesSub?.cancel();
+    super.dispose();
   }
 
   @override

@@ -118,8 +118,10 @@ class _ChatScreenState extends State<ChatScreen> {
   // Вычисляется один раз в initState — не через FutureBuilder(future: ...)
   // прямо в build(), иначе каждая перестройка шапки (например, тик статуса
   // "N минут назад" раз в 30с) гоняла бы новый сетевой запрос за одной и
-  // той же аватаркой.
-  late final Future<Uint8List?>? _peerAvatarFuture;
+  // той же аватаркой. НЕ final — обновляется живым сигналом avatar_changed,
+  // см. _avatarChangedSub.
+  Future<Uint8List?>? _peerAvatarFuture;
+  StreamSubscription<String>? _avatarChangedSub;
 
   String _currentPeerDeviceId = '';
   Map<String, dynamic>? _pendingInitHeader;
@@ -392,6 +394,16 @@ class _ChatScreenState extends State<ChatScreen> {
     _peerAvatarFuture = (_isNotes || widget.peerAccountId.isEmpty)
         ? null
         : AvatarCache.get(widget.peerAccountId);
+    // Живой сигнал (см. AvatarCache.changes) — если СОБЕСЕДНИК только что
+    // поменял фото, пока этот чат открыт, шапка обновится сразу же, а не
+    // при следующем открытии экрана.
+    if (!_isNotes && widget.peerAccountId.isNotEmpty) {
+      _avatarChangedSub = AvatarCache.changes.listen((changedId) {
+        if (changedId == widget.peerAccountId && mounted) {
+          setState(() => _peerAvatarFuture = AvatarCache.get(changedId));
+        }
+      });
+    }
     _textFocusNode.addListener(_onFocusChange);
     _textController.addListener(_onTextChanged);
     _loadKnownDeletedStatus();
@@ -3907,6 +3919,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _presenceSub?.cancel();
     _wsStatusSub?.cancel();
     _blockStatusSub?.cancel();
+    _avatarChangedSub?.cancel();
     _presenceTickTimer?.cancel();
     _peerTypingClearTimer?.cancel();
     super.dispose();
