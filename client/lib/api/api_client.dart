@@ -41,16 +41,20 @@ class ApiClient {
   }
 
   /// POST /account/recover/request — запросить код восстановления пароля.
-  /// Сервер всегда отвечает 200 независимо от того, есть ли такой логин и
-  /// указана ли у него почта (см. комментарий на сервере) — поэтому здесь
-  /// нет отдельной обработки "не найдено"/"нет почты", ошибка возможна
-  /// только сетевая.
+  /// Сервер различает три исхода отдельными статусами: 404 — такого логина
+  /// нет, 422 — логин есть, но почта не указана, 200 — код отправлен.
   Future<void> requestPasswordRecovery(String login) async {
     final response = await http.post(
       Uri.parse('${ApiConfig.baseUrl}/account/recover/request'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'login': login}),
     );
+    if (response.statusCode == 404) {
+      throw ApiException(tr('error.recoveryUserNotFound'));
+    }
+    if (response.statusCode == 422) {
+      throw ApiException(tr('error.recoveryNoEmailOnFile'));
+    }
     if (response.statusCode != 200) {
       throw ApiException(tr('error.recoveryRequestFailed'));
     }
@@ -262,6 +266,23 @@ class ApiClient {
     );
     if (response.statusCode != 200) {
       throw ApiException(tr('error.languageSaveFailed'));
+    }
+  }
+
+  /// PUT /account/password — смена пароля внутри уже открытого аккаунта
+  /// (настройки). Старый пароль не нужен — токен сессии уже подтверждает
+  /// личность.
+  Future<void> changePassword(String token, String newPassword) async {
+    final response = await http.put(
+      Uri.parse('${ApiConfig.baseUrl}/account/password'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'new_password': newPassword}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.changePasswordFailed'));
     }
   }
 

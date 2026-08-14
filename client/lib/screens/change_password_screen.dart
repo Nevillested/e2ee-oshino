@@ -1,30 +1,24 @@
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
+import '../session.dart';
 import '../theme/app_theme.dart';
 import '../utils/password_validator.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/theme_reactive.dart';
-import 'login_screen.dart';
 
-/// Финальный шаг восстановления — новый пароль. token здесь — тот же код
-/// из письма (см. RecoveryCodeScreen): сервер на /account/recover/reset
-/// перепроверяет его заново и расходует одноразово при успехе.
-class SetNewPasswordScreen extends StatefulWidget {
-  final String login;
-  final String token;
-
-  const SetNewPasswordScreen({
-    super.key,
-    required this.login,
-    required this.token,
-  });
+/// Смена пароля внутри уже открытого аккаунта (настройки) — только новый
+/// пароль и его подтверждение, старый пароль не спрашиваем: раз
+/// пользователь уже вошёл (валидный токен сессии), личность уже
+/// подтверждена самим фактом входа.
+class ChangePasswordScreen extends StatefulWidget {
+  const ChangePasswordScreen({super.key});
 
   @override
-  State<SetNewPasswordScreen> createState() => _SetNewPasswordScreenState();
+  State<ChangePasswordScreen> createState() => _ChangePasswordScreenState();
 }
 
-class _SetNewPasswordScreenState extends State<SetNewPasswordScreen> {
+class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
   final _apiClient = ApiClient();
@@ -58,23 +52,14 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen> {
     });
 
     try {
-      await _apiClient.resetPasswordWithRecoveryCode(
-        widget.login,
-        widget.token,
-        password,
-      );
+      final token = await Session.getToken();
+      if (token == null) return;
+      await _apiClient.changePassword(token, password);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr('recovery.success'))),
+        SnackBar(content: Text(tr('changePassword.success'))),
       );
-      // Убираем со стека весь путь восстановления (логин → код → этот
-      // экран) — назад из LoginScreen должно попадать сразу на самый
-      // первый экран (регистрация/вход), как и обычно.
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
-        (route) => route.isFirst,
-      );
+      Navigator.pop(context);
     } catch (e) {
       setState(() {
         _errorText = e.toString();
@@ -95,7 +80,7 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen> {
 
   Widget _build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(tr('recovery.newPasswordTitle'))),
+      appBar: AppBar(title: Text(tr('changePassword.title'))),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),

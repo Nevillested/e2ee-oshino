@@ -7,6 +7,7 @@ import '../widgets/default_reaction_dialog.dart';
 import '../widgets/email_dialog.dart';
 import '../widgets/language_dialog.dart';
 import '../widgets/theme_dialog.dart';
+import 'change_password_screen.dart';
 
 /// Содержимое "обратной стороны" HomePlaceholderScreen (см.
 /// _buildFlippableBody там) — сам список пунктов настроек, без Scaffold и
@@ -27,6 +28,19 @@ class SettingsContent extends StatelessWidget {
             style: TextStyle(color: AppColors.textPrimary),
           ),
           onTap: () => showEmailDialog(context),
+        ),
+        ListTile(
+          leading: Icon(Icons.lock_outline, color: AppColors.textMuted),
+          title: Text(
+            tr('settings.changePassword'),
+            style: TextStyle(color: AppColors.textPrimary),
+          ),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const ChangePasswordScreen(),
+            ),
+          ),
         ),
         ListTile(
           leading: Icon(

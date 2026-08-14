@@ -28,10 +28,15 @@ type RecoverRequestRequest struct {
 
 // NewRecoverRequestHandler — POST /account/recover/request. Публичный
 // эндпоинт (без токена сессии — пользователь как раз потому сюда и
-// пришёл, что не может залогиниться). Всегда отвечает 200 с одинаковым
-// телом, независимо от того, нашёлся аккаунт и указана ли у него почта —
-// иначе по разнице ответов можно было бы перебором узнавать, какие логины
-// вообще существуют в системе.
+// пришёл, что не может залогиниться).
+//
+// По явному запросу пользователя (владельца продукта) этот эндпоинт
+// СОЗНАТЕЛЬНО различает "логин не найден" и "успех" отдельными кодами
+// ответа — раньше оба случая маскировались под одинаковый 200 именно
+// чтобы не палить существование логина, но регистрация (см. register.go,
+// 409 "уже зарегистрирован") и так уже даёт способ проверить занятость
+// логина, так что смысла продолжать маскировать здесь не осталось, а вот
+// понятная ошибка "такого пользователя нет" пользователю сильно нужнее.
 func NewRecoverRequestHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var Req RecoverRequestRequest
@@ -42,30 +47,44 @@ func NewRecoverRequestHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 
 		login := strings.TrimSpace(Req.Login)
 		account, err := queries.GetAccountByLogin(r.Context(), login)
-		if err == nil && account.Email.Valid {
-			token, genErr := auth.GenerateRecoveryToken()
-			if genErr != nil {
-				log.Printf("не удалось сгенерировать код восстановления: %v", genErr)
-			} else {
-				// Одна активная попытка восстановления за раз — новый запрос
-				// аннулирует прежний код (и его счётчик попыток).
-				_ = queries.DeletePasswordResetTokensForAccount(r.Context(), account.ID)
+		if err != nil {
+			http.Error(w, "Пользователь с таким логином не найден", http.StatusNotFound)
+			return
+		}
+		if !account.Email.Valid {
+			http.Error(w, "У аккаунта не указана почта для восстановления", http.StatusUnprocessableEntity)
+			return
+		}
 
-				_, createErr := queries.CreatePasswordResetToken(r.Context(), db.CreatePasswordResetTokenParams{
-					AccountID: account.ID,
-					TokenHash: hashRecoveryToken(token),
-					ExpiresAt: pgtype.Timestamptz{
-						Time:             time.Now().Add(recoveryTokenTTL),
-						InfinityModifier: pgtype.Finite,
-						Valid:            true,
-					},
-				})
-				if createErr != nil {
-					log.Printf("не удалось сохранить код восстановления: %v", createErr)
-				} else if sendErr := mail.SendPasswordResetCode(account.Email.String, token); sendErr != nil {
-					log.Printf("не удалось отправить письмо восстановления: %v", sendErr)
-				}
-			}
+		token, genErr := auth.GenerateRecoveryToken()
+		if genErr != nil {
+			log.Printf("не удалось сгенерировать код восстановления: %v", genErr)
+			http.Error(w, "Ошибка генерации кода", http.StatusInternalServerError)
+			return
+		}
+
+		// Одна активная попытка восстановления за раз — новый запрос
+		// аннулирует прежний код (и его счётчик попыток).
+		_ = queries.DeletePasswordResetTokensForAccount(r.Context(), account.ID)
+
+		_, createErr := queries.CreatePasswordResetToken(r.Context(), db.CreatePasswordResetTokenParams{
+			AccountID: account.ID,
+			TokenHash: hashRecoveryToken(token),
+			ExpiresAt: pgtype.Timestamptz{
+				Time:             time.Now().Add(recoveryTokenTTL),
+				InfinityModifier: pgtype.Finite,
+				Valid:            true,
+			},
+		})
+		if createErr != nil {
+			log.Printf("не удалось сохранить код восстановления: %v", createErr)
+			http.Error(w, "Ошибка сохранения кода", http.StatusInternalServerError)
+			return
+		}
+		if sendErr := mail.SendPasswordResetCode(account.Email.String, token); sendErr != nil {
+			log.Printf("не удалось отправить письмо восстановления: %v", sendErr)
+			http.Error(w, "Не удалось отправить письмо", http.StatusInternalServerError)
+			return
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -127,8 +146,8 @@ func NewRecoverResetHandler(queries *db.Queries) func(http.ResponseWriter, *http
 			return
 		}
 
-		if len(Req.NewPassword) < 6 {
-			http.Error(w, "Пароль слишком короткий", http.StatusBadRequest)
+		if PolicyErr := auth.ValidatePassword(Req.NewPassword); PolicyErr != nil {
+			http.Error(w, PolicyErr.Error(), http.StatusBadRequest)
 			return
 		}
 

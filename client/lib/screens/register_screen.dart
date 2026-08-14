@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
+import '../utils/password_validator.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/theme_reactive.dart';
 import 'verify_totp_screen.dart';
@@ -32,6 +33,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _handleRegister() async {
     FocusScope.of(context).unfocus();
+
+    final policyError = validatePassword(_passwordController.text);
+    if (policyError != null) {
+      setState(() => _errorText = policyError);
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _errorText = null;
@@ -102,6 +110,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     });
                   },
                 ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                tr('password.requirementsHint'),
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
               if (_errorText != null) ...[
                 const SizedBox(height: 14),

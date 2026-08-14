@@ -331,10 +331,6 @@ class AppStrings {
       AppLocale.ru: 'Пароли не совпадают',
       AppLocale.en: 'Passwords do not match',
     },
-    'recovery.passwordTooShort': {
-      AppLocale.ru: 'Пароль слишком короткий (минимум 6 символов)',
-      AppLocale.en: 'Password is too short (minimum 6 characters)',
-    },
     'recovery.success': {
       AppLocale.ru: 'Пароль изменён, теперь можно войти',
       AppLocale.en: 'Password changed, you can now log in',
@@ -346,6 +342,91 @@ class AppStrings {
     'error.recoveryWrongCode': {
       AppLocale.ru: 'Неверный или истёкший код',
       AppLocale.en: 'Invalid or expired code',
+    },
+    'error.recoveryUserNotFound': {
+      AppLocale.ru: 'Пользователь с таким логином не найден',
+      AppLocale.en: 'No user found with this login',
+    },
+    'error.recoveryNoEmailOnFile': {
+      AppLocale.ru: 'У этого аккаунта не указана почта для восстановления',
+      AppLocale.en: 'This account has no recovery email on file',
+    },
+    'error.changePasswordFailed': {
+      AppLocale.ru: 'Не удалось изменить пароль',
+      AppLocale.en: 'Failed to change password',
+    },
+
+    'password.tooShort': {
+      AppLocale.ru: 'Пароль должен быть не короче 6 символов',
+      AppLocale.en: 'Password must be at least 6 characters long',
+    },
+    'password.needUpper': {
+      AppLocale.ru: 'Пароль должен содержать хотя бы одну заглавную букву',
+      AppLocale.en: 'Password must contain at least one uppercase letter',
+    },
+    'password.needLower': {
+      AppLocale.ru: 'Пароль должен содержать хотя бы одну строчную букву',
+      AppLocale.en: 'Password must contain at least one lowercase letter',
+    },
+    'password.needDigit': {
+      AppLocale.ru: 'Пароль должен содержать хотя бы одну цифру',
+      AppLocale.en: 'Password must contain at least one digit',
+    },
+    'password.needSpecial': {
+      AppLocale.ru: 'Пароль должен содержать хотя бы один специальный символ',
+      AppLocale.en: 'Password must contain at least one special character',
+    },
+    'password.requirementsHint': {
+      AppLocale.ru:
+          'Не менее 6 символов, заглавная и строчная буквы, цифра и спецсимвол',
+      AppLocale.en:
+          'At least 6 characters, upper- and lowercase letters, a digit and a special character',
+    },
+
+    'recovery.chooseTitle': {
+      AppLocale.ru: 'Как будем восстанавливать?',
+      AppLocale.en: 'How do you want to recover it?',
+    },
+    'recovery.hasEmailButton': {
+      AppLocale.ru: 'Я указывал(а) email для восстановления пароля',
+      AppLocale.en: 'I set an email for password recovery',
+    },
+    'recovery.noEmailButton': {
+      AppLocale.ru: 'Я не указывал(а) email для восстановления пароля',
+      AppLocale.en: "I didn't set an email for password recovery",
+    },
+    'recovery.noEmailTitle': {
+      AppLocale.ru: 'Обратитесь в поддержку',
+      AppLocale.en: 'Contact support',
+    },
+    'recovery.noEmailBody': {
+      AppLocale.ru:
+          'Свяжитесь со службой технической поддержки support@oshino.space.\n\n'
+          'Тема письма: «Забыл пароль к учётной записи».\n\n'
+          'В теле письма опишите по возможности абсолютно всё, что помните об '
+          'аккаунте. В восстановлении доступа поможет любая деталь.',
+      AppLocale.en:
+          'Contact technical support at support@oshino.space.\n\n'
+          'Subject: "Forgot my account password".\n\n'
+          'In the body, describe absolutely everything you remember about the '
+          'account. Any detail can help restore access.',
+    },
+    'recovery.copyEmail': {
+      AppLocale.ru: 'Скопировать адрес',
+      AppLocale.en: 'Copy address',
+    },
+
+    'settings.changePassword': {
+      AppLocale.ru: 'Изменить пароль',
+      AppLocale.en: 'Change password',
+    },
+    'changePassword.title': {
+      AppLocale.ru: 'Изменение пароля',
+      AppLocale.en: 'Change password',
+    },
+    'changePassword.success': {
+      AppLocale.ru: 'Пароль изменён',
+      AppLocale.en: 'Password changed',
     },
 
     'home.notes': {AppLocale.ru: 'Заметки', AppLocale.en: 'Notes'},

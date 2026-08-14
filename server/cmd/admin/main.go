@@ -174,8 +174,8 @@ func resetPassword(ctx context.Context, queries *db.Queries, reader *bufio.Reade
 		fmt.Println("Пароли не совпадают, отменено.")
 		return
 	}
-	if len(strings.TrimSpace(string(pw1))) < 6 {
-		fmt.Println("Пароль слишком короткий (минимум 6 символов), отменено.")
+	if PolicyErr := auth.ValidatePassword(string(pw1)); PolicyErr != nil {
+		fmt.Printf("%v, отменено.\n", PolicyErr)
 		return
 	}
 

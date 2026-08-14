@@ -6,11 +6,10 @@ import '../widgets/auth_text_field.dart';
 import '../widgets/theme_reactive.dart';
 import 'recovery_code_screen.dart';
 
-/// Первый шаг восстановления пароля — ввод логина. Сервер всегда отвечает
-/// одинаково независимо от того, нашёлся аккаунт и указана ли у него почта
-/// (см. NewRecoverRequestHandler на сервере) — поэтому здесь нет отдельной
-/// ветки "логин не найден", всегда просто переходим дальше с одинаковым
-/// информационным текстом.
+/// Шаг восстановления пароля (ветка "почта указывалась") — ввод логина.
+/// Сервер отдельно сообщает и "такого логина нет", и "у аккаунта не
+/// указана почта" (см. NewRecoverRequestHandler) — ApiClient превращает
+/// это в понятный текст ошибки, ловим его ниже как обычно.
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
 

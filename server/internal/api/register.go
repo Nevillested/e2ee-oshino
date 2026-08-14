@@ -39,6 +39,13 @@ func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 			return
 		}
 
+		//единые требования к паролю — та же проверка, что и при восстановлении
+		//пароля и смене пароля в настройках (см. auth.ValidatePassword).
+		if PolicyErr := auth.ValidatePassword(newRegisterRequest.Password); PolicyErr != nil {
+			http.Error(w, PolicyErr.Error(), http.StatusBadRequest)
+			return
+		}
+
 		//хеширование пароля (argon2id + соль, формат "hash$salt") — общая
 		//функция в internal/auth, её же использует ручной сброс пароля в
 		//cmd/admin, чтобы параметры хеширования не могли разойтись.
