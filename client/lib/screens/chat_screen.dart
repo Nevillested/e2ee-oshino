@@ -31,10 +31,12 @@ import '../screens/call_screen.dart';
 import '../screens/camera_capture_screen.dart';
 import '../screens/media_viewer_screen.dart';
 import '../services/active_chat_tracker.dart';
+import '../services/avatar_cache.dart';
 import '../services/call_service.dart';
 import '../services/chat_scroll_position_store.dart';
 import '../services/keyboard_height_store.dart';
 import '../services/media_asset_cache.dart';
+import '../services/my_avatar_store.dart';
 import '../services/send_lock.dart';
 import '../services/websocket_service.dart';
 import '../session.dart';
@@ -46,6 +48,7 @@ import '../theme/app_theme.dart';
 import '../utils/presence_format.dart';
 import '../utils/time_format.dart';
 import '../storage/default_reaction_store.dart';
+import '../widgets/avatar_settings_tile.dart' show AvatarThumbnail;
 import '../widgets/delete_message_dialog.dart';
 import '../widgets/full_emoji_picker.dart';
 import '../widgets/media_picker_sheet.dart';
@@ -112,6 +115,11 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, Uint8List> _resolvedMedia = {};
   final Map<String, Future<bool>> _existsChecks = {};
   final Map<String, Future<void>> _chunkedDownloads = {};
+  // Вычисляется один раз в initState — не через FutureBuilder(future: ...)
+  // прямо в build(), иначе каждая перестройка шапки (например, тик статуса
+  // "N минут назад" раз в 30с) гоняла бы новый сетевой запрос за одной и
+  // той же аватаркой.
+  late final Future<Uint8List?>? _peerAvatarFuture;
 
   String _currentPeerDeviceId = '';
   Map<String, dynamic>? _pendingInitHeader;
@@ -381,6 +389,9 @@ class _ChatScreenState extends State<ChatScreen> {
     ChatStore.clearUnread(widget.peerLogin);
     _currentPeerDeviceId = widget.peerDeviceId;
     _forwardingTexts = widget.forwardedTexts;
+    _peerAvatarFuture = (_isNotes || widget.peerAccountId.isEmpty)
+        ? null
+        : AvatarCache.get(widget.peerAccountId);
     _textFocusNode.addListener(_onFocusChange);
     _textController.addListener(_onTextChanged);
     _loadKnownDeletedStatus();
@@ -3911,32 +3922,66 @@ class _ChatScreenState extends State<ChatScreen> {
           ? tr('home.notes')
           : (_isPeerDeleted ? tr('home.deletedAccount') : widget.peerLogin),
     );
-    if (_isNotes || _isPeerDeleted) return title;
 
-    final status = formatPresenceStatus(
-      typing: _peerTyping,
-      online: _peerOnline,
-      lastSeenMs: _peerLastSeenMs,
-    );
-    if (status.isEmpty) return title;
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        title,
-        Text(
-          status,
-          style: TextStyle(
-            fontSize: 12,
-            color: _peerTyping
-                ? AppColors.primary
-                : Theme.of(context).appBarTheme.foregroundColor?.withValues(
-                    alpha: 0.7,
+    final Widget textColumn;
+    if (_isNotes || _isPeerDeleted) {
+      textColumn = title;
+    } else {
+      final status = formatPresenceStatus(
+        typing: _peerTyping,
+        online: _peerOnline,
+        lastSeenMs: _peerLastSeenMs,
+      );
+      textColumn = status.isEmpty
+          ? title
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                title,
+                Text(
+                  status,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _peerTyping
+                        ? AppColors.primary
+                        : Theme.of(
+                            context,
+                          ).appBarTheme.foregroundColor?.withValues(
+                            alpha: 0.7,
+                          ),
                   ),
-          ),
-        ),
+                ),
+              ],
+            );
+    }
+
+    // Удалённому аккаунту аватарку показывать незачем — его фото сервер
+    // всё равно уже не отдаст, а заглушка тут выглядела бы лишней.
+    if (_isPeerDeleted) return textColumn;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildHeaderAvatar(),
+        const SizedBox(width: 8),
+        Flexible(child: textColumn),
       ],
+    );
+  }
+
+  Widget _buildHeaderAvatar() {
+    if (_isNotes) {
+      return ValueListenableBuilder<Uint8List?>(
+        valueListenable: MyAvatarStore.notifier,
+        builder: (context, bytes, _) =>
+            AvatarThumbnail(bytes: bytes, radius: 16),
+      );
+    }
+    return FutureBuilder<Uint8List?>(
+      future: _peerAvatarFuture,
+      builder: (context, snapshot) =>
+          AvatarThumbnail(bytes: snapshot.data, radius: 16),
     );
   }
 

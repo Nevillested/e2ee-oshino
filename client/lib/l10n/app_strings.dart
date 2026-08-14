@@ -658,6 +658,14 @@ class AppStrings {
       AppLocale.ru: 'Не удалось загрузить фото',
       AppLocale.en: 'Failed to upload photo',
     },
+    'settings.avatarChange': {
+      AppLocale.ru: 'Изменить фото',
+      AppLocale.en: 'Change photo',
+    },
+    'settings.avatarRemove': {
+      AppLocale.ru: 'Удалить фото',
+      AppLocale.en: 'Remove photo',
+    },
     'settings.email': {
       AppLocale.ru: 'Почта для восстановления',
       AppLocale.en: 'Recovery email',

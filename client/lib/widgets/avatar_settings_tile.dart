@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
-import '../services/avatar_cache.dart';
+import '../services/my_avatar_store.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
 
@@ -13,6 +13,12 @@ import '../theme/app_theme.dart';
 /// подтверждения — сама загрузка достаточно быстрое, безобидное действие
 /// (можно тут же поменять ещё раз), в отличие от языка/темы это не
 /// настройка "туда-обратно", а разовое действие.
+///
+/// Превью читается из MyAvatarStore (единый источник истины для СВОЕГО
+/// фото, см. этот класс и "Заметки" в home_placeholder_screen.dart) —
+/// никакого собственного запроса/кэша на этом экране больше нет: и при
+/// первом открытии, и после загрузки нового фото это ровно те же байты,
+/// что видят "Заметки" в списке чатов.
 class AvatarSettingsTile extends StatefulWidget {
   const AvatarSettingsTile({super.key});
 
@@ -21,31 +27,7 @@ class AvatarSettingsTile extends StatefulWidget {
 }
 
 class _AvatarSettingsTileState extends State<AvatarSettingsTile> {
-  String? _accountId;
-  Uint8List? _avatarBytes;
-  bool _loading = true;
   bool _uploading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final accountId = await Session.getAccountId();
-    if (accountId == null) {
-      if (mounted) setState(() => _loading = false);
-      return;
-    }
-    final bytes = await AvatarCache.get(accountId);
-    if (!mounted) return;
-    setState(() {
-      _accountId = accountId;
-      _avatarBytes = bytes;
-      _loading = false;
-    });
-  }
 
   Future<void> _pickAndUpload() async {
     final picker = ImagePicker();
@@ -64,18 +46,55 @@ class _AvatarSettingsTileState extends State<AvatarSettingsTile> {
     setState(() => _uploading = true);
     try {
       await ApiClient().uploadAvatar(token, bytes);
-      if (_accountId != null) AvatarCache.invalidate(_accountId!);
+      MyAvatarStore.setUploaded(bytes);
       if (!mounted) return;
-      setState(() {
-        _avatarBytes = bytes;
-        _uploading = false;
-      });
+      setState(() => _uploading = false);
     } catch (_) {
       if (!mounted) return;
       setState(() => _uploading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr('settings.avatarUploadFailed'))),
       );
+    }
+  }
+
+  Future<void> _removeAvatar() async {
+    final token = await Session.getToken();
+    if (token == null) return;
+
+    setState(() => _uploading = true);
+    try {
+      await ApiClient().deleteAvatar(token);
+      MyAvatarStore.setRemoved();
+      if (!mounted) return;
+      setState(() => _uploading = false);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _uploading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('settings.avatarUploadFailed'))),
+      );
+    }
+  }
+
+  /// Уже есть фото — тап открывает выбор действия (сменить/удалить),
+  /// вместо того чтобы сразу лезть в галерею как при первой загрузке —
+  /// иначе удалить фото было бы просто нечем, кроме как перезаписать
+  /// новым.
+  Future<void> _onTap() async {
+    if (MyAvatarStore.notifier.value == null) {
+      await _pickAndUpload();
+      return;
+    }
+    final action = await showModalBottomSheet<_AvatarAction>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const _AvatarActionSheet(),
+    );
+    if (action == _AvatarAction.change) {
+      await _pickAndUpload();
+    } else if (action == _AvatarAction.remove) {
+      await _removeAvatar();
     }
   }
 
@@ -87,15 +106,64 @@ class _AvatarSettingsTileState extends State<AvatarSettingsTile> {
         height: 40,
         child: _uploading
             ? const CircularProgressIndicator(strokeWidth: 2)
-            : (_loading
-                  ? const SizedBox.shrink()
-                  : AvatarThumbnail(bytes: _avatarBytes, radius: 20)),
+            : ValueListenableBuilder(
+                valueListenable: MyAvatarStore.notifier,
+                builder: (context, bytes, _) =>
+                    AvatarThumbnail(bytes: bytes, radius: 20),
+              ),
       ),
       title: Text(
         tr('settings.avatar'),
         style: TextStyle(color: AppColors.textPrimary),
       ),
-      onTap: _uploading ? null : _pickAndUpload,
+      onTap: _uploading ? null : _onTap,
+    );
+  }
+}
+
+enum _AvatarAction { change, remove }
+
+class _AvatarActionSheet extends StatelessWidget {
+  const _AvatarActionSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onVerticalDragEnd: (details) {
+        if ((details.primaryVelocity ?? 0) > 200) Navigator.pop(context);
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              ListTile(
+                leading: Icon(Icons.photo_camera_outlined, color: AppColors.primary),
+                title: Text(
+                  tr('settings.avatarChange'),
+                  style: TextStyle(color: AppColors.textPrimary),
+                ),
+                onTap: () => Navigator.pop(context, _AvatarAction.change),
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                title: Text(
+                  tr('settings.avatarRemove'),
+                  style: const TextStyle(color: Colors.redAccent),
+                ),
+                onTap: () => Navigator.pop(context, _AvatarAction.remove),
+              ),
+              const SizedBox(height: 4),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -358,9 +358,28 @@ class ApiClient {
         options: dio.Options(headers: {'Authorization': 'Bearer $token'}),
       );
       if (response.statusCode != 200) {
+        debugPrint(
+          'uploadAvatar failed: status=${response.statusCode} body=${response.data}',
+        );
         throw ApiException(tr('error.uploadFailed'));
       }
-    } on dio.DioException {
+    } on dio.DioException catch (e) {
+      debugPrint('uploadAvatar exception: $e');
+      throw ApiException(tr('error.uploadFailed'));
+    }
+  }
+
+  /// DELETE /account/avatar — убирает своё фото профиля (и в MinIO, и в
+  /// БД, см. NewDeleteAvatarHandler на сервере).
+  Future<void> deleteAvatar(String token) async {
+    final response = await http.delete(
+      Uri.parse('${ApiConfig.baseUrl}/account/avatar'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode != 200) {
+      debugPrint(
+        'deleteAvatar failed: status=${response.statusCode} body=${response.body}',
+      );
       throw ApiException(tr('error.uploadFailed'));
     }
   }
@@ -376,9 +395,43 @@ class ApiClient {
             headers: {'Authorization': 'Bearer $token'},
           )
           .timeout(const Duration(seconds: 8));
-      if (response.statusCode != 200) return null;
+      if (response.statusCode != 200) {
+        debugPrint(
+          'getAvatar failed: accountId=$accountId status=${response.statusCode} body=${response.body}',
+        );
+        return null;
+      }
       return response.bodyBytes;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('getAvatar exception: accountId=$accountId error=$e');
+      return null;
+    }
+  }
+
+  /// GET /account/avatar — своё же фото, но БЕЗ account_id в запросе:
+  /// сервер сам берёт его из токена сессии (см. NewGetMyAvatarHandler).
+  /// Специально не переиспользует getAvatar(token, accountId) —
+  /// закэшированный на клиенте account_id (см. Session.getAccountId) может
+  /// устареть и разойтись с тем, что реально означает текущий токен
+  /// (например, после пересоздания аккаунтов при чистке базы), тогда
+  /// getAvatar получил бы честный, но бесполезный "аккаунт не найден".
+  Future<Uint8List?> getMyAvatar(String token) async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('${ApiConfig.baseUrl}/account/avatar'),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        debugPrint(
+          'getMyAvatar failed: status=${response.statusCode} body=${response.body}',
+        );
+        return null;
+      }
+      return response.bodyBytes;
+    } catch (e) {
+      debugPrint('getMyAvatar exception: $e');
       return null;
     }
   }

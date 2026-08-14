@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'package:animations/animations.dart';
 import 'package:call_ring_plugin/call_ring_plugin.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
@@ -11,6 +12,7 @@ import '../services/avatar_cache.dart';
 import '../services/call_service.dart';
 import '../services/control_message_sender.dart';
 import '../services/message_router.dart';
+import '../services/my_avatar_store.dart';
 import '../services/pip_service.dart';
 import '../services/push_service.dart';
 import '../services/websocket_service.dart';
@@ -78,6 +80,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
     PushService.init();
     unawaited(_syncMutedChats(token));
     unawaited(_syncBlockedContacts(token));
+    unawaited(MyAvatarStore.init());
     // Живой сигнал "кто-то поменял блокировку" (см. notifyBlockStatusChanged
     // на сервере) — без него локальный кэш обновлялся бы только при
     // следующем подключении/входе в конкретный чат, а не сразу, пока
@@ -469,36 +472,26 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
     );
   }
 
-  /// "Fade through color" — заказанная замена прежнему 3D-перевороту:
-  /// вместо вращения по Y старое содержимое гаснет ЗА сплошным цветом
-  /// (тем же, что и фон экрана — не белым, как в оригинальном примере: тот
-  /// был написан под always-light UI, у нас же есть тёмная тема, и белая
-  /// вспышка в ней выглядела бы чужеродно), а новое проступает поверх него.
-  /// AnimatedSwitcher вызывает transitionBuilder ОТДЕЛЬНО для уходящего и
-  /// приходящего виджета (в отличие от PageRouteBuilder в присланном
-  /// примере, где "child" — только новая страница, а старая остаётся под
-  /// ней сама по себе) — здесь один и тот же приём просто применён к
-  /// обеим сторонам разом: у каждой свой цветовой слой гаснет/проступает
-  /// синхронно с её же содержимым.
+  /// Shared axis (horizontal) — из пакета animations (тот же
+  /// PageTransitionSwitcher/SharedAxisTransition, что и в официальном
+  /// демо Material). "Вперёд" (открыть настройки, шестерёнка) — контент
+  /// уходит влево и уменьшается/тускнеет, новый заезжает справа; "назад"
+  /// (кнопка чатов) — ровно то же самое в обратную сторону, как настоящая
+  /// навигация вперёд/назад, а не просто взаимозаменяемый кроссфейд.
+  /// reverse завязан на _showSettings по той же схеме, что и в демо-примере
+  /// (там — на _isLoggedIn): именно В МОМЕНТ переключения этого флага решает
+  /// направление проигрываемого перехода.
   Widget _buildFlippableBody() {
-    return AnimatedSwitcher(
+    return PageTransitionSwitcher(
       duration: const Duration(milliseconds: 400),
-      transitionBuilder: (child, animation) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOut,
-        );
-        return Stack(
-          children: [
-            FadeTransition(
-              opacity: Tween<double>(begin: 1, end: 0).animate(curved),
-              child: Container(color: AppColors.background),
-            ),
-            FadeTransition(
-              opacity: Tween<double>(begin: 0, end: 1).animate(curved),
-              child: child,
-            ),
-          ],
+      reverse: !_showSettings,
+      transitionBuilder: (child, animation, secondaryAnimation) {
+        return SharedAxisTransition(
+          animation: animation,
+          secondaryAnimation: secondaryAnimation,
+          transitionType: SharedAxisTransitionType.horizontal,
+          fillColor: AppColors.background,
+          child: child,
         );
       },
       child: KeyedSubtree(
@@ -521,7 +514,14 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
             onLongPressStart: isNotes
                 ? null
                 : (details) => _openChatMenu(entry, details.globalPosition),
-            child: Container(
+            // Material вместо Container(color:) — ListTile рисует ripple
+            // (рябь под пальцем при тапе) на ближайшем Material-предке;
+            // непрозрачная заливка обычного Container поверх нею полностью
+            // перекрывала эту анимацию (Flutter в debug-режиме честно
+            // предупреждал об этом). Material.color красит фон точно так
+            // же, но САМ и есть тот холст, на котором рисуется ripple —
+            // так что она снова видна поверх подсветки непрочитанного.
+            child: Material(
               color: entry.unreadCount > 0
                   ? AppColors.primary.withValues(alpha: 0.12)
                   : Colors.transparent,
@@ -685,27 +685,64 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
 }
 
 /// Миниатюрка фото профиля собеседника рядом с логином в списке чатов —
-/// для "Заметок" всегда своё фото (лежит под своим же account_id, а не
-/// lastKnownAccountId — та запись для заметок не всегда успевает
-/// проставиться), для остальных чатов — фото того, с кем переписка.
-/// bytes == null (нет фото/не удалось скачать) — заглушка (см.
-/// AvatarThumbnail), не ошибка, показывать нечего гонять лишний раз.
+/// для "Заметок" всегда своё фото, но берём его из MyAvatarStore (единый
+/// источник истины для СВОЕГО фото, см. this file's _connect()), а не
+/// через отдельный сетевой запрос на каждую перерисовку строки. Для
+/// остальных чатов — фото того, с кем переписка, через общий AvatarCache.
 class _ChatAvatarLeading extends StatelessWidget {
   final bool isNotes;
   final String? accountId;
 
   const _ChatAvatarLeading({required this.isNotes, required this.accountId});
 
+  @override
+  Widget build(BuildContext context) {
+    if (isNotes) {
+      return ValueListenableBuilder<Uint8List?>(
+        valueListenable: MyAvatarStore.notifier,
+        builder: (context, bytes, _) => AvatarThumbnail(bytes: bytes),
+      );
+    }
+    return _OtherAvatarLeading(accountId: accountId);
+  }
+}
+
+/// bytes == null (нет фото/не удалось скачать) — заглушка (см.
+/// AvatarThumbnail), не ошибка, показывать нечего гонять лишний раз.
+/// StatefulWidget НАМЕРЕННО, а не FutureBuilder(future: _resolve()) прямо
+/// в build() — тот пересоздавал бы future при КАЖДОЙ перерисовке строки
+/// (любое обновление списка чатов), а значит и заново гонял бы сеть/кэш
+/// каждый раз вместо одного раза за время жизни этого элемента списка.
+class _OtherAvatarLeading extends StatefulWidget {
+  final String? accountId;
+
+  const _OtherAvatarLeading({required this.accountId});
+
+  @override
+  State<_OtherAvatarLeading> createState() => _OtherAvatarLeadingState();
+}
+
+class _OtherAvatarLeadingState extends State<_OtherAvatarLeading> {
+  late Future<Uint8List?> _future = _resolve();
+
   Future<Uint8List?> _resolve() async {
-    final id = isNotes ? await Session.getAccountId() : accountId;
+    final id = widget.accountId;
     if (id == null || id.isEmpty) return null;
     return AvatarCache.get(id);
   }
 
   @override
+  void didUpdateWidget(covariant _OtherAvatarLeading old) {
+    super.didUpdateWidget(old);
+    if (old.accountId != widget.accountId) {
+      _future = _resolve();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return FutureBuilder<Uint8List?>(
-      future: _resolve(),
+      future: _future,
       builder: (context, snapshot) {
         return AvatarThumbnail(bytes: snapshot.data);
       },
