@@ -30,6 +30,9 @@ class ApiClient {
     if (response.statusCode == 409) {
       throw ApiException(tr('error.loginTaken'));
     }
+    if (response.statusCode == 403) {
+      throw ApiException(tr('error.loginReserved'));
+    }
     if (response.statusCode != 200) {
       throw ApiException(
         '${tr('error.registerFailed')} (${response.statusCode})',

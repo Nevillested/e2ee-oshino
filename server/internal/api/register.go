@@ -39,6 +39,14 @@ func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 			return
 		}
 
+		//логины вида "admin"/"support"/"oshino" зарезервированы — иначе ими
+		//мог бы представиться кто угодно, а собеседник в 1-в-1 переписке
+		//видит только сам логин, без какой-либо отдельной "галочки" сервиса.
+		if auth.IsReservedLogin(newRegisterRequest.Login) {
+			http.Error(w, "Этот логин зарезервирован", http.StatusForbidden)
+			return
+		}
+
 		//единые требования к паролю — та же проверка, что и при восстановлении
 		//пароля и смене пароля в настройках (см. auth.ValidatePassword).
 		if PolicyErr := auth.ValidatePassword(newRegisterRequest.Password); PolicyErr != nil {

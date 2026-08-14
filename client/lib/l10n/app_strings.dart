@@ -175,6 +175,10 @@ class AppStrings {
       AppLocale.ru: 'Пользователь с таким логином уже зарегистрирован',
       AppLocale.en: 'A user with this login is already registered',
     },
+    'error.loginReserved': {
+      AppLocale.ru: 'Этот логин зарезервирован, выберите другой',
+      AppLocale.en: 'This login is reserved, please choose another one',
+    },
     'error.wrongTotpCode': {
       AppLocale.ru: 'Неверный код подтверждения',
       AppLocale.en: 'Invalid confirmation code',
