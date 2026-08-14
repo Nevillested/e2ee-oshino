@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log"
@@ -60,6 +61,38 @@ func NewUploadAvatarHandler(queries *db.Queries, minioClient *minio.Client) func
 		})
 		if SqlErr != nil {
 			http.Error(w, "ошибка сохранения аватара", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// Удаление своего фото профиля — чистим и MinIO (иначе объект просто
+// вечно занимал бы место, никем не доставаемый), и саму ссылку на него
+// в БД (это и есть источник истины для GetAvatarHandler — без него он
+// сразу отвечает 404, даже не пытаясь смотреть в MinIO). Отсутствие
+// файла в MinIO на момент удаления — не ошибка (RemoveObject тут не
+// строгий, просто логируем и продолжаем очищать БД).
+func NewDeleteAvatarHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var Session, err = CheckToken(w, r, queries)
+		if err != nil {
+			return
+		}
+
+		avatarKey, SqlErr := queries.GetAccountAvatarKey(r.Context(), Session.AccountID)
+		if SqlErr == nil && avatarKey.Valid {
+			if rmErr := minioClient.RemoveObject(r.Context(), os.Getenv("MINIO_BUCKET"), avatarKey.String, minio.RemoveObjectOptions{}); rmErr != nil {
+				log.Printf("ошибка удаления файла аватара из MinIO: %v", rmErr)
+			}
+		}
+
+		if UpdErr := queries.UpdateAccountAvatar(r.Context(), db.UpdateAccountAvatarParams{
+			ID:              Session.AccountID,
+			AvatarObjectKey: pgtype.Text{Valid: false},
+		}); UpdErr != nil {
+			http.Error(w, "ошибка удаления аватара", http.StatusInternalServerError)
 			return
 		}
 
