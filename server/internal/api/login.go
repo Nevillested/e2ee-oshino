@@ -25,7 +25,8 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	Token string `json:"token"`
+	Token    string `json:"token"`
+	Language string `json:"language"`
 }
 
 func NewLoginHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
@@ -144,6 +145,9 @@ func NewLoginHandler(queries *db.Queries) func(http.ResponseWriter, *http.Reques
 
 			//помещаем в ответ токен сессии
 			NewLoginResponse.Token = token
+			//и текущий язык интерфейса, сохранённый на сервере — клиент
+			//применяет его сразу при входе, не дожидаясь отдельного запроса
+			NewLoginResponse.Language = account.Language
 
 			//устанавливаем тип ответа - JSON
 			w.Header().Set("Content-Type", "application/json")

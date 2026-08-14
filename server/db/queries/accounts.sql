@@ -11,3 +11,15 @@ DELETE FROM accounts WHERE id = $1;
 
 -- name: GetAccountByID :one
 SELECT * FROM accounts WHERE id = $1;
+
+-- name: UpdateAccountLanguage :exec
+UPDATE accounts SET language = $2 WHERE id = $1;
+
+-- name: UpdateAccountEmail :exec
+UPDATE accounts SET email = $2 WHERE id = $1;
+
+-- name: UpdateAccountAvatar :exec
+UPDATE accounts SET avatar_object_key = $2 WHERE id = $1;
+
+-- name: GetAccountAvatarKey :one
+SELECT avatar_object_key FROM accounts WHERE id = $1;

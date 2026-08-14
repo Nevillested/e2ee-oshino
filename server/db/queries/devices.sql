@@ -17,3 +17,6 @@ WHERE d.id = $1;
 
 -- name: DeleteDevicesByAccount :exec
 DELETE FROM devices WHERE account_id = $1;
+
+-- name: GetDeviceLastSeen :one
+SELECT last_seen FROM devices WHERE id = $1;

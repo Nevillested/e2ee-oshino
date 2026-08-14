@@ -14,7 +14,7 @@ import (
 const createAccount = `-- name: CreateAccount :one
 INSERT INTO accounts (login, password_hash, totp_secret)
 VALUES ($1, $2, $3)
-RETURNING id, login, password_hash, totp_secret, created_at
+RETURNING id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key
 `
 
 type CreateAccountParams struct {
@@ -32,6 +32,9 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (A
 		&i.PasswordHash,
 		&i.TotpSecret,
 		&i.CreatedAt,
+		&i.Language,
+		&i.Email,
+		&i.AvatarObjectKey,
 	)
 	return i, err
 }
@@ -45,8 +48,19 @@ func (q *Queries) DeleteAccount(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const getAccountAvatarKey = `-- name: GetAccountAvatarKey :one
+SELECT avatar_object_key FROM accounts WHERE id = $1
+`
+
+func (q *Queries) GetAccountAvatarKey(ctx context.Context, id pgtype.UUID) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getAccountAvatarKey, id)
+	var avatar_object_key pgtype.Text
+	err := row.Scan(&avatar_object_key)
+	return avatar_object_key, err
+}
+
 const getAccountByID = `-- name: GetAccountByID :one
-SELECT id, login, password_hash, totp_secret, created_at FROM accounts WHERE id = $1
+SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key FROM accounts WHERE id = $1
 `
 
 func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (Account, error) {
@@ -58,12 +72,15 @@ func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (Account, 
 		&i.PasswordHash,
 		&i.TotpSecret,
 		&i.CreatedAt,
+		&i.Language,
+		&i.Email,
+		&i.AvatarObjectKey,
 	)
 	return i, err
 }
 
 const getAccountByLogin = `-- name: GetAccountByLogin :one
-SELECT id, login, password_hash, totp_secret, created_at FROM accounts WHERE login = $1
+SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key FROM accounts WHERE login = $1
 `
 
 func (q *Queries) GetAccountByLogin(ctx context.Context, login string) (Account, error) {
@@ -75,6 +92,51 @@ func (q *Queries) GetAccountByLogin(ctx context.Context, login string) (Account,
 		&i.PasswordHash,
 		&i.TotpSecret,
 		&i.CreatedAt,
+		&i.Language,
+		&i.Email,
+		&i.AvatarObjectKey,
 	)
 	return i, err
+}
+
+const updateAccountAvatar = `-- name: UpdateAccountAvatar :exec
+UPDATE accounts SET avatar_object_key = $2 WHERE id = $1
+`
+
+type UpdateAccountAvatarParams struct {
+	ID              pgtype.UUID
+	AvatarObjectKey pgtype.Text
+}
+
+func (q *Queries) UpdateAccountAvatar(ctx context.Context, arg UpdateAccountAvatarParams) error {
+	_, err := q.db.Exec(ctx, updateAccountAvatar, arg.ID, arg.AvatarObjectKey)
+	return err
+}
+
+const updateAccountEmail = `-- name: UpdateAccountEmail :exec
+UPDATE accounts SET email = $2 WHERE id = $1
+`
+
+type UpdateAccountEmailParams struct {
+	ID    pgtype.UUID
+	Email pgtype.Text
+}
+
+func (q *Queries) UpdateAccountEmail(ctx context.Context, arg UpdateAccountEmailParams) error {
+	_, err := q.db.Exec(ctx, updateAccountEmail, arg.ID, arg.Email)
+	return err
+}
+
+const updateAccountLanguage = `-- name: UpdateAccountLanguage :exec
+UPDATE accounts SET language = $2 WHERE id = $1
+`
+
+type UpdateAccountLanguageParams struct {
+	ID       pgtype.UUID
+	Language string
+}
+
+func (q *Queries) UpdateAccountLanguage(ctx context.Context, arg UpdateAccountLanguageParams) error {
+	_, err := q.db.Exec(ctx, updateAccountLanguage, arg.ID, arg.Language)
+	return err
 }

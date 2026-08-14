@@ -42,6 +42,25 @@ type WSMsgTo struct {
 	Type string `json:"Type"`
 }
 
+// WSMsgPresence — статус устройства (онлайн/офлайн + когда было видно в
+// последний раз), уходит ТОЛЬКО тем, кто явно подписался через
+// "presence_subscribe" (см. ConnectionRegistry.presenceSubs) — сервер не
+// знает список контактов пользователя и не может разослать это всем.
+type WSMsgPresence struct {
+	Type         string `json:"Type"`
+	FromDeviceId string `json:"FromDeviceId"`
+	Online       bool   `json:"Online"`
+	LastSeenMs   int64  `json:"LastSeenMs"`
+}
+
+// WSMsgTypingRelay — "печатает" от одного устройства к другому, чистый
+// relay без очереди/подтверждения: неважно, если получатель не онлайн —
+// печать уже наверняка закончилась к тому времени, как он подключится.
+type WSMsgTypingRelay struct {
+	Type         string `json:"Type"`
+	FromDeviceId string `json:"FromDeviceId"`
+}
+
 // CallSignalPayload — минимальный разбор содержимого поля Ciphertext у
 // call_*-кадров (для звонков оно не зашифровано, см. sendCallSignal на
 // клиенте) — нужен только чтобы вытащить call_id и звонящего для очереди
@@ -74,7 +93,60 @@ func respondCallUnavailable(ctx context.Context, ws_object *websocket.Conn) erro
 	return ws_object.Write(ctx, websocket.MessageText, respBytes)
 }
 
-func queuePendingMessage(ctx context.Context, queries *db.Queries, toDeviceId string, message []byte, silent bool) {
+// isPushMuted — замьючен ли этот отправитель у получателя (см. таблицу
+// chat_mutes / NewMuteChatHandler). Проверяется только для обычных
+// сообщений — звонки будят получателя всегда, их этот мьют не касается.
+func isPushMuted(ctx context.Context, queries *db.Queries, toDeviceUUID pgtype.UUID, senderDeviceId string) bool {
+	recipientInfo, err := queries.GetLoginByDeviceID(ctx, toDeviceUUID)
+	if err != nil {
+		return false
+	}
+
+	var senderDeviceUUID pgtype.UUID
+	if err := senderDeviceUUID.Scan(senderDeviceId); err != nil {
+		return false
+	}
+	senderInfo, err := queries.GetLoginByDeviceID(ctx, senderDeviceUUID)
+	if err != nil {
+		return false
+	}
+
+	muted, err := queries.IsChatMuted(ctx, db.IsChatMutedParams{
+		AccountID:     recipientInfo.AccountID,
+		PeerAccountID: senderInfo.AccountID,
+	})
+	if err != nil {
+		return false
+	}
+	return muted
+}
+
+// notifyPresenceSubscribers — рассылает живое обновление статуса
+// deviceID всем, кто сейчас на него подписан (и сам при этом в сети —
+// если подписчик не в сети, ему просто нечего писать, он всё равно не
+// сможет прочитать live-обновление сейчас, а при следующем открытии чата
+// заново подпишется и получит актуальный статус первым же ответом).
+func notifyPresenceSubscribers(ctx context.Context, registry *ConnectionRegistry, deviceID string, online bool, lastSeenMs int64) {
+	msg := WSMsgPresence{
+		Type:         "presence",
+		FromDeviceId: deviceID,
+		Online:       online,
+		LastSeenMs:   lastSeenMs,
+	}
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	for _, subscriberID := range registry.PresenceSubscribers(deviceID) {
+		if conn, ok := registry.Get(subscriberID); ok {
+			if writeErr := conn.Write(ctx, websocket.MessageText, msgBytes); writeErr != nil {
+				log.Printf("ошибка рассылки статуса подписчику: %v", writeErr)
+			}
+		}
+	}
+}
+
+func queuePendingMessage(ctx context.Context, queries *db.Queries, toDeviceId string, senderDeviceId string, message []byte, silent bool) {
 	var toDeviceUUID pgtype.UUID
 	if err := toDeviceUUID.Scan(toDeviceId); err != nil {
 		log.Printf("Ошибка конвертации Device ID при постановке в очередь: %v", err)
@@ -91,6 +163,13 @@ func queuePendingMessage(ctx context.Context, queries *db.Queries, toDeviceId st
 	}
 
 	if silent {
+		return
+	}
+
+	// Получатель замьютил именно этого отправителя — сообщение всё равно
+	// уже лежит в очереди и придёт как обычно, когда он сам откроет
+	// приложение, будить его пушем ради этого чата не нужно.
+	if isPushMuted(ctx, queries, toDeviceUUID, senderDeviceId) {
 		return
 	}
 
@@ -122,7 +201,28 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 		var DeviceID string = r.URL.Query().Get("device_id")
 
 		registry.Add(DeviceID, ws_object)
-		defer registry.RemoveIfCurrent(DeviceID, ws_object)
+		// Мы подключились — сообщаем "онлайн" всем, кто в этот момент уже
+		// подписан на наш статус (например, у него открыт чат с нами и он
+		// был запущен раньше нас).
+		notifyPresenceSubscribers(r.Context(), registry, DeviceID, true, 0)
+		defer func() {
+			// RemoveIfCurrent возвращает false, если это соединение уже не
+			// актуально (устройство успело переподключиться по-новой) —
+			// тогда слать "офлайн" нельзя, оно по факту всё ещё онлайн.
+			if !registry.RemoveIfCurrent(DeviceID, ws_object) {
+				return
+			}
+			registry.UnsubscribeAllFor(DeviceID)
+
+			bgCtx := context.Background()
+			var deviceUUID pgtype.UUID
+			if err := deviceUUID.Scan(DeviceID); err == nil {
+				if err := queries.UpdateDeviceLastSeen(bgCtx, deviceUUID); err != nil {
+					log.Printf("ошибка обновления last_seen: %v", err)
+				}
+			}
+			notifyPresenceSubscribers(bgCtx, registry, DeviceID, false, time.Now().UnixMilli())
+		}()
 
 		var ToDeviceIDUUID pgtype.UUID
 		ScanUuidErr := ToDeviceIDUUID.Scan(DeviceID)
@@ -181,6 +281,53 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 				continue
 			}
 
+			if MessageType == "presence_subscribe" {
+				// Отвечаем СРАЗУ текущим статусом (а не ждём следующего
+				// изменения) — иначе открывший чат экран мгновение
+				// показывал бы "нет данных" вместо реального статуса.
+				online := registry.SubscribePresence(DeviceID, NewWSMsgFrom.ToDeviceId)
+				var lastSeenMs int64
+				if !online {
+					var targetUUID pgtype.UUID
+					if err := targetUUID.Scan(NewWSMsgFrom.ToDeviceId); err == nil {
+						if lastSeen, err := queries.GetDeviceLastSeen(r.Context(), targetUUID); err == nil && lastSeen.Valid {
+							lastSeenMs = lastSeen.Time.UnixMilli()
+						}
+					}
+				}
+				msg := WSMsgPresence{
+					Type:         "presence",
+					FromDeviceId: NewWSMsgFrom.ToDeviceId,
+					Online:       online,
+					LastSeenMs:   lastSeenMs,
+				}
+				if msgBytes, err := json.Marshal(msg); err == nil {
+					if err := ws_object.Write(r.Context(), message_type, msgBytes); err != nil {
+						log.Printf("ошибка ответа на подписку на статус: %v", err)
+					}
+				}
+				continue
+			}
+
+			if MessageType == "presence_unsubscribe" {
+				registry.UnsubscribePresence(DeviceID, NewWSMsgFrom.ToDeviceId)
+				continue
+			}
+
+			if MessageType == "typing" {
+				// Чистый relay без очереди и подтверждения — офлайн-получателю
+				// это уже неактуально к моменту, когда он подключится.
+				if conn, ok := registry.Get(NewWSMsgFrom.ToDeviceId); ok {
+					typingMsg := WSMsgTypingRelay{Type: "typing", FromDeviceId: DeviceID}
+					if msgBytes, err := json.Marshal(typingMsg); err == nil {
+						if err := conn.Write(r.Context(), message_type, msgBytes); err != nil {
+							log.Printf("ошибка пересылки статуса печати: %v", err)
+						}
+					}
+				}
+				continue
+			}
+
 			var ConnReceiver, Status = registry.Get(NewWSMsgFrom.ToDeviceId)
 
 			if MessageType == "message" {
@@ -203,7 +350,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						log.Printf("получатель считался онлайн, но запись не удалась (зомби-соединение): %v", write_error)
 						acks.Cancel(deliveryID)
 						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
-						queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, message, NewWSMsgFrom.Silent)
+						queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, DeviceID, message, NewWSMsgFrom.Silent)
 						continue
 					}
 
@@ -214,12 +361,12 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						log.Printf("получатель не подтвердил доставку за 5с, ставим в очередь")
 						acks.Cancel(deliveryID)
 						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
-						queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, message, NewWSMsgFrom.Silent)
+						queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, DeviceID, message, NewWSMsgFrom.Silent)
 					}
 
 				} else {
 					log.Printf("Сообщение поставлено в очередь до тех пор, пока устройство не будет в сети")
-					queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, message, NewWSMsgFrom.Silent)
+					queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, DeviceID, message, NewWSMsgFrom.Silent)
 				}
 
 			} else if MessageType == "call_offer" {

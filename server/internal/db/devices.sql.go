@@ -56,6 +56,17 @@ func (q *Queries) DeleteDevicesByAccount(ctx context.Context, accountID pgtype.U
 	return err
 }
 
+const getDeviceLastSeen = `-- name: GetDeviceLastSeen :one
+SELECT last_seen FROM devices WHERE id = $1
+`
+
+func (q *Queries) GetDeviceLastSeen(ctx context.Context, id pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getDeviceLastSeen, id)
+	var last_seen pgtype.Timestamptz
+	err := row.Scan(&last_seen)
+	return last_seen, err
+}
+
 const getDevicesByAccount = `-- name: GetDevicesByAccount :many
 SELECT id, account_id, identity_pubkey, device_name, last_seen, created_at, identity_dh_pubkey, identity_dh_signature FROM devices WHERE account_id = $1
 `

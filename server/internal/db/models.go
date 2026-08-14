@@ -9,11 +9,20 @@ import (
 )
 
 type Account struct {
-	ID           pgtype.UUID
-	Login        string
-	PasswordHash string
-	TotpSecret   string
-	CreatedAt    pgtype.Timestamptz
+	ID              pgtype.UUID
+	Login           string
+	PasswordHash    string
+	TotpSecret      string
+	CreatedAt       pgtype.Timestamptz
+	Language        string
+	Email           pgtype.Text
+	AvatarObjectKey pgtype.Text
+}
+
+type ChatMute struct {
+	AccountID     pgtype.UUID
+	PeerAccountID pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
 }
 
 type Device struct {
