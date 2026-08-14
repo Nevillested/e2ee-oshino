@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"log"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -161,6 +163,31 @@ func (reg *ConnectionRegistry) RemoveIfCurrent(deviceID string, conn *websocket.
 		return true
 	}
 	return false
+}
+
+// Broadcast — шлёт сырые байты ВСЕМ сейчас подключённым устройствам, без
+// исключения. Используется только для сигналов, у которых сервер
+// принципиально не знает конкретного адресата (например, "у аккаунта X
+// поменялось фото профиля" — сервер не хранит "кто чей контакт", в
+// отличие от presence-подписок, поэтому адресной рассылки тут не сделать
+// без отдельного графа контактов; сам сигнал ничего секретного не несёт —
+// просто account_id, для которого стоит перепроверить кэш аватара). Копия
+// списка соединений снимается под локом, а сама отправка — уже без
+// него, чтобы не держать мьютекс всего реестра на время сетевого I/O по
+// потенциально многим соединениям.
+func (reg *ConnectionRegistry) Broadcast(ctx context.Context, msgBytes []byte) {
+	reg.mu.Lock()
+	conns := make([]*websocket.Conn, 0, len(reg.conns))
+	for _, conn := range reg.conns {
+		conns = append(conns, conn)
+	}
+	reg.mu.Unlock()
+
+	for _, conn := range conns {
+		if err := conn.Write(ctx, websocket.MessageText, msgBytes); err != nil {
+			log.Printf("Broadcast: ошибка отправки одному из устройств: %v", err)
+		}
+	}
 }
 
 /*

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -24,7 +25,25 @@ func avatarObjectKey(accountID string) string {
 	return "avatar_" + accountID
 }
 
-func NewUploadAvatarHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+// notifyAvatarChanged — живой сигнал ВСЕМ подключённым устройствам, что
+// у accountID поменялось фото профиля (загружено новое или удалено). В
+// отличие от notifyBlockStatusChanged (websocket.go), тут нет конкретного
+// адресата — сервер не хранит, у кого этот account_id вообще есть в
+// списке контактов, поэтому широковещательно, всем сразу; сам сигнал не
+// содержит ничего чувствительного (только account_id, для которого стоит
+// перепроверить кэш — реальное фото всё равно берётся отдельным GET).
+func notifyAvatarChanged(ctx context.Context, registry *ConnectionRegistry, accountID pgtype.UUID) {
+	msgBytes, err := json.Marshal(struct {
+		Type      string `json:"Type"`
+		AccountID string `json:"AccountId"`
+	}{Type: "avatar_changed", AccountID: accountID.String()})
+	if err != nil {
+		return
+	}
+	registry.Broadcast(ctx, msgBytes)
+}
+
+func NewUploadAvatarHandler(queries *db.Queries, minioClient *minio.Client, registry *ConnectionRegistry) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var Session, err = CheckToken(w, r, queries)
 		if err != nil {
@@ -64,6 +83,8 @@ func NewUploadAvatarHandler(queries *db.Queries, minioClient *minio.Client) func
 			return
 		}
 
+		notifyAvatarChanged(r.Context(), registry, Session.AccountID)
+
 		w.WriteHeader(http.StatusOK)
 	}
 }
@@ -74,7 +95,7 @@ func NewUploadAvatarHandler(queries *db.Queries, minioClient *minio.Client) func
 // сразу отвечает 404, даже не пытаясь смотреть в MinIO). Отсутствие
 // файла в MinIO на момент удаления — не ошибка (RemoveObject тут не
 // строгий, просто логируем и продолжаем очищать БД).
-func NewDeleteAvatarHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+func NewDeleteAvatarHandler(queries *db.Queries, minioClient *minio.Client, registry *ConnectionRegistry) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var Session, err = CheckToken(w, r, queries)
 		if err != nil {
@@ -95,6 +116,8 @@ func NewDeleteAvatarHandler(queries *db.Queries, minioClient *minio.Client) func
 			http.Error(w, "ошибка удаления аватара", http.StatusInternalServerError)
 			return
 		}
+
+		notifyAvatarChanged(r.Context(), registry, Session.AccountID)
 
 		w.WriteHeader(http.StatusOK)
 	}
