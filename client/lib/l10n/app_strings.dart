@@ -171,6 +171,10 @@ class AppStrings {
       AppLocale.ru: 'Не удалось зарегистрироваться',
       AppLocale.en: 'Failed to register',
     },
+    'error.loginTaken': {
+      AppLocale.ru: 'Пользователь с таким логином уже существует',
+      AppLocale.en: 'A user with this login already exists',
+    },
     'error.wrongTotpCode': {
       AppLocale.ru: 'Неверный код подтверждения',
       AppLocale.en: 'Invalid confirmation code',

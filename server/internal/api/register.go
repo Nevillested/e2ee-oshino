@@ -2,11 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"server/internal/auth"
 	"server/internal/db"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pquerna/otp/totp"
 )
 
@@ -75,14 +77,27 @@ func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 		//вызываем функцию создания аккаунта, получая в ответ объект с данными аккаунта и ошибку
 		var NewRegAcc, NewRegAccError = queries.CreateAccount(r.Context(), NewAccountParamsStruct)
 
-		//лоигруем о событии регистрации
-		log.Printf("зарегистрирован новый аккаунт: %s (id: %s)", NewRegAcc.Login, NewRegAcc.ID)
-
-		//проверяем есть ли ошибка при создании аккаунта. Если есть, возвращаем пользователю код ошибки сервера 500 Internal Server Error и сообщение об ошибке.
+		//проверяем есть ли ошибка при создании аккаунта. Раньше лог "зарегистрирован
+		//новый аккаунт" писался ЗДЕСЬ безусловно, даже если аккаунт так и не
+		//создался — из-за этого в логе появлялась пустая строка (NewRegAcc в
+		//этом случае просто нулевая структура). Теперь логируем только после
+		//успеха, ниже.
 		if NewRegAccError != nil {
+			//login UNIQUE в схеме — самая частая причина ошибки здесь: логин
+			//уже занят. Отличаем этот случай от прочих ошибок БД отдельным
+			//статусом (409), чтобы клиент показал понятное "логин уже занят",
+			//а не общее "ошибка регистрации".
+			var pgErr *pgconn.PgError
+			if errors.As(NewRegAccError, &pgErr) && pgErr.Code == "23505" {
+				http.Error(w, "Пользователь с таким логином уже существует", http.StatusConflict)
+				return
+			}
 			http.Error(w, "Ошибка регистрации аккаунта", http.StatusInternalServerError)
 			return
 		}
+
+		//лоигруем о событии регистрации — только если аккаунт реально создан
+		log.Printf("зарегистрирован новый аккаунт: %s (id: %s)", NewRegAcc.Login, NewRegAcc.ID)
 
 		//создаем экземпляра структуры с ответом на регистрацию
 		var NewRegisterResponse RegisterResponse

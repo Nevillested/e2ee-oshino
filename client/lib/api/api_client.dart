@@ -27,6 +27,9 @@ class ApiClient {
       body: jsonEncode({'login': login, 'password': password}),
     );
 
+    if (response.statusCode == 409) {
+      throw ApiException(tr('error.loginTaken'));
+    }
     if (response.statusCode != 200) {
       throw ApiException(
         '${tr('error.registerFailed')} (${response.statusCode})',
