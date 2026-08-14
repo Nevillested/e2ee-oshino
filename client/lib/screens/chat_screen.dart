@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart' show TapGestureRecognizer;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart'
@@ -14,6 +15,7 @@ import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:record/record.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../api/api_client.dart';
 import '../crypto/double_ratchet.dart';
 import '../crypto/key_store.dart';
@@ -190,6 +192,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _peerTypingClearTimer;
   StreamSubscription<Map<String, dynamic>>? _presenceSub;
   StreamSubscription<ConnectionStatus>? _wsStatusSub;
+  StreamSubscription<void>? _blockStatusSub;
   Timer? _presenceTickTimer;
   DateTime? _lastTypingSentAt;
 
@@ -249,6 +252,17 @@ class _ChatScreenState extends State<ChatScreen> {
   /// друг друга, показывается именно первый приоритет).
   bool get _composerBlocked => _blockedByMe || _blockingMe;
 
+  /// Три возможных формулировки, а не две — если блокировка взаимная,
+  /// показываем отдельный, третий текст, а не приоритет 1 (см. правку по
+  /// итогам ручного тестирования: изначально при взаимной блокировке
+  /// молча показывался приоритет 1, что и является правильным поведением
+  /// ТОЛЬКО когда блокировка не взаимная).
+  String get _blockedComposerText {
+    if (_blockedByMe && _blockingMe) return tr('chat.blockedMutual');
+    if (_blockedByMe) return tr('chat.blockedByMe');
+    return tr('chat.blockingMe');
+  }
+
   // Поиск по истории чата — целиком клиентская функция (вся история и так
   // уже расшифрована и лежит в _messages, см. ChatStore), никакого похода
   // на сервер не требуется. _searchMatches ниже пересчитывается на лету из
@@ -265,7 +279,6 @@ class _ChatScreenState extends State<ChatScreen> {
   // видны), true — режим "list" (справа кнопка "Show as chat").
   bool _searchShowAsList = false;
   String? _highlightedMessageId;
-  Timer? _highlightClearTimer;
 
   List<StoredMessage> get _searchMatches {
     if (_searchQuery.isEmpty) return const [];
@@ -340,16 +353,16 @@ class _ChatScreenState extends State<ChatScreen> {
     _flashHighlight(target.messageId);
   }
 
-  /// Кратковременная подсветка пузыря, к которому только что перенесло
-  /// поиском/закрепом — без неё "анимированный переход" (см. спецификацию)
-  /// выглядел бы просто как скролл в случайное место без объяснения, куда
-  /// именно и почему.
+  /// Подсветка пузыря, к которому только что перенесло поиском/закрепом —
+  /// без неё "анимированный переход" (см. спецификацию) выглядел бы просто
+  /// как скролл в случайное место без объяснения, куда именно и почему.
+  /// Держится, пока пользователь не перейдёт к другому совпадению (тогда
+  /// подсветка просто переезжает на новый messageId) или не выйдет из
+  /// поиска (см. _exitSearchMode) — НЕ по таймеру: непрерывная пульсация
+  /// (см. _PulsingHighlight) должна идти бесконечно, а не пару раз мигнуть
+  /// и погаснуть сама по себе.
   void _flashHighlight(String messageId) {
-    _highlightClearTimer?.cancel();
     setState(() => _highlightedMessageId = messageId);
-    _highlightClearTimer = Timer(const Duration(milliseconds: 1200), () {
-      if (mounted) setState(() => _highlightedMessageId = null);
-    });
   }
 
   void _selectSearchResult(StoredMessage msg) {
@@ -372,6 +385,13 @@ class _ChatScreenState extends State<ChatScreen> {
     _textController.addListener(_onTextChanged);
     _loadKnownDeletedStatus();
     _bootstrapHistory();
+    unawaited(_refreshBlockStatusFromServer());
+    // Живой сигнал "кто-то поменял блокировку" (см. notifyBlockStatusChanged
+    // на сервере) — пока этот чат открыт, композер-заглушка должна
+    // появиться/исчезнуть сразу, а не только при повторном заходе в чат.
+    _blockStatusSub = WebSocketService.instance.blockStatusEvents.listen(
+      (_) => unawaited(_refreshBlockStatusFromServer()),
+    );
     ChatStore.changes.listen((_) {
       _loadHistory();
       _loadKnownDeletedStatus();
@@ -485,6 +505,45 @@ class _ChatScreenState extends State<ChatScreen> {
         _blockedByMe = match.first.blockedByMe;
         _blockingMe = match.first.blockingMe;
       });
+    }
+  }
+
+  /// Локальный кэш блокировки (ChatSummary.blockedByMe/.blockingMe,
+  /// заполняется через ChatStore.syncBlockedFromServer) синхронизируется с
+  /// сервером ТОЛЬКО раз при старте приложения (см. _syncBlockedContacts в
+  /// home_placeholder_screen.dart) — если собеседник заблокировал нас, пока
+  /// приложение уже было запущено, локальный кэш до следующего перезапуска
+  /// оставался бы устаревшим: композер продолжал бы выглядеть обычным, хотя
+  /// сервер сообщения уже не пропускает (сам факт недоставки — не баг, см.
+  /// проверку в websocket.go, но пользователь должен узнать об этом сразу,
+  /// открыв чат, а не наткнуться на молча пропавшее сообщение). Поэтому при
+  /// каждом открытии конкретного чата спрашиваем сервер напрямую, в обход
+  /// локального кэша.
+  Future<void> _refreshBlockStatusFromServer() async {
+    if (_isNotes) return;
+    try {
+      final token = await Session.getToken();
+      if (token == null) return;
+      final blocked = await _apiClient.getBlockedContacts(token);
+      if (blocked == null) return;
+      if (mounted) {
+        setState(() {
+          _blockedByMe = blocked.blockedByMe.contains(widget.peerAccountId);
+          _blockingMe = blocked.blockingMe.contains(widget.peerAccountId);
+        });
+      }
+      // Заодно освежаем общий локальный кэш (список чатов/меню), раз уже
+      // сходили на сервер — без этого он бы обновился только при следующем
+      // перезапуске приложения.
+      unawaited(
+        ChatStore.syncBlockedFromServer(
+          blocked.blockedByMe.toSet(),
+          blocked.blockingMe.toSet(),
+        ),
+      );
+    } catch (_) {
+      // Не удалось — остаёмся с тем, что уже успело прийти из локального
+      // кэша (см. _loadKnownDeletedStatus), не критично.
     }
   }
 
@@ -947,14 +1006,70 @@ class _ChatScreenState extends State<ChatScreen> {
     return null;
   }
 
-  void _scrollToMessage(String messageId) {
-    final ctx = _messageKeys[messageId]?.currentContext;
-    if (ctx != null) {
-      Scrollable.ensureVisible(
-        ctx,
-        duration: const Duration(milliseconds: 300),
+  /// Прыжок к произвольному сообщению — например, для закрепа он почти
+  /// всегда УЖЕ построен (ленивый ListView.builder держит недавние элементы
+  /// в дереве), тогда достаточно Scrollable.ensureVisible. Но для поиска
+  /// цель сплошь и рядом ГДЕ-ТО ДАЛЕКО за пределами текущего viewport'а —
+  /// там currentContext ещё null (элемент физически не построен), и
+  /// ensureVisible молча ничего не делает. В этом случае сначала грубо
+  /// летим по линейной оценке позиции (доля индекса группы от общего
+  /// числа групп × maxScrollExtent — сообщения разной высоты, так что это
+  /// именно оценка, не точный расчёт) НАСТОЯЩЕЙ анимацией (не jumpTo —
+  /// иначе список телепортируется, минуя кадры, и не видно самого
+  /// "пролистывания" мимо сообщений между стартом и целью), затем в
+  /// несколько попыток ждём кадр и проверяем, построился ли наконец нужный
+  /// элемент, и только тогда доводим до пикселя отдельной, более медленной
+  /// и плавной анимацией — так "быстрый перелёт" и "плавное торможение на
+  /// цели" ощущаются как две разные фазы одного движения.
+  Future<void> _scrollToMessage(String messageId) async {
+    final existingCtx = _messageKeys[messageId]?.currentContext;
+    if (existingCtx != null) {
+      await Scrollable.ensureVisible(
+        existingCtx,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOutCubic,
         alignment: 0.5,
       );
+      return;
+    }
+    if (!_scrollController.hasClients) return;
+
+    final groups = _groupedMessages();
+    final groupIndex = groups.indexWhere(
+      (g) => g.any((m) => m.messageId == messageId),
+    );
+    if (groupIndex == -1) return;
+
+    final maxExtent = _scrollController.position.maxScrollExtent;
+    final estimate = groups.length <= 1
+        ? 0.0
+        : (groupIndex / (groups.length - 1)) * maxExtent;
+    final clampedEstimate = estimate.clamp(0.0, maxExtent);
+
+    // Скорость перелёта — фиксированные px/мс (не константная длительность),
+    // чтобы близкая цель летела быстро, а очень дальняя не растягивалась на
+    // неадекватно долгую анимацию — и то и другое ограничено снизу/сверху.
+    final distance = (clampedEstimate - _scrollController.offset).abs();
+    final flightMs = (distance / 3.2).clamp(280, 900).round();
+    await _scrollController.animateTo(
+      clampedEstimate,
+      duration: Duration(milliseconds: flightMs),
+      curve: Curves.easeOut,
+    );
+
+    for (var attempt = 0; attempt < 8; attempt++) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final ctx = _messageKeys[messageId]?.currentContext;
+      if (ctx != null) {
+        await Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeOutCubic,
+          alignment: 0.5,
+        );
+        return;
+      }
+      await Future.delayed(const Duration(milliseconds: 50));
     }
   }
 
@@ -3211,19 +3326,79 @@ class _ChatScreenState extends State<ChatScreen> {
   /// единое поведение для всех типов, а не только для текста, у которого
   /// раньше было отдельное "умное" встраивание в конец последней строки.
   Widget _buildTextWithMeta(StoredMessage msg, double maxTextWidth) {
-    final textStyle = TextStyle(color: _bubbleTextColor(msg.isMine));
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxTextWidth),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(msg.text, style: textStyle),
+          _buildLinkifiedText(msg.text, _bubbleTextColor(msg.isMine)),
           const SizedBox(height: 2),
           _buildMetaRow(msg),
         ],
       ),
     );
+  }
+
+  // Ссылка целиком, от http(s):// или www. до ближайшего пробела/переноса
+  // строки — намеренно простое правило (как у большинства мессенджеров):
+  // ловит подавляющее большинство реальных ссылок, не пытаясь быть
+  // формально полным URL-парсером RFC 3986.
+  static final _urlRegex = RegExp(
+    r'((https?:\/\/)|(www\.))[^\s]+',
+    caseSensitive: false,
+  );
+
+  /// Тот же текст, что обычный Text(msg.text), но ссылки внутри —
+  /// подчёркнутые и кликабельные (см. _openLink). Единая точка для обоих
+  /// мест, где рендерится текст сообщения (одиночный пузырь и подпись в
+  /// групповом), см. _buildGroupBubble.
+  Widget _buildLinkifiedText(String text, Color baseColor, {double fontSize = 16}) {
+    final matches = _urlRegex.allMatches(text).toList();
+    if (matches.isEmpty) {
+      return Text(text, style: TextStyle(color: baseColor, fontSize: fontSize));
+    }
+
+    final spans = <InlineSpan>[];
+    var cursor = 0;
+    for (final match in matches) {
+      if (match.start > cursor) {
+        spans.add(TextSpan(text: text.substring(cursor, match.start)));
+      }
+      final url = match.group(0)!;
+      spans.add(
+        TextSpan(
+          text: url,
+          style: const TextStyle(
+            color: Colors.lightBlueAccent,
+            decoration: TextDecoration.underline,
+          ),
+          recognizer: TapGestureRecognizer()..onTap = () => _openLink(url),
+        ),
+      );
+      cursor = match.end;
+    }
+    if (cursor < text.length) {
+      spans.add(TextSpan(text: text.substring(cursor)));
+    }
+
+    return Text.rich(
+      TextSpan(style: TextStyle(color: baseColor, fontSize: fontSize), children: spans),
+    );
+  }
+
+  Future<void> _openLink(String rawUrl) async {
+    final normalized = rawUrl.startsWith(RegExp(r'https?:\/\/', caseSensitive: false))
+        ? rawUrl
+        : 'https://$rawUrl';
+    final uri = Uri.tryParse(normalized);
+    if (uri == null) return;
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      // Нет приложения, способного открыть ссылку, или запрет от ОС —
+      // молча игнорируем, как и остальные best-effort действия в этом файле.
+    }
   }
 
   Widget _buildSelectionCheck(bool selected, bool isMine) {
@@ -3471,55 +3646,65 @@ class _ChatScreenState extends State<ChatScreen> {
     final isHighlighted = group.any(
       (m) => m.messageId == _highlightedMessageId,
     );
-    final bubble = Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(6),
-      constraints: BoxConstraints(maxWidth: maxWidth),
-      decoration: BoxDecoration(
-        color: isMine ? AppColors.primary : AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: isHighlighted
-            ? Border.all(color: Colors.amber, width: 2)
-            : null,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (mediaMsgs.isNotEmpty) _buildMediaGrid(mediaMsgs),
-              if (textMsgs.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
-                  child: Text(
-                    textMsgs.first.text,
-                    style: TextStyle(color: _bubbleTextColor(isMine)),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                formatChatTime(last.timestamp),
-                style: TextStyle(
-                  color: _bubbleMutedColor(isMine),
-                  fontSize: 10,
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (mediaMsgs.isNotEmpty) _buildMediaGrid(mediaMsgs),
+            if (textMsgs.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
+                child: _buildLinkifiedText(
+                  textMsgs.first.text,
+                  _bubbleTextColor(isMine),
                 ),
               ),
-              if (isMine) ...[
-                const SizedBox(width: 4),
-                _buildStatusIconFor(aggregateStatus),
-              ],
+          ],
+        ),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              formatChatTime(last.timestamp),
+              style: TextStyle(color: _bubbleMutedColor(isMine), fontSize: 10),
+            ),
+            if (isMine) ...[
+              const SizedBox(width: 4),
+              _buildStatusIconFor(aggregateStatus),
             ],
-          ),
-        ],
-      ),
+          ],
+        ),
+      ],
+    );
+    final bubbleColor = isMine ? AppColors.primary : AppColors.surface;
+    // card — сам видимый цветной пузырь БЕЗ отступа-margin (он вынесен на
+    // уровень bubble ниже) — так подсветка (см. _PulsingHighlight) облегает
+    // РОВНО видимые края пузыря, а не ещё и пустое поле margin вокруг него.
+    final card = isHighlighted
+        ? _PulsingHighlight(
+            baseColor: bubbleColor,
+            borderRadius: BorderRadius.circular(14),
+            padding: const EdgeInsets.all(6),
+            constraints: BoxConstraints(maxWidth: maxWidth),
+            child: content,
+          )
+        : Container(
+            padding: const EdgeInsets.all(6),
+            constraints: BoxConstraints(maxWidth: maxWidth),
+            decoration: BoxDecoration(
+              color: bubbleColor,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: content,
+          );
+    final bubble = Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      child: card,
     );
 
     return KeyedSubtree(
@@ -3589,49 +3774,61 @@ class _ChatScreenState extends State<ChatScreen> {
     final maxTextWidth = MediaQuery.of(context).size.width * 0.65;
     final isHighlighted = msg.messageId == _highlightedMessageId;
 
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildReplyPreview(msg),
+        msg.isVoice
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  VoiceMessagePlayer(
+                    isMine: msg.isMine,
+                    durationMs: msg.durationMs,
+                    processingStep: msg.processingStep,
+                    resolveFile: () => _resolveRecordedMediaFile(msg),
+                  ),
+                  const SizedBox(height: 4),
+                  _buildMetaRow(msg),
+                ],
+              )
+            : msg.isMedia
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildAttachmentBubble(msg),
+                  const SizedBox(height: 4),
+                  _buildMetaRow(msg),
+                ],
+              )
+            : _buildTextWithMeta(msg, maxTextWidth),
+      ],
+    );
+    final bubbleColor = msg.isMine ? AppColors.primary : AppColors.surface;
+    // card — сам видимый цветной пузырь БЕЗ margin (см. комментарий в
+    // _buildGroupBubble) — margin вынесен в bubble ниже, чтобы подсветка
+    // облегала ровно видимые края, а не пустое поле вокруг них.
+    final card = isHighlighted
+        ? _PulsingHighlight(
+            baseColor: bubbleColor,
+            borderRadius: BorderRadius.circular(14),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: content,
+          )
+        : Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: bubbleColor,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: content,
+          );
     final bubble = Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: msg.isMine ? AppColors.primary : AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: isHighlighted
-            ? Border.all(color: Colors.amber, width: 2)
-            : null,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildReplyPreview(msg),
-          msg.isVoice
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    VoiceMessagePlayer(
-                      isMine: msg.isMine,
-                      durationMs: msg.durationMs,
-                      processingStep: msg.processingStep,
-                      resolveFile: () => _resolveRecordedMediaFile(msg),
-                    ),
-                    const SizedBox(height: 4),
-                    _buildMetaRow(msg),
-                  ],
-                )
-              : msg.isMedia
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _buildAttachmentBubble(msg),
-                    const SizedBox(height: 4),
-                    _buildMetaRow(msg),
-                  ],
-                )
-              : _buildTextWithMeta(msg, maxTextWidth),
-        ],
-      ),
+      child: card,
     );
 
     return KeyedSubtree(
@@ -3652,7 +3849,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _pendingTapTimer?.cancel();
     _scrollSaveDebounce?.cancel();
     _keyboardHeightSettleTimer?.cancel();
-    _highlightClearTimer?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
     // Если пользователь ушёл с экрана прямо посреди записи — обрываем её
@@ -3699,6 +3895,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     _presenceSub?.cancel();
     _wsStatusSub?.cancel();
+    _blockStatusSub?.cancel();
     _presenceTickTimer?.cancel();
     _peerTypingClearTimer?.cancel();
     super.dispose();
@@ -3851,9 +4048,9 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildSearchControlPanel() {
     final hasMatches = _searchMatches.isNotEmpty;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: SizedBox(
-        height: 40,
+        height: 52,
         child: Stack(
           alignment: Alignment.center,
           children: [
@@ -3861,7 +4058,11 @@ class _ChatScreenState extends State<ChatScreen> {
               alignment: Alignment.centerLeft,
               child: Text(
                 '$_searchCurrentNumber/$_searchTotalCount',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
             if (!_searchShowAsList)
@@ -3872,7 +4073,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     Icons.keyboard_arrow_down,
                     hasMatches ? _searchGoNext : null,
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 14),
                   _buildSearchNavButton(
                     Icons.keyboard_arrow_up,
                     hasMatches ? _searchGoPrev : null,
@@ -3897,10 +4098,10 @@ class _ChatScreenState extends State<ChatScreen> {
         customBorder: const CircleBorder(),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(7),
+          padding: const EdgeInsets.all(10),
           child: Icon(
             icon,
-            size: 20,
+            size: 30,
             color: onTap == null ? AppColors.textMuted : AppColors.textPrimary,
           ),
         ),
@@ -3911,18 +4112,18 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildShowAsToggle() {
     return Material(
       color: AppColors.surface,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(20),
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         onTap: () => setState(() => _searchShowAsList = !_searchShowAsList),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
           child: Text(
             _searchShowAsList ? tr('chat.showAsChat') : tr('chat.showAsList'),
             style: TextStyle(
               color: AppColors.primary,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
             ),
           ),
         ),
@@ -4082,9 +4283,28 @@ class _ChatScreenState extends State<ChatScreen> {
           appBar: PreferredSize(
             preferredSize: const Size.fromHeight(kToolbarHeight),
             child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 220),
-              switchInCurve: Curves.easeOut,
-              switchOutCurve: Curves.easeIn,
+              duration: const Duration(milliseconds: 280),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              // Переход в/из режима поиска — не обычный кроссфейд, а
+              // "разворачивание" горизонтально от правого края (там, где
+              // была иконка лупы) через SizeTransition: ближе всего к
+              // ощущению, что лупа буквально вытягивается в овальную
+              // строку поиска, без полноценного shape-морфинга виджетов
+              // (Hero между IconButton и TextField технически возможен, но
+              // сильно сложнее ради того же зрительного эффекта).
+              transitionBuilder: (child, animation) {
+                if (child.key == const ValueKey('search_appbar')) {
+                  return ClipRect(
+                    child: FractionallySizedBox(
+                      alignment: Alignment.centerRight,
+                      widthFactor: animation.value.clamp(0.0, 1.0),
+                      child: FadeTransition(opacity: animation, child: child),
+                    ),
+                  );
+                }
+                return FadeTransition(opacity: animation, child: child);
+              },
               child: _selectionMode
                   ? AppBar(
                       key: const ValueKey('selection_appbar'),
@@ -4119,48 +4339,87 @@ class _ChatScreenState extends State<ChatScreen> {
                       ],
                     )
                   : _searchMode
-                  ? AppBar(
+                  ? Material(
                       key: const ValueKey('search_appbar'),
-                      titleSpacing: 4,
-                      leading: Center(
-                        child: Material(
-                          color: AppColors.surface,
-                          shape: const CircleBorder(),
-                          child: InkWell(
-                            customBorder: const CircleBorder(),
-                            onTap: _exitSearchMode,
-                            child: const Padding(
-                              padding: EdgeInsets.all(9),
-                              child: Icon(Icons.arrow_back, size: 20),
-                            ),
-                          ),
-                        ),
-                      ),
-                      title: Container(
-                        height: 40,
-                        alignment: Alignment.centerLeft,
-                        padding: const EdgeInsets.symmetric(horizontal: 14),
-                        decoration: BoxDecoration(
-                          color: AppColors.surface,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: TextField(
-                          controller: _searchController,
-                          focusNode: _searchFocusNode,
-                          autofocus: true,
-                          onChanged: _onSearchQueryChanged,
-                          style: TextStyle(
-                            color: AppColors.textPrimary,
-                            fontSize: 15,
-                          ),
-                          decoration: InputDecoration(
-                            isDense: true,
-                            border: InputBorder.none,
-                            hintText: tr('chat.searchHint'),
-                            hintStyle: TextStyle(
-                              color: AppColors.textMuted,
-                              fontSize: 15,
-                            ),
+                      color:
+                          Theme.of(context).appBarTheme.backgroundColor ??
+                          AppColors.background,
+                      // Собственный Row вместо AppBar.title — у самого
+                      // AppBar середина (title) центрируется только
+                      // ГОРИЗОНТАЛЬНО и не тянется на всю ширину, из-за
+                      // чего наша овальная строка поиска сама решала,
+                      // какой высоты ей быть, и "плавала" в тулбаре не по
+                      // центру. Явный Row с CrossAxisAlignment.center (по
+                      // умолчанию) гарантирует, что и кружок-стрелка, и
+                      // сама строка поиска вертикально ровно посередине.
+                      child: SafeArea(
+                        bottom: false,
+                        child: SizedBox(
+                          height: kToolbarHeight,
+                          child: Row(
+                            children: [
+                              const SizedBox(width: 6),
+                              Material(
+                                color: AppColors.surface,
+                                shape: const CircleBorder(),
+                                child: InkWell(
+                                  customBorder: const CircleBorder(),
+                                  onTap: _exitSearchMode,
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(10),
+                                    child: Icon(Icons.arrow_back, size: 22),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Container(
+                                  height: 42,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.surface,
+                                    borderRadius: BorderRadius.circular(21),
+                                  ),
+                                  // isCollapsed+expands (предыдущая попытка)
+                                  // убирает у InputDecorator всю внутреннюю
+                                  // "коробочную" модель, из-за которой сам
+                                  // Flutter обычно и центрирует текст —
+                                  // без неё курсор/текст плавают
+                                  // непредсказуемо. isDense — штатный,
+                                  // хорошо протестированный способ сделать
+                                  // поле компактным, НЕ ломая эту модель;
+                                  // явный Center снаружи — подстраховка на
+                                  // случай, если сам бокс decorator'а
+                                  // всё-таки выйдет чуть выше строки текста.
+                                  child: Center(
+                                    child: TextField(
+                                      controller: _searchController,
+                                      focusNode: _searchFocusNode,
+                                      autofocus: true,
+                                      onChanged: _onSearchQueryChanged,
+                                      textAlignVertical: TextAlignVertical.center,
+                                      style: TextStyle(
+                                        color: AppColors.textPrimary,
+                                        fontSize: 15,
+                                      ),
+                                      decoration: InputDecoration(
+                                        isDense: true,
+                                        contentPadding: EdgeInsets.zero,
+                                        border: InputBorder.none,
+                                        hintText: tr('chat.searchHint'),
+                                        hintStyle: TextStyle(
+                                          color: AppColors.textMuted,
+                                          fontSize: 15,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                            ],
                           ),
                         ),
                       ),
@@ -4258,21 +4517,21 @@ class _ChatScreenState extends State<ChatScreen> {
                         // плавно меняла размер, а буквально новая раскладка
                         // с другой высотой встала на её место за один кадр.
                         child: SizedBox(
-                          height: _composerBlocked ? 56 : 48,
-                          child: _composerBlocked
+                          // Единая высота для обоих состояний (раньше была
+                          // 48/56 — но одновременная смена высоты ВМЕСТЕ с
+                          // 3D-переворотом (см. _FlipSwitcher ниже) выглядит
+                          // как поломанная анимация, а не монетка).
+                          height: 56,
+                          child: _FlipSwitcher(
+                            state: _composerBlocked,
+                            child: _composerBlocked
                               ? Center(
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 16,
                                     ),
                                     child: Text(
-                                      // Приоритет 1 (я заблокировал) выше
-                                      // приоритета 2 (заблокировали меня) —
-                                      // именно так, даже при взаимной
-                                      // блокировке, см. спецификацию.
-                                      _blockedByMe
-                                          ? tr('chat.blockedByMe')
-                                          : tr('chat.blockingMe'),
+                                      _blockedComposerText,
                                       textAlign: TextAlign.center,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
@@ -4426,6 +4685,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   ),
                                 ),
                             ],
+                          ),
                           ),
                         ),
                       ),
@@ -4645,6 +4905,173 @@ class _PulsingRecDotState extends State<_PulsingRecDot>
         ),
         child: SizedBox(width: 10, height: 10),
       ),
+    );
+  }
+}
+
+/// Подсветка пузыря, к которому только что перенёс поиск (см.
+/// _flashHighlight в _ChatScreenState) — по периметру, непрерывно
+/// затухающая и снова появляющаяся, пока виджет смонтирован (его
+/// монтирование/размонтирование целиком управляется снаружи условием
+/// isHighlighted — сам по себе таймер жизни не ограничивает).
+///
+/// ВАЖНО: это НЕ отдельная обёртка вокруг уже готового пузыря (так было
+/// раньше — оборачивающий Container с собственным border вокруг ЧУЖОГО
+/// Container с тем же borderRadius) — та версия давала видимый зазор между
+/// рамкой и самим пузырём при малейшем несовпадении их размеров. Здесь
+/// анимированная рамка — часть ТОЙ ЖЕ decoration, что красит сам пузырь
+/// (цвет фона + скругление задаются здесь же, через baseColor/borderRadius,
+/// а не отдельным внешним Container'ом) — то есть это буквально одна и та
+/// же коробка, а не две вложенные, так что рамка физически не может
+/// оторваться от края пузыря.
+/// Переключение между обычным композером и заглушкой-блокировкой —
+/// "переворот монетки" вокруг вертикальной оси (3D rotateY), а не
+/// мгновенная подмена/кроссфейд: содержимое подменяется РОВНО в середине
+/// поворота (90°, когда карточка развёрнута ребром к экрану и физически
+/// не видна ни с одной стороны) — сам момент подмены незаметен, весь
+/// переход читается как одно целостное вращение, а не два наложенных
+/// эффекта.
+class _FlipSwitcher extends StatefulWidget {
+  final bool state;
+  final Widget child;
+
+  const _FlipSwitcher({required this.state, required this.child});
+
+  @override
+  State<_FlipSwitcher> createState() => _FlipSwitcherState();
+}
+
+class _FlipSwitcherState extends State<_FlipSwitcher>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  Widget? _oldChild;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 420),
+    )..value = 1;
+  }
+
+  @override
+  void didUpdateWidget(covariant _FlipSwitcher old) {
+    super.didUpdateWidget(old);
+    if (old.state != widget.state) {
+      _oldChild = old.child;
+      _controller
+        ..value = 0
+        ..forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final t = _controller.value;
+        if (t >= 1 || _oldChild == null) {
+          return widget.child;
+        }
+        // 0..0.5 — старое содержимое разворачивается от 0° до 90°;
+        // 0.5..1 — новое досворачивается от -90° до 0°. Угол непрерывен
+        // (в момент подмены оба конца совпадают на ±90°, т.е. на
+        // "невидимом" ребре), поэтому визуально это одно движение.
+        final showingOld = t < 0.5;
+        final angle = showingOld ? t * math.pi : (t - 1) * math.pi;
+        return Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.identity()
+            ..setEntry(3, 2, 0.0018)
+            ..rotateY(angle),
+          child: showingOld ? _oldChild : widget.child,
+        );
+      },
+    );
+  }
+}
+
+class _PulsingHighlight extends StatefulWidget {
+  final Widget child;
+  final Color baseColor;
+  final BorderRadius borderRadius;
+  final EdgeInsetsGeometry padding;
+  final BoxConstraints? constraints;
+
+  const _PulsingHighlight({
+    required this.child,
+    required this.baseColor,
+    required this.borderRadius,
+    required this.padding,
+    this.constraints,
+  });
+
+  @override
+  State<_PulsingHighlight> createState() => _PulsingHighlightState();
+}
+
+class _PulsingHighlightState extends State<_PulsingHighlight>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final t = CurvedAnimation(
+          parent: _controller,
+          curve: Curves.easeInOut,
+        ).value;
+        return Container(
+          padding: widget.padding,
+          constraints: widget.constraints,
+          decoration: BoxDecoration(
+            color: widget.baseColor,
+            borderRadius: widget.borderRadius,
+            border: Border.all(
+              color: Colors.amber.withValues(alpha: 0.35 + 0.65 * t),
+              width: 2.5,
+            ),
+            // Тот же decoration, что красит сам пузырь (не отдельная
+            // обёртка) — тень тут физически не может "оторваться" от
+            // рамки, в отличие от прошлой версии с двумя вложенными
+            // Container'ами.
+            boxShadow: [
+              BoxShadow(
+                color: Colors.amber.withValues(alpha: 0.35 * t),
+                blurRadius: 12 * t,
+                spreadRadius: 1.5 * t,
+              ),
+            ],
+          ),
+          child: child,
+        );
+      },
+      child: widget.child,
     );
   }
 }

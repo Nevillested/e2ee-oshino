@@ -43,6 +43,7 @@ class WebSocketService {
   final _callController = StreamController<Map<String, dynamic>>.broadcast();
   final _presenceController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final _blockStatusController = StreamController<void>.broadcast();
 
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
   Stream<Map<String, dynamic>> get callSignals => _callController.stream;
@@ -50,6 +51,12 @@ class WebSocketService {
   // сейчас) — см. WSMsgPresence/WSMsgTypingRelay на сервере, отдаются как
   // есть (сырой decoded JSON), разбор — на стороне chat_screen.dart.
   Stream<Map<String, dynamic>> get presenceEvents => _presenceController.stream;
+  // "block_status_changed" — кто-то нас заблокировал/разблокировал (см.
+  // notifyBlockStatusChanged на сервере) — БЕЗ деталей в самом сигнале,
+  // сервер остаётся единственным источником истины: получатели просто
+  // перезапрашивают актуальное состояние (см. ApiClient.getBlockedContacts)
+  // вместо того чтобы ждать следующего открытия чата.
+  Stream<void> get blockStatusEvents => _blockStatusController.stream;
   bool get isConnected => _channel != null;
 
   final _sessionInvalidController = StreamController<void>.broadcast();
@@ -133,6 +140,11 @@ class WebSocketService {
 
           if (type == 'presence' || type == 'typing') {
             _presenceController.add(outer);
+            return;
+          }
+
+          if (type == 'block_status_changed') {
+            _blockStatusController.add(null);
             return;
           }
 

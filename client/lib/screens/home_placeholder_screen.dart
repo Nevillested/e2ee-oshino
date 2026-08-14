@@ -78,6 +78,13 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
     PushService.init();
     unawaited(_syncMutedChats(token));
     unawaited(_syncBlockedContacts(token));
+    // Живой сигнал "кто-то поменял блокировку" (см. notifyBlockStatusChanged
+    // на сервере) — без него локальный кэш обновлялся бы только при
+    // следующем подключении/входе в конкретный чат, а не сразу, пока
+    // список чатов уже открыт.
+    _webSocketService.blockStatusEvents.listen(
+      (_) => unawaited(_syncBlockedContacts(token)),
+    );
 
     CallService.instance.startListening();
 
@@ -182,6 +189,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
   Future<void> _syncBlockedContacts(String token) async {
     try {
       final blocked = await ApiClient().getBlockedContacts(token);
+      if (blocked == null) return;
       await ChatStore.syncBlockedFromServer(
         blocked.blockedByMe.toSet(),
         blocked.blockingMe.toSet(),
@@ -254,18 +262,41 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
   Future<void> _setBlocked(ChatSummary entry, bool blocked) async {
     await ChatStore.setChatBlockedByMe(entry.peerLogin, blocked);
     final accountId = entry.lastKnownAccountId;
-    if (accountId == null) return;
+    // Серверный вызов не прошёл (или accountId ещё не известен) —
+    // ОТКАТЫВАЕМ локальный флаг, а не оставляем его молча висеть
+    // "заблокировано" при том, что сервер об этом не знает: именно так
+    // выглядел баг "плашка блокировки на миг появляется и тут же
+    // пропадает" — композер держался на неправде до следующей
+    // синхронизации с сервером, которая её и поправляла обратно.
+    if (accountId == null) {
+      debugPrint(
+        '_setBlocked: peerLogin=${entry.peerLogin} has no lastKnownAccountId, '
+        'cannot call server — is this chat fully resolved yet?',
+      );
+      await ChatStore.setChatBlockedByMe(entry.peerLogin, !blocked);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(tr('error.blockFailed'))));
+      }
+      return;
+    }
     try {
       final token = await Session.getToken();
-      if (token == null) return;
+      if (token == null) throw Exception('no session token');
       if (blocked) {
         await ApiClient().blockContact(token, accountId);
       } else {
         await ApiClient().unblockContact(token, accountId);
       }
-    } catch (_) {
-      // Локальный флаг уже выставлен — сервер подтянет его при следующем
-      // успешном вызове или следующей _syncBlockedContacts.
+    } catch (e) {
+      debugPrint('_setBlocked: server call failed for $accountId: $e');
+      await ChatStore.setChatBlockedByMe(entry.peerLogin, !blocked);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(tr('error.blockFailed'))));
+      }
     }
   }
 
@@ -563,6 +594,19 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
                         child: Icon(
                           Icons.notifications_off,
                           size: 14,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    // Заблокировано в любую сторону (я заблокировал или
+                    // заблокировали меня) — оба случая одинаково означают
+                    // "переписка в этом чате сейчас недоступна", см.
+                    // композер-заглушку в chat_screen.dart.
+                    if (entry.blockedByMe || entry.blockingMe)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: Icon(
+                          Icons.block,
+                          size: 13,
                           color: AppColors.textMuted,
                         ),
                       ),

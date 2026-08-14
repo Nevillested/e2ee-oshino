@@ -445,6 +445,9 @@ class ApiClient {
       body: jsonEncode({'peer_account_id': peerAccountId}),
     );
     if (response.statusCode != 200) {
+      debugPrint(
+        'blockContact failed: status=${response.statusCode} body=${response.body}',
+      );
       throw ApiException(tr('error.blockFailed'));
     }
   }
@@ -459,6 +462,9 @@ class ApiClient {
       body: jsonEncode({'peer_account_id': peerAccountId}),
     );
     if (response.statusCode != 200) {
+      debugPrint(
+        'unblockContact failed: status=${response.statusCode} body=${response.body}',
+      );
       throw ApiException(tr('error.blockFailed'));
     }
   }
@@ -467,7 +473,15 @@ class ApiClient {
   /// заблокировал меня), чтобы на старте приложения одним запросом
   /// восстановить, в каких чатах должна быть заглушка вместо панели
   /// сообщений и какая именно (приоритет 1 или 2 — см. chat_screen.dart).
-  Future<({List<String> blockedByMe, List<String> blockingMe})>
+  ///
+  /// Возвращает null при сбое (сеть/таймаут/не-200) — ЭТО ОТЛИЧАЕТСЯ от
+  /// пустых списков: пустой список означает "сервер точно сказал — блоков
+  /// нет", а null — "не удалось узнать". Раньше оба случая возвращали
+  /// одинаковые пустые списки, из-за чего временный сбой запроса выглядел
+  /// как "блоков нет" и затирал корректный локальный кэш обратно на
+  /// "не заблокирован" — вызывающий код обязан не трогать локальное
+  /// состояние при null, а не считать его равносильным пустому ответу.
+  Future<({List<String> blockedByMe, List<String> blockingMe})?>
   getBlockedContacts(String token) async {
     try {
       final response = await http
@@ -477,15 +491,19 @@ class ApiClient {
           )
           .timeout(const Duration(seconds: 8));
       if (response.statusCode != 200) {
-        return (blockedByMe: <String>[], blockingMe: <String>[]);
+        debugPrint(
+          'getBlockedContacts failed: status=${response.statusCode} body=${response.body}',
+        );
+        return null;
       }
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       return (
         blockedByMe: (data['blocked_by_me'] as List<dynamic>).cast<String>(),
         blockingMe: (data['blocking_me'] as List<dynamic>).cast<String>(),
       );
-    } catch (_) {
-      return (blockedByMe: <String>[], blockingMe: <String>[]);
+    } catch (e) {
+      debugPrint('getBlockedContacts exception: $e');
+      return null;
     }
   }
 

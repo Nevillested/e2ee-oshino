@@ -597,6 +597,12 @@ class AppStrings {
       AppLocale.ru: 'Вы не можете отправлять сообщения пользователю, который вас заблокировал',
       AppLocale.en: 'You can\'t send messages to a user who has blocked you',
     },
+    // Оба заблокировали друг друга — отдельная, третья формулировка (не
+    // приоритет 1 и не приоритет 2), см. спецификацию блокировки.
+    'chat.blockedMutual': {
+      AppLocale.ru: 'Просто знай, неприязнь друг к другу взаимная',
+      AppLocale.en: 'Just so you know — the dislike is mutual',
+    },
     'chat.searchHint': {
       AppLocale.ru: 'Поиск по переписке',
       AppLocale.en: 'Search chat',
