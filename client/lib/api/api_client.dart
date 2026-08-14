@@ -432,6 +432,63 @@ class ApiClient {
     }
   }
 
+  /// POST /contacts/block — запрещает отправку сообщений и звонков между
+  /// этой парой в ОБЕ стороны (см. проверку в websocket.go), а не только
+  /// со стороны блокирующего.
+  Future<void> blockContact(String token, String peerAccountId) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/contacts/block'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'peer_account_id': peerAccountId}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.blockFailed'));
+    }
+  }
+
+  Future<void> unblockContact(String token, String peerAccountId) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/contacts/unblock'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'peer_account_id': peerAccountId}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.blockFailed'));
+    }
+  }
+
+  /// GET /contacts/blocked — обе стороны сразу (кого заблокировал я, кто
+  /// заблокировал меня), чтобы на старте приложения одним запросом
+  /// восстановить, в каких чатах должна быть заглушка вместо панели
+  /// сообщений и какая именно (приоритет 1 или 2 — см. chat_screen.dart).
+  Future<({List<String> blockedByMe, List<String> blockingMe})>
+  getBlockedContacts(String token) async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('${ApiConfig.baseUrl}/contacts/blocked'),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        return (blockedByMe: <String>[], blockingMe: <String>[]);
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return (
+        blockedByMe: (data['blocked_by_me'] as List<dynamic>).cast<String>(),
+        blockingMe: (data['blocking_me'] as List<dynamic>).cast<String>(),
+      );
+    } catch (_) {
+      return (blockedByMe: <String>[], blockingMe: <String>[]);
+    }
+  }
+
   Future<Map<String, dynamic>> getPrekeyBundle(
     String token,
     String deviceId,

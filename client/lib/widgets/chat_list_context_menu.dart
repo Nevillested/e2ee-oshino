@@ -4,7 +4,16 @@ import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 
-enum ChatListMenuAction { pin, unpin, mute, unmute, clearHistory, deleteChat }
+enum ChatListMenuAction {
+  pin,
+  unpin,
+  mute,
+  unmute,
+  block,
+  unblock,
+  clearHistory,
+  deleteChat,
+}
 
 const double _kMenuWidth = 230.0;
 const double _kItemHeight = 46.0;
@@ -22,8 +31,9 @@ Future<ChatListMenuAction?> showChatListContextMenu(
   required Offset tapPosition,
   required bool isPinned,
   required bool isMuted,
+  required bool isBlocked,
 }) {
-  final estimatedHeight = _kItemHeight * 4;
+  final estimatedHeight = _kItemHeight * 5;
   final mq = MediaQuery.of(context);
   final size = mq.size;
   const margin = 8.0;
@@ -48,6 +58,7 @@ Future<ChatListMenuAction?> showChatListContextMenu(
       top: top,
       isPinned: isPinned,
       isMuted: isMuted,
+      isBlocked: isBlocked,
       onClose: (result) {
         if (!completer.isCompleted) completer.complete(result);
         entry.remove();
@@ -63,6 +74,7 @@ class _ChatListContextMenuOverlay extends StatefulWidget {
   final double top;
   final bool isPinned;
   final bool isMuted;
+  final bool isBlocked;
   final void Function(ChatListMenuAction? result) onClose;
 
   const _ChatListContextMenuOverlay({
@@ -70,6 +82,7 @@ class _ChatListContextMenuOverlay extends StatefulWidget {
     required this.top,
     required this.isPinned,
     required this.isMuted,
+    required this.isBlocked,
     required this.onClose,
   });
 
@@ -140,6 +153,7 @@ class _ChatListContextMenuOverlayState
               child: _ChatListMenuContent(
                 isPinned: widget.isPinned,
                 isMuted: widget.isMuted,
+                isBlocked: widget.isBlocked,
                 onSelect: _close,
               ),
             ),
@@ -161,11 +175,13 @@ class _MenuItem {
 class _ChatListMenuContent extends StatelessWidget {
   final bool isPinned;
   final bool isMuted;
+  final bool isBlocked;
   final void Function(ChatListMenuAction action) onSelect;
 
   const _ChatListMenuContent({
     required this.isPinned,
     required this.isMuted,
+    required this.isBlocked,
     required this.onSelect,
   });
 
@@ -193,6 +209,18 @@ class _ChatListMenuContent extends StatelessWidget {
               Icons.notifications_off_outlined,
               tr('chatMenu.mute'),
               ChatListMenuAction.mute,
+            ),
+      isBlocked
+          ? _MenuItem(
+              Icons.block,
+              tr('chatMenu.unblock'),
+              ChatListMenuAction.unblock,
+            )
+          : _MenuItem(
+              Icons.block,
+              tr('chatMenu.block'),
+              ChatListMenuAction.block,
+              color: Colors.redAccent,
             ),
       _MenuItem(
         Icons.cleaning_services_outlined,

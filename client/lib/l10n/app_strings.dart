@@ -142,6 +142,14 @@ class AppStrings {
       AppLocale.ru: 'Включить уведомления',
       AppLocale.en: 'Unmute notifications',
     },
+    'chatMenu.block': {
+      AppLocale.ru: 'Заблокировать',
+      AppLocale.en: 'Block',
+    },
+    'chatMenu.unblock': {
+      AppLocale.ru: 'Разблокировать',
+      AppLocale.en: 'Unblock',
+    },
     'chatMenu.clearHistory': {
       AppLocale.ru: 'Очистить историю',
       AppLocale.en: 'Clear history',
@@ -285,6 +293,10 @@ class AppStrings {
     'error.muteFailed': {
       AppLocale.ru: 'Не удалось изменить уведомления',
       AppLocale.en: 'Failed to change notifications',
+    },
+    'error.blockFailed': {
+      AppLocale.ru: 'Не удалось изменить блокировку',
+      AppLocale.en: 'Failed to change block status',
     },
     'error.noAccountId': {
       AppLocale.ru: 'Сервер не вернул account_id пользователя',
@@ -573,6 +585,33 @@ class AppStrings {
     'chat.messageHint': {
       AppLocale.ru: 'Сообщение',
       AppLocale.en: 'Message',
+    },
+    // Приоритет 1 — я заблокировал собеседника (показывается даже если
+    // блокировка взаимная, см. _blockedComposerText в chat_screen.dart).
+    'chat.blockedByMe': {
+      AppLocale.ru: 'Вы не можете отправлять сообщения пользователю, которого заблокировали',
+      AppLocale.en: 'You can\'t send messages to a user you have blocked',
+    },
+    // Приоритет 2 — собеседник заблокировал меня (а я его — нет).
+    'chat.blockingMe': {
+      AppLocale.ru: 'Вы не можете отправлять сообщения пользователю, который вас заблокировал',
+      AppLocale.en: 'You can\'t send messages to a user who has blocked you',
+    },
+    'chat.searchHint': {
+      AppLocale.ru: 'Поиск по переписке',
+      AppLocale.en: 'Search chat',
+    },
+    'chat.showAsList': {
+      AppLocale.ru: 'Показать списком',
+      AppLocale.en: 'Show as list',
+    },
+    'chat.showAsChat': {
+      AppLocale.ru: 'Показать в чате',
+      AppLocale.en: 'Show as chat',
+    },
+    'chat.searchNoResults': {
+      AppLocale.ru: 'Ничего не найдено',
+      AppLocale.en: 'No results',
     },
     'chat.captionHint': {
       AppLocale.ru: 'Добавьте описание',

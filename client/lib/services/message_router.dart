@@ -18,7 +18,14 @@ import 'websocket_service.dart';
 
 /// Служебные типы control-сообщений — синхронизируются как обычно, но не
 /// считаются "сообщением" для звукового уведомления (см. _processIncoming).
-const _silentTypes = {'reaction', 'pin', 'edit', 'delete', 'delete_chat'};
+const _silentTypes = {
+  'reaction',
+  'pin',
+  'edit',
+  'delete',
+  'delete_chat',
+  'read_receipt',
+};
 
 class MessageRouter {
   static bool _started = false;
@@ -245,6 +252,15 @@ class MessageRouter {
         // тоже убираем сам чат из списка (см. InnerMessage.deleteChat), а не
         // просто оставляем его пустым, как после обычной очистки истории.
         await ChatStore.removeChat(ownerInfo.login);
+      } else if (inner.type == 'read_receipt') {
+        // Собеседник подтверждает, что реально увидел перечисленные — это
+        // НАШИ сообщения (targetIds всегда ссылаются на сообщения автора
+        // квитанции, т.е. на нас), поэтому статус меняем без разбора
+        // isMine, как и в остальных ветках выше.
+        final data = jsonDecode(inner.body) as Map<String, dynamic>;
+        final targetIds =
+            (data['target_ids'] as List<dynamic>?)?.cast<String>() ?? const [];
+        await ChatStore.markMessagesRead(ownerInfo.login, targetIds);
       }
 
       // Реакция/пин/правка/удаление — служебные события, не самостоятельные

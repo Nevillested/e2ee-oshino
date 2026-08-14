@@ -114,6 +114,11 @@ class _ChatScreenState extends State<ChatScreen> {
   String _currentPeerDeviceId = '';
   Map<String, dynamic>? _pendingInitHeader;
   bool _isPeerDeleted = false;
+  // См. _loadKnownDeletedStatus/ChatSummary.blockedByMe/.blockingMe —
+  // определяют, какая из двух приоритетных надписей (если вообще) заменяет
+  // панель ввода целиком (см. _buildComposer/_buildBlockedPlaceholder).
+  bool _blockedByMe = false;
+  bool _blockingMe = false;
   bool _userAtBottom = true;
   bool _initialLoadComplete = false;
   int _lastMessageCount = 0;
@@ -226,7 +231,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // _wrapInteractive): единственный тап откладывает открытие контекстного
   // меню на _doubleTapWindow — если за это время придёт второй тап по тому
   // же сообщению, это двойной тап (реакция по умолчанию), а не одиночный.
-  static const _doubleTapWindow = Duration(milliseconds: 190);
+  static const _doubleTapWindow = Duration(milliseconds: 220);
   Timer? _pendingTapTimer;
   String? _lastTapMessageId;
   DateTime? _lastTapTime;
@@ -237,6 +242,124 @@ class _ChatScreenState extends State<ChatScreen> {
   /// только локальное сохранение в ChatStore и (для медиа) загрузку на
   /// MinIO под собственным account id.
   bool get _isNotes => widget.peerLogin == notesPeerLogin;
+
+  /// Панель ввода целиком заменяется заглушкой, если блокировка есть хоть
+  /// в одну сторону (см. _blockedByMe/_blockingMe и приоритет текста в
+  /// chat.blockedByMe/chat.blockingMe — если обе стороны заблокировали
+  /// друг друга, показывается именно первый приоритет).
+  bool get _composerBlocked => _blockedByMe || _blockingMe;
+
+  // Поиск по истории чата — целиком клиентская функция (вся история и так
+  // уже расшифрована и лежит в _messages, см. ChatStore), никакого похода
+  // на сервер не требуется. _searchMatches ниже пересчитывается на лету из
+  // _messages при каждой перестройке — истории редко бывает настолько
+  // много, чтобы это стало заметно дороже, чем сам ре-рендер списка.
+  bool _searchMode = false;
+  final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
+  String _searchQuery = '';
+  // Индекс ТЕКУЩЕГО совпадения внутри _searchMatches (0-based) — тот самый
+  // "N1" в счётчике "N1/N2" на панели поиска.
+  int _currentMatchIndex = 0;
+  // false — режим "chat" (кнопки Show as list / переход по совпадениям
+  // видны), true — режим "list" (справа кнопка "Show as chat").
+  bool _searchShowAsList = false;
+  String? _highlightedMessageId;
+  Timer? _highlightClearTimer;
+
+  List<StoredMessage> get _searchMatches {
+    if (_searchQuery.isEmpty) return const [];
+    final q = _searchQuery.toLowerCase();
+    return _messages
+        .where((m) => !m.isCallLog && m.text.toLowerCase().contains(q))
+        .toList();
+  }
+
+  int get _searchTotalCount => _searchQuery.isEmpty
+      ? _messages.where((m) => !m.isCallLog).length
+      : _searchMatches.length;
+
+  int get _searchCurrentNumber {
+    if (_searchQuery.isEmpty) return _searchTotalCount > 0 ? 1 : 0;
+    final matches = _searchMatches;
+    if (matches.isEmpty) return 0;
+    return _currentMatchIndex.clamp(0, matches.length - 1) + 1;
+  }
+
+  void _enterSearchMode() {
+    setState(() {
+      _searchMode = true;
+      _searchQuery = '';
+      _currentMatchIndex = 0;
+      _searchShowAsList = false;
+    });
+    _searchController.clear();
+  }
+
+  void _exitSearchMode() {
+    _searchFocusNode.unfocus();
+    setState(() {
+      _searchMode = false;
+      _searchShowAsList = false;
+      _highlightedMessageId = null;
+    });
+  }
+
+  void _onSearchQueryChanged(String value) {
+    setState(() {
+      _searchQuery = value;
+      _currentMatchIndex = 0;
+    });
+    if (value.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToSearchMatch());
+    }
+  }
+
+  void _searchGoNext() {
+    final matches = _searchMatches;
+    if (matches.isEmpty) return;
+    setState(() => _currentMatchIndex = (_currentMatchIndex + 1) % matches.length);
+    _jumpToSearchMatch();
+  }
+
+  void _searchGoPrev() {
+    final matches = _searchMatches;
+    if (matches.isEmpty) return;
+    setState(
+      () => _currentMatchIndex =
+          (_currentMatchIndex - 1 + matches.length) % matches.length,
+    );
+    _jumpToSearchMatch();
+  }
+
+  void _jumpToSearchMatch() {
+    final matches = _searchMatches;
+    if (matches.isEmpty || _currentMatchIndex >= matches.length) return;
+    final target = matches[_currentMatchIndex];
+    _scrollToMessage(target.messageId);
+    _flashHighlight(target.messageId);
+  }
+
+  /// Кратковременная подсветка пузыря, к которому только что перенесло
+  /// поиском/закрепом — без неё "анимированный переход" (см. спецификацию)
+  /// выглядел бы просто как скролл в случайное место без объяснения, куда
+  /// именно и почему.
+  void _flashHighlight(String messageId) {
+    _highlightClearTimer?.cancel();
+    setState(() => _highlightedMessageId = messageId);
+    _highlightClearTimer = Timer(const Duration(milliseconds: 1200), () {
+      if (mounted) setState(() => _highlightedMessageId = null);
+    });
+  }
+
+  void _selectSearchResult(StoredMessage msg) {
+    final idx = _searchMatches.indexWhere((m) => m.messageId == msg.messageId);
+    setState(() {
+      _searchShowAsList = false;
+      if (idx != -1) _currentMatchIndex = idx;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToSearchMatch());
+  }
 
   @override
   void initState() {
@@ -359,6 +482,8 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _isPeerDeleted = match.first.isDeleted;
         _pinnedMessageId = match.first.pinnedMessageId;
+        _blockedByMe = match.first.blockedByMe;
+        _blockingMe = match.first.blockingMe;
       });
     }
   }
@@ -411,6 +536,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages = messages;
       _scrollReady = true;
     });
+    unawaited(_maybeSendReadReceipts());
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted || !_scrollController.hasClients) return;
@@ -446,10 +572,29 @@ class _ChatScreenState extends State<ChatScreen> {
     _lastMessageCount = messages.length;
 
     setState(() => _messages = messages);
+    unawaited(_maybeSendReadReceipts());
 
     if (_initialLoadComplete && _userAtBottom && countChanged) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     }
+  }
+
+  /// Открытие чата (и любое последующее обновление истории, пока он
+  /// открыт) считается "увидел все входящие сообщения" — упрощённо, без
+  /// отслеживания видимости конкретных пузырей во вьюпорте: этого
+  /// достаточно для 1:1 переписки, где вся история грузится целиком (см.
+  /// _bootstrapHistory), а не постранично. markReadReceiptsSent делает
+  /// повторные вызовы дешёвыми — уже отмеченные сообщения просто
+  /// отфильтровываются здесь и на диск повторно не пишутся.
+  Future<void> _maybeSendReadReceipts() async {
+    if (_isNotes) return;
+    final toMark = _messages
+        .where((m) => !m.isMine && !m.readReceiptSent)
+        .map((m) => m.messageId)
+        .toList();
+    if (toMark.isEmpty) return;
+    await ChatStore.markReadReceiptsSent(widget.peerLogin, toMark);
+    await _sendControlMessage(InnerMessage.readReceipt(targetMessageIds: toMark));
   }
 
   /// Прыгает к offset'у, а затем несколько раз перепроверяет и
@@ -2970,6 +3115,8 @@ class _ChatScreenState extends State<ChatScreen> {
           size: 13,
           color: onColoredBubble ? Colors.white70 : AppColors.textMuted,
         );
+      case 'read':
+        return const Icon(Icons.done_all, size: 13, color: Colors.white);
       default:
         return const Icon(Icons.done, size: 13, color: Colors.lightBlueAccent);
     }
@@ -3313,13 +3460,17 @@ class _ChatScreenState extends State<ChatScreen> {
     final hasPending = group.any(
       (m) => m.status == 'sending' || m.status == 'queued',
     );
+    final allRead = group.every((m) => m.status == 'read');
     final aggregateStatus = hasFailed
         ? 'failed'
-        : (hasPending ? 'sending' : 'sent');
+        : (hasPending ? 'sending' : (allRead ? 'read' : 'sent'));
     final maxWidth = MediaQuery.of(context).size.width * 0.72;
     final repMsg = textMsgs.isNotEmpty ? textMsgs.first : group.first;
     final key = _messageKeys.putIfAbsent(repMsg.messageId, () => GlobalKey());
 
+    final isHighlighted = group.any(
+      (m) => m.messageId == _highlightedMessageId,
+    );
     final bubble = Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
       padding: const EdgeInsets.all(6),
@@ -3327,6 +3478,9 @@ class _ChatScreenState extends State<ChatScreen> {
       decoration: BoxDecoration(
         color: isMine ? AppColors.primary : AppColors.surface,
         borderRadius: BorderRadius.circular(14),
+        border: isHighlighted
+            ? Border.all(color: Colors.amber, width: 2)
+            : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -3433,6 +3587,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final maxTextWidth = MediaQuery.of(context).size.width * 0.65;
+    final isHighlighted = msg.messageId == _highlightedMessageId;
 
     final bubble = Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -3440,6 +3595,9 @@ class _ChatScreenState extends State<ChatScreen> {
       decoration: BoxDecoration(
         color: msg.isMine ? AppColors.primary : AppColors.surface,
         borderRadius: BorderRadius.circular(14),
+        border: isHighlighted
+            ? Border.all(color: Colors.amber, width: 2)
+            : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3494,6 +3652,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _pendingTapTimer?.cancel();
     _scrollSaveDebounce?.cancel();
     _keyboardHeightSettleTimer?.cancel();
+    _highlightClearTimer?.cancel();
+    _searchController.dispose();
+    _searchFocusNode.dispose();
     // Если пользователь ушёл с экрана прямо посреди записи — обрываем её
     // молча, не оставляя висящий микрофон/камеру и временный файл.
     _recTicker?.cancel();
@@ -3682,6 +3843,128 @@ class _ChatScreenState extends State<ChatScreen> {
     return const SizedBox.shrink();
   }
 
+  /// Панель управления поиском — "прилеплена" к клавиатуре (занимает то же
+  /// место в Column, что и обычный композер, см. build()): счётчик
+  /// N1/N2 слева, кнопки перехода к следующему/предыдущему совпадению
+  /// строго по центру (только в режиме "chat"), переключатель
+  /// "Show as list"/"Show as chat" справа.
+  Widget _buildSearchControlPanel() {
+    final hasMatches = _searchMatches.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: SizedBox(
+        height: 40,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '$_searchCurrentNumber/$_searchTotalCount',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+              ),
+            ),
+            if (!_searchShowAsList)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildSearchNavButton(
+                    Icons.keyboard_arrow_down,
+                    hasMatches ? _searchGoNext : null,
+                  ),
+                  const SizedBox(width: 10),
+                  _buildSearchNavButton(
+                    Icons.keyboard_arrow_up,
+                    hasMatches ? _searchGoPrev : null,
+                  ),
+                ],
+              ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: _buildShowAsToggle(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchNavButton(IconData icon, VoidCallback? onTap) {
+    return Material(
+      color: AppColors.surface,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(7),
+          child: Icon(
+            icon,
+            size: 20,
+            color: onTap == null ? AppColors.textMuted : AppColors.textPrimary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShowAsToggle() {
+    return Material(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => setState(() => _searchShowAsList = !_searchShowAsList),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          child: Text(
+            _searchShowAsList ? tr('chat.showAsChat') : tr('chat.showAsList'),
+            style: TextStyle(
+              color: AppColors.primary,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Режим "list" — все совпадения одним списком, новые сверху (как в
+  /// строке поиска Телеграма); тап закрывает список и переносит к
+  /// сообщению в самом чате (см. _selectSearchResult).
+  Widget _buildSearchResultsList() {
+    final matches = _searchMatches.reversed.toList();
+    if (matches.isEmpty) {
+      return Center(
+        child: Text(
+          tr('chat.searchNoResults'),
+          style: TextStyle(color: AppColors.textMuted),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: matches.length,
+      itemBuilder: (context, index) {
+        final msg = matches[index];
+        return ListTile(
+          title: Text(
+            msg.text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: AppColors.textPrimary),
+          ),
+          subtitle: Text(
+            formatChatTime(msg.timestamp),
+            style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+          ),
+          onTap: () => _selectSearchResult(msg),
+        );
+      },
+    );
+  }
+
   /// Общая точка для системного back (см. PopScope) — в режиме выбора
   /// снимает выбор, при открытой только эмодзи-панели закрывает её, иначе
   /// уходит из чата. Интерактивный свайп-назад из любой точки экрана
@@ -3694,6 +3977,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _closeContextMenu!();
     } else if (_selectionMode) {
       _exitSelectionMode();
+    } else if (_searchMode) {
+      _exitSearchMode();
     } else if (emojiOnlyVisible) {
       setState(() => _emojiMode = false);
     } else {
@@ -3759,7 +4044,8 @@ class _ChatScreenState extends State<ChatScreen> {
     // чат под шторкой сам "поджимался" бы, будто открыли его собственную
     // клавиатуру.
     final anyPanelOpen =
-        (keyboardVisible && _textFocusNode.hasFocus) ||
+        (keyboardVisible &&
+            (_textFocusNode.hasFocus || _searchFocusNode.hasFocus)) ||
         _emojiMode ||
         _awaitingKeyboardOpen;
     final reserved = anyPanelOpen ? _keyboardHeight : 0.0;
@@ -3775,13 +4061,17 @@ class _ChatScreenState extends State<ChatScreen> {
     _lastReserved = reserved;
 
     return PopScope(
-      canPop: _closeContextMenu == null && !_emojiMode && !_selectionMode,
+      canPop:
+          _closeContextMenu == null &&
+          !_emojiMode &&
+          !_selectionMode &&
+          !_searchMode,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         _handleBackAction(emojiOnlyVisible: _emojiMode);
       },
       child: SwipeBackDetector(
-        enabled: !_emojiMode && !_selectionMode,
+        enabled: !_emojiMode && !_selectionMode && !_searchMode,
         onBlockedSwipe: () => _handleBackAction(emojiOnlyVisible: _emojiMode),
         child: Scaffold(
           resizeToAvoidBottomInset: false,
@@ -3828,24 +4118,82 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                       ],
                     )
+                  : _searchMode
+                  ? AppBar(
+                      key: const ValueKey('search_appbar'),
+                      titleSpacing: 4,
+                      leading: Center(
+                        child: Material(
+                          color: AppColors.surface,
+                          shape: const CircleBorder(),
+                          child: InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: _exitSearchMode,
+                            child: const Padding(
+                              padding: EdgeInsets.all(9),
+                              child: Icon(Icons.arrow_back, size: 20),
+                            ),
+                          ),
+                        ),
+                      ),
+                      title: Container(
+                        height: 40,
+                        alignment: Alignment.centerLeft,
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: TextField(
+                          controller: _searchController,
+                          focusNode: _searchFocusNode,
+                          autofocus: true,
+                          onChanged: _onSearchQueryChanged,
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 15,
+                          ),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            border: InputBorder.none,
+                            hintText: tr('chat.searchHint'),
+                            hintStyle: TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
                   : AppBar(
                       key: const ValueKey('normal_appbar'),
                       centerTitle: true,
                       title: _buildAppBarTitle(),
-                      actions: _isNotes
-                          ? null
-                          : [
-                              IconButton(
-                                icon: const Icon(Icons.call_outlined),
-                                iconSize: 26,
-                                padding: const EdgeInsets.all(14),
-                                constraints: const BoxConstraints(
-                                  minWidth: 56,
-                                  minHeight: 56,
-                                ),
-                                onPressed: _isPeerDeleted ? null : _startCall,
-                              ),
-                            ],
+                      actions: [
+                        IconButton(
+                          icon: const Icon(Icons.search),
+                          iconSize: 24,
+                          padding: const EdgeInsets.all(14),
+                          constraints: const BoxConstraints(
+                            minWidth: 52,
+                            minHeight: 52,
+                          ),
+                          onPressed: _enterSearchMode,
+                        ),
+                        if (!_isNotes)
+                          IconButton(
+                            icon: const Icon(Icons.call_outlined),
+                            iconSize: 26,
+                            padding: const EdgeInsets.all(14),
+                            constraints: const BoxConstraints(
+                              minWidth: 56,
+                              minHeight: 56,
+                            ),
+                            onPressed: _isPeerDeleted || _composerBlocked
+                                ? null
+                                : _startCall,
+                          ),
+                      ],
                     ),
             ),
           ),
@@ -3863,7 +4211,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     // прыгнул бы туда, где был (тот самый "мигает" баг).
                     // Пустая область на эти несколько миллисекунд куда менее
                     // заметна, чем видимый прыжок по уже отрисованному списку.
-                    child: !_scrollReady
+                    child: _searchMode && _searchShowAsList
+                        ? _buildSearchResultsList()
+                        : !_scrollReady
                         ? const SizedBox.shrink()
                         : Builder(
                             builder: (context) {
@@ -3882,12 +4232,14 @@ class _ChatScreenState extends State<ChatScreen> {
                             },
                           ),
                   ),
-                  _buildComposerBanner(),
+                  if (!_composerBlocked && !_searchMode) _buildComposerBanner(),
                   SafeArea(
                     key: _composerAreaKey,
                     top: false,
                     bottom: false,
-                    child: Padding(
+                    child: _searchMode
+                        ? _buildSearchControlPanel()
+                        : Padding(
                       padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
                       child: Container(
                         decoration: BoxDecoration(
@@ -3906,7 +4258,32 @@ class _ChatScreenState extends State<ChatScreen> {
                         // плавно меняла размер, а буквально новая раскладка
                         // с другой высотой встала на её место за один кадр.
                         child: SizedBox(
-                          height: 48,
+                          height: _composerBlocked ? 56 : 48,
+                          child: _composerBlocked
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                    ),
+                                    child: Text(
+                                      // Приоритет 1 (я заблокировал) выше
+                                      // приоритета 2 (заблокировали меня) —
+                                      // именно так, даже при взаимной
+                                      // блокировке, см. спецификацию.
+                                      _blockedByMe
+                                          ? tr('chat.blockedByMe')
+                                          : tr('chat.blockingMe'),
+                                      textAlign: TextAlign.center,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: AppColors.textMuted,
+                                        fontSize: 12.5,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              :
                           // Stack вместо простого условного Row — поле ввода
                           // (со всем состоянием фокуса) теперь НЕ убирается
                           // из дерева на время записи, а просто визуально
@@ -3917,7 +4294,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           // него фокус — отсюда самопроизвольно закрывалась
                           // клавиатура. Offstage держит сам виджет (и его
                           // FocusNode) смонтированным всё это время.
-                          child: Stack(
+                          Stack(
                             children: [
                               Positioned.fill(
                                 child: Offstage(

@@ -56,6 +56,13 @@ class StoredMessage {
   final String? myReaction;
   final String? peerReaction;
 
+  /// Только для ЧУЖИХ сообщений (isMine == false) — отправили ли мы уже
+  /// собеседнику подтверждение прочтения этого конкретного сообщения (см.
+  /// InnerMessage.readReceipt). Без этого флага пришлось бы либо слать
+  /// подтверждение по всей истории чата заново при каждом открытии, либо
+  /// вообще не знать, что уже подтверждено.
+  final bool readReceiptSent;
+
   StoredMessage(
     this.messageId,
     this.text,
@@ -86,6 +93,7 @@ class StoredMessage {
     this.edited = false,
     this.myReaction,
     this.peerReaction,
+    this.readReceiptSent = false,
   });
 
   /// Единая точка "поменять несколько полей, остальное скопировать как
@@ -112,6 +120,7 @@ class StoredMessage {
     bool clearMyReaction = false,
     String? peerReaction,
     bool clearPeerReaction = false,
+    bool? readReceiptSent,
   }) {
     return StoredMessage(
       messageId,
@@ -147,6 +156,7 @@ class StoredMessage {
       peerReaction: clearPeerReaction
           ? null
           : (peerReaction ?? this.peerReaction),
+      readReceiptSent: readReceiptSent ?? this.readReceiptSent,
     );
   }
 
@@ -180,6 +190,7 @@ class StoredMessage {
     'edited': edited,
     'my_reaction': myReaction,
     'peer_reaction': peerReaction,
+    'read_receipt_sent': readReceiptSent,
   };
 
   static StoredMessage fromJson(Map<String, dynamic> j) => StoredMessage(
@@ -212,6 +223,7 @@ class StoredMessage {
     edited: j['edited'] as bool? ?? false,
     myReaction: j['my_reaction'] as String?,
     peerReaction: j['peer_reaction'] as String?,
+    readReceiptSent: j['read_receipt_sent'] as bool? ?? false,
   );
 }
 
@@ -236,6 +248,13 @@ class ChatSummary {
   /// ApiClient.muteChat — сервер не шлёт будящий push, пока чат замьючен).
   bool muted;
 
+  /// Две независимые стороны блокировки (см. ApiClient.getBlockedContacts):
+  /// blockedByMe — заблокировал ли Я этого собеседника (надпись первого
+  /// приоритета в композере-заглушке); blockingMe — заблокировал ли ОН
+  /// меня (надпись второго приоритета, если сам я его не блокировал).
+  bool blockedByMe;
+  bool blockingMe;
+
   ChatSummary(
     this.peerLogin,
     this.lastMessage,
@@ -247,6 +266,8 @@ class ChatSummary {
     this.pinnedMessageId,
     this.chatPinnedAt,
     this.muted = false,
+    this.blockedByMe = false,
+    this.blockingMe = false,
   });
 }
 
@@ -522,6 +543,55 @@ class ChatStore {
     );
   }
 
+  /// Применяется у АВТОРА сообщений — приходит от собеседника через
+  /// InnerMessage.readReceipt после того, как он реально увидел эти (наши)
+  /// сообщения. Молча игнорирует id, которых уже нет в истории (удалены)
+  /// или которые уже 'read' — идемпотентно.
+  static Future<void> markMessagesRead(
+    String peerLogin,
+    List<String> messageIds,
+  ) async {
+    if (messageIds.isEmpty) return;
+    final ids = messageIds.toSet();
+    await _withPeerLock(peerLogin, () async {
+      final messages = await getMessages(peerLogin);
+      var changed = false;
+      for (var i = 0; i < messages.length; i++) {
+        if (ids.contains(messages[i].messageId) &&
+            messages[i].status != 'read') {
+          messages[i] = messages[i].copyWith(status: 'read');
+          changed = true;
+        }
+      }
+      if (changed) await _writeMessages(peerLogin, messages);
+    });
+    _changesController.add(null);
+  }
+
+  /// Применяется у ПОЛУЧАТЕЛЯ (перед тем как отправить собеседнику
+  /// InnerMessage.readReceipt) — отмечает, что квитанция за эти (чужие)
+  /// сообщения уже отправлена, чтобы не слать её повторно при следующем
+  /// открытии чата.
+  static Future<void> markReadReceiptsSent(
+    String peerLogin,
+    List<String> messageIds,
+  ) async {
+    if (messageIds.isEmpty) return;
+    final ids = messageIds.toSet();
+    await _withPeerLock(peerLogin, () async {
+      final messages = await getMessages(peerLogin);
+      var changed = false;
+      for (var i = 0; i < messages.length; i++) {
+        if (ids.contains(messages[i].messageId) &&
+            !messages[i].readReceiptSent) {
+          messages[i] = messages[i].copyWith(readReceiptSent: true);
+          changed = true;
+        }
+      }
+      if (changed) await _writeMessages(peerLogin, messages);
+    });
+  }
+
   /// Удаляет ЛОКАЛЬНО (и у себя при "у меня", и здесь же — при "у
   /// обоих", после того как control-сообщение уже отправлено собеседнику;
   /// сам факт отправки — забота вызывающего кода, не этой функции).
@@ -636,6 +706,49 @@ class ChatStore {
             mutedAccountIds.contains(p.lastKnownAccountId);
         if (p.muted != shouldBeMuted) {
           p.muted = shouldBeMuted;
+          changed = true;
+        }
+      }
+      if (changed) await _writePeers(peers);
+    });
+  }
+
+  /// Локальный флаг "я заблокировал" — серверный вызов (ApiClient.
+  /// blockContact/unblockContact) делает вызывающий код отдельно, эта
+  /// функция только сохраняет состояние для локального UI (композер-
+  /// заглушка в chat_screen.dart, пункт меню).
+  static Future<void> setChatBlockedByMe(String peerLogin, bool blocked) {
+    return _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
+      if (existing.isEmpty) return;
+      existing.first.blockedByMe = blocked;
+      await _writePeers(peers);
+    });
+  }
+
+  /// Сверяет локальные флаги блокировки (в обе стороны) с сервером (см.
+  /// ApiClient.getBlockedContacts) — вызывается один раз при подключении,
+  /// тем же способом, что и syncMutedFromServer.
+  static Future<void> syncBlockedFromServer(
+    Set<String> blockedByMeAccountIds,
+    Set<String> blockingMeAccountIds,
+  ) {
+    return _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      var changed = false;
+      for (final p in peers) {
+        final accountId = p.lastKnownAccountId;
+        final shouldBeBlockedByMe =
+            accountId != null && blockedByMeAccountIds.contains(accountId);
+        final shouldBeBlockingMe =
+            accountId != null && blockingMeAccountIds.contains(accountId);
+        if (p.blockedByMe != shouldBeBlockedByMe) {
+          p.blockedByMe = shouldBeBlockedByMe;
+          changed = true;
+        }
+        if (p.blockingMe != shouldBeBlockingMe) {
+          p.blockingMe = shouldBeBlockingMe;
           changed = true;
         }
       }
@@ -773,6 +886,8 @@ class ChatStore {
                 'pinned_message_id': p.pinnedMessageId,
                 'chat_pinned_at': p.chatPinnedAt,
                 'muted': p.muted,
+                'blocked_by_me': p.blockedByMe,
+                'blocking_me': p.blockingMe,
               },
             )
             .toList(),
@@ -798,6 +913,8 @@ class ChatStore {
             pinnedMessageId: e['pinned_message_id'] as String?,
             chatPinnedAt: e['chat_pinned_at'] as int?,
             muted: e['muted'] as bool? ?? false,
+            blockedByMe: e['blocked_by_me'] as bool? ?? false,
+            blockingMe: e['blocking_me'] as bool? ?? false,
           ),
         )
         .toList()

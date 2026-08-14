@@ -259,6 +259,20 @@ class InnerMessage {
     );
   }
 
+  /// "Прочитано" — отправитель этого control-сообщения сообщает, что
+  /// реально увидел перечисленные id (это ЧУЖИЕ для него сообщения — те,
+  /// что он получил). У получателя control-сообщения (исходного автора
+  /// этих id) статус меняется на 'read', см. ChatStore.markMessagesRead.
+  factory InnerMessage.readReceipt({required List<String> targetMessageIds}) {
+    final body = jsonEncode({'target_ids': targetMessageIds});
+    return InnerMessage(
+      messageId: _uuid.v4(),
+      type: 'read_receipt',
+      sentAt: DateTime.now().millisecondsSinceEpoch,
+      body: body,
+    );
+  }
+
   String encode() => jsonEncode({
     'message_id': messageId,
     'type': type,

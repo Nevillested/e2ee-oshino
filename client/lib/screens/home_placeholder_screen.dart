@@ -77,6 +77,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
     ChatStore.changes.listen((_) => _refreshChats());
     PushService.init();
     unawaited(_syncMutedChats(token));
+    unawaited(_syncBlockedContacts(token));
 
     CallService.instance.startListening();
 
@@ -173,6 +174,25 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
     }
   }
 
+  /// Тот же принцип, что и _syncMutedChats — сервер является единственным
+  /// источником истины (блокировка реально применяется ИМ, см. проверку в
+  /// websocket.go), локальная копия нужна только для мгновенного
+  /// отображения заглушки-композера/пункта меню (см. ChatStore.
+  /// syncBlockedFromServer).
+  Future<void> _syncBlockedContacts(String token) async {
+    try {
+      final blocked = await ApiClient().getBlockedContacts(token);
+      await ChatStore.syncBlockedFromServer(
+        blocked.blockedByMe.toSet(),
+        blocked.blockingMe.toSet(),
+      );
+    } catch (_) {
+      // Не удалось — не критично, локальное состояние (если уже было
+      // сохранено раньше) остаётся как есть, следующее подключение попробует
+      // снова.
+    }
+  }
+
   Future<void> _openChatMenu(ChatSummary entry, Offset position) async {
     HapticFeedback.mediumImpact();
     final action = await showChatListContextMenu(
@@ -180,6 +200,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
       tapPosition: position,
       isPinned: entry.chatPinnedAt != null,
       isMuted: entry.muted,
+      isBlocked: entry.blockedByMe,
     );
     if (action == null || !mounted) return;
 
@@ -195,6 +216,12 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
         break;
       case ChatListMenuAction.unmute:
         await _setMuted(entry, false);
+        break;
+      case ChatListMenuAction.block:
+        await _setBlocked(entry, true);
+        break;
+      case ChatListMenuAction.unblock:
+        await _setBlocked(entry, false);
         break;
       case ChatListMenuAction.clearHistory:
         await _clearOrDeleteChat(entry, alsoDeleteChat: false);
@@ -221,6 +248,24 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
       // Локальный флаг уже выставлен — сервер подтянет его при следующем
       // успешном вызове (следующий тап по пункту меню) или следующей
       // _syncMutedChats.
+    }
+  }
+
+  Future<void> _setBlocked(ChatSummary entry, bool blocked) async {
+    await ChatStore.setChatBlockedByMe(entry.peerLogin, blocked);
+    final accountId = entry.lastKnownAccountId;
+    if (accountId == null) return;
+    try {
+      final token = await Session.getToken();
+      if (token == null) return;
+      if (blocked) {
+        await ApiClient().blockContact(token, accountId);
+      } else {
+        await ApiClient().unblockContact(token, accountId);
+      }
+    } catch (_) {
+      // Локальный флаг уже выставлен — сервер подтянет его при следующем
+      // успешном вызове или следующей _syncBlockedContacts.
     }
   }
 
