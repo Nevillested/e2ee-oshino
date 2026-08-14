@@ -83,7 +83,8 @@ func runMenu(ctx context.Context, queries *db.Queries, reader *bufio.Reader) {
 		fmt.Println("=== Oshinobu — админ-утилита ===")
 		fmt.Println("1) Сменить пароль аккаунта")
 		fmt.Println("2) Сбросить TOTP-секрет (код аутентификатора)")
-		fmt.Println("3) Выход")
+		fmt.Println("3) Проверить состояние служб проекта")
+		fmt.Println("4) Выход")
 		fmt.Print("Выбор: ")
 
 		// Ошибка чтения (например, stdin неожиданно закрылся — EOF) не
@@ -100,6 +101,8 @@ func runMenu(ctx context.Context, queries *db.Queries, reader *bufio.Reader) {
 		case "2":
 			runAction(ctx, queries, reader, resetTOTP)
 		case "3":
+			runCheckServices(ctx)
+		case "4":
 			fmt.Println("Пока.")
 			return
 		default:
