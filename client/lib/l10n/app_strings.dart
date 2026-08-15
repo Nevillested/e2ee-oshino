@@ -36,6 +36,10 @@ class AppStrings {
       AppLocale.ru: 'Код из аутентификатора',
       AppLocale.en: 'Authenticator code',
     },
+    'auth.inviteCodeHint': {
+      AppLocale.ru: 'Пригласительный код',
+      AppLocale.en: 'Invite code',
+    },
     'auth.loggingIn': {
       AppLocale.ru: 'Идёт авторизация, подождите',
       AppLocale.en: 'Signing in, please wait',
@@ -186,6 +190,10 @@ class AppStrings {
     'error.loginReserved': {
       AppLocale.ru: 'Этот логин зарезервирован, выберите другой',
       AppLocale.en: 'This login is reserved, please choose another one',
+    },
+    'error.inviteCodeInvalid': {
+      AppLocale.ru: 'Неверный или уже использованный пригласительный код',
+      AppLocale.en: 'Invalid or already used invite code',
     },
     'error.wrongTotpCode': {
       AppLocale.ru: 'Неверный код подтверждения',

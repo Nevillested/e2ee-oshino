@@ -18,6 +18,7 @@ class RegisterScreen extends StatefulWidget {
 class _RegisterScreenState extends State<RegisterScreen> {
   final _loginController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _inviteCodeController = TextEditingController();
   final _apiClient = ApiClient();
 
   bool _passwordHidden = true;
@@ -28,6 +29,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void dispose() {
     _loginController.dispose();
     _passwordController.dispose();
+    _inviteCodeController.dispose();
     super.dispose();
   }
 
@@ -50,6 +52,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final totpUrl = await _apiClient.register(
         _loginController.text.trim(),
         _passwordController.text,
+        _inviteCodeController.text.trim(),
       );
 
       if (!mounted) return;
@@ -115,6 +118,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
               Text(
                 tr('password.requirementsHint'),
                 style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
+              const SizedBox(height: 14),
+              AuthTextField(
+                controller: _inviteCodeController,
+                hintText: tr('auth.inviteCodeHint'),
+                keyboardType: TextInputType.number,
               ),
               if (_errorText != null) ...[
                 const SizedBox(height: 14),

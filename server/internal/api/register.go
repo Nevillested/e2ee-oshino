@@ -7,21 +7,25 @@ import (
 	"net/http"
 	"server/internal/auth"
 	"server/internal/db"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pquerna/otp/totp"
 )
 
 type RegisterRequest struct {
-	Login    string `json:"login"`
-	Password string `json:"password"`
+	Login      string `json:"login"`
+	Password   string `json:"password"`
+	InviteCode string `json:"invite_code"`
 }
 
 type RegisterResponse struct {
 	TotpURL string `json:"totp_url"`
 }
 
-func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
+func NewRegisterHandler(queries *db.Queries, pool *pgxpool.Pool) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		//объявляем переменную, где будут храниться данные запроса на регистрацию
@@ -51,6 +55,15 @@ func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 		//пароля и смене пароля в настройках (см. auth.ValidatePassword).
 		if PolicyErr := auth.ValidatePassword(newRegisterRequest.Password); PolicyErr != nil {
 			http.Error(w, PolicyErr.Error(), http.StatusBadRequest)
+			return
+		}
+
+		//мессенджер закрыт для случайной публичной регистрации — код
+		//обязателен, сама его валидность (существует/ещё не использован)
+		//проверяется позже, атомарно вместе с созданием аккаунта (см. ниже).
+		var InviteCode string = strings.TrimSpace(newRegisterRequest.InviteCode)
+		if InviteCode == "" {
+			http.Error(w, "Нужен пригласительный код", http.StatusBadRequest)
 			return
 		}
 
@@ -89,8 +102,19 @@ func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 			TotpSecret:   NewSecret,
 		}
 
+		//аккаунт и гашение инвайт-кода — одна транзакция: если код окажется
+		//невалидным/уже использованным, откатывается и уже созданный аккаунт,
+		//а не остаётся в базе "наполовину зарегистрированным" без кода.
+		Tx, TxErr := pool.Begin(r.Context())
+		if TxErr != nil {
+			http.Error(w, "Ошибка регистрации аккаунта", http.StatusInternalServerError)
+			return
+		}
+		defer Tx.Rollback(r.Context())
+		TxQueries := queries.WithTx(Tx)
+
 		//вызываем функцию создания аккаунта, получая в ответ объект с данными аккаунта и ошибку
-		var NewRegAcc, NewRegAccError = queries.CreateAccount(r.Context(), NewAccountParamsStruct)
+		var NewRegAcc, NewRegAccError = TxQueries.CreateAccount(r.Context(), NewAccountParamsStruct)
 
 		//проверяем есть ли ошибка при создании аккаунта. Раньше лог "зарегистрирован
 		//новый аккаунт" писался ЗДЕСЬ безусловно, даже если аккаунт так и не
@@ -107,6 +131,28 @@ func NewRegisterHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 				http.Error(w, "Пользователь с таким логином уже зарегистрирован", http.StatusConflict)
 				return
 			}
+			http.Error(w, "Ошибка регистрации аккаунта", http.StatusInternalServerError)
+			return
+		}
+
+		//гасим инвайт-код на только что созданный аккаунт — WHERE used_at IS
+		//NULL в самом запросе (см. invite_codes.sql) делает это атомарным:
+		//при гонке двух регистраций с одним кодом ровно одна получит строку
+		//обратно, вторая — pgx.ErrNoRows.
+		var _, ConsumeErr = TxQueries.ConsumeInviteCode(r.Context(), db.ConsumeInviteCodeParams{
+			Code:            InviteCode,
+			UsedByAccountID: NewRegAcc.ID,
+		})
+		if ConsumeErr != nil {
+			if errors.Is(ConsumeErr, pgx.ErrNoRows) {
+				http.Error(w, "Неверный или уже использованный пригласительный код", http.StatusUnprocessableEntity)
+				return
+			}
+			http.Error(w, "Ошибка регистрации аккаунта", http.StatusInternalServerError)
+			return
+		}
+
+		if CommitErr := Tx.Commit(r.Context()); CommitErr != nil {
 			http.Error(w, "Ошибка регистрации аккаунта", http.StatusInternalServerError)
 			return
 		}

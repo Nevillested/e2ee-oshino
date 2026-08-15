@@ -73,7 +73,7 @@ func main() {
 	*/
 	mux.HandleFunc("GET /health", api.NewHealthHandler(queries))
 	mux.HandleFunc("GET /ws", api.NewWebSocketHandler(queries, registry, ackRegistry, pendingCalls))
-	mux.HandleFunc("POST /register", api.NewRegisterHandler(queries))
+	mux.HandleFunc("POST /register", api.NewRegisterHandler(queries, pg_connect))
 	mux.HandleFunc("POST /verify-totp", api.NewVerifyTOTPHandler(queries))
 	mux.HandleFunc("POST /login", api.NewLoginHandler(queries, loginLimiter))
 	mux.HandleFunc("POST /register-device", api.NewRegisterDeviceHandler(queries, registry))

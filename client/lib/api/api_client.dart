@@ -20,11 +20,19 @@ class ApiException implements Exception {
 class ApiClient {
   /// POST /register — регистрация нового аккаунта.
   /// Возвращает otpauth:// ссылку для приложения-аутентификатора.
-  Future<String> register(String login, String password) async {
+  Future<String> register(
+    String login,
+    String password,
+    String inviteCode,
+  ) async {
     final response = await http.post(
       Uri.parse('${ApiConfig.baseUrl}/register'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'login': login, 'password': password}),
+      body: jsonEncode({
+        'login': login,
+        'password': password,
+        'invite_code': inviteCode,
+      }),
     );
 
     if (response.statusCode == 409) {
@@ -32,6 +40,9 @@ class ApiClient {
     }
     if (response.statusCode == 403) {
       throw ApiException(tr('error.loginReserved'));
+    }
+    if (response.statusCode == 422) {
+      throw ApiException(tr('error.inviteCodeInvalid'));
     }
     if (response.statusCode != 200) {
       throw ApiException(

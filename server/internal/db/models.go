@@ -52,6 +52,14 @@ type EmailVerificationToken struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type InviteCode struct {
+	ID              pgtype.UUID
+	Code            string
+	CreatedAt       pgtype.Timestamptz
+	UsedAt          pgtype.Timestamptz
+	UsedByAccountID pgtype.UUID
+}
+
 type MediaFile struct {
 	ID                  pgtype.UUID
 	UploadedByAccountID pgtype.UUID
