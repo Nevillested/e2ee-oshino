@@ -43,33 +43,35 @@ class StreamingFileCipher {
     final totalSize = await inputFile.length();
     final sink = outputFile.openWrite();
 
-    var index = 0;
-    var processed = 0;
-    var buffer = <int>[];
+    try {
+      var index = 0;
+      var processed = 0;
+      var buffer = <int>[];
 
-    await for (final part in inputFile.openRead()) {
-      buffer.addAll(part);
-      while (buffer.length >= chunkSize) {
-        final chunk = buffer.sublist(0, chunkSize);
-        buffer = buffer.sublist(chunkSize);
-        await _encryptAndWriteChunk(
-          sink,
-          secretKey,
-          chunk,
-          index,
-          isLast: false,
-        );
-        index++;
-        processed += chunk.length;
-        onProgress?.call(totalSize == 0 ? 100 : processed / totalSize * 100);
+      await for (final part in inputFile.openRead()) {
+        buffer.addAll(part);
+        while (buffer.length >= chunkSize) {
+          final chunk = buffer.sublist(0, chunkSize);
+          buffer = buffer.sublist(chunkSize);
+          await _encryptAndWriteChunk(
+            sink,
+            secretKey,
+            chunk,
+            index,
+            isLast: false,
+          );
+          index++;
+          processed += chunk.length;
+          onProgress?.call(totalSize == 0 ? 100 : processed / totalSize * 100);
+        }
       }
+
+      // Последний блок (может быть неполным или даже пустым для файла,
+      // размер которого кратен chunkSize) — обязательно с флагом isLast.
+      await _encryptAndWriteChunk(sink, secretKey, buffer, index, isLast: true);
+    } finally {
+      await sink.close();
     }
-
-    // Последний блок (может быть неполным или даже пустым для файла,
-    // размер которого кратен chunkSize) — обязательно с флагом isLast.
-    await _encryptAndWriteChunk(sink, secretKey, buffer, index, isLast: true);
-
-    await sink.close();
     onProgress?.call(100);
     return keyBytes;
   }
