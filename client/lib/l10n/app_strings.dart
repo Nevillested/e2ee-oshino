@@ -743,6 +743,19 @@ class AppStrings {
       AppLocale.ru: 'Светлая тема',
       AppLocale.en: 'Light theme',
     },
+
+    'settings.fontSize': {
+      AppLocale.ru: 'Размер шрифта',
+      AppLocale.en: 'Font size',
+    },
+    'fontSize.title': {
+      AppLocale.ru: 'Размер шрифта',
+      AppLocale.en: 'Font size',
+    },
+    'fontSize.preview': {
+      AppLocale.ru: 'Пример текста интерфейса',
+      AppLocale.en: 'Interface text preview',
+    },
   };
 }
 

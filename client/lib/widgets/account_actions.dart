@@ -4,6 +4,7 @@ import '../api/api_client.dart';
 import '../crypto/key_store.dart';
 import '../l10n/app_strings.dart';
 import '../screens/welcome_screen.dart';
+import '../services/my_avatar_store.dart';
 import '../services/websocket_service.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
@@ -13,6 +14,7 @@ Future<void> _wipeLocalDataAndGoToWelcome(BuildContext context) async {
   await Session.clearToken();
   await KeyStore.clearAll();
   await CallRingPlugin.clearCredentials();
+  MyAvatarStore.reset();
   if (!context.mounted) return;
   Navigator.pushAndRemoveUntil(
     context,

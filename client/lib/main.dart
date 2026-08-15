@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'navigator_key.dart';
 import 'screens/splash_screen.dart';
 import 'storage/locale_store.dart';
+import 'storage/text_scale_store.dart';
 import 'storage/theme_store.dart';
 import 'theme/app_theme.dart';
 import 'widgets/system_pip_video_view.dart';
@@ -21,17 +22,22 @@ class _AppState extends State<_App> {
   @override
   void initState() {
     super.initState();
-    // Не await — не блокируем первый кадр ради чтения сохранённой темы;
-    // ThemeStore.notifier сам уведомит ValueListenableBuilder ниже, когда
+    // Не await — не блокируем первый кадр ради чтения сохранённых настроек;
+    // соответствующий notifier сам уведомит AnimatedBuilder ниже, когда
     // значение прочитается (обычно за один кадр, разницы не видно).
     ThemeStore.init();
     LocaleStore.init();
+    TextScaleStore.init();
   }
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([ThemeStore.notifier, LocaleStore.notifier]),
+      animation: Listenable.merge([
+        ThemeStore.notifier,
+        LocaleStore.notifier,
+        TextScaleStore.notifier,
+      ]),
       builder: (context, _) {
         return MaterialApp(
           title: 'Oshinobu',
@@ -42,10 +48,22 @@ class _AppState extends State<_App> {
           // builder оборачивает ЛЮБОЙ текущий экран — так во время настоящего
           // системного PiP поверх него оказывается видео собеседника (см.
           // SystemPipVideoView), а не тот экран, что случайно оказался открыт
-          // под капотом в момент входа в PiP.
+          // под капотом в момент входа в PiP. Тут же навязываем выбранный в
+          // настройках масштаб текста через MediaQuery — единая точка,
+          // работает сразу для ВСЕХ экранов без правки каждого по
+          // отдельности (обычные Text без явного textScaler наследуют его
+          // из ближайшего MediaQuery).
           builder: (context, child) {
-            return Stack(
-              children: [if (child != null) child, const SystemPipVideoView()],
+            return MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(TextScaleStore.notifier.value),
+              ),
+              child: Stack(
+                children: [
+                  if (child != null) child,
+                  const SystemPipVideoView(),
+                ],
+              ),
             );
           },
         );

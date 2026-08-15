@@ -138,6 +138,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
       await Session.clearToken();
       await KeyStore.clearAll();
       await CallRingPlugin.clearCredentials();
+      MyAvatarStore.reset();
       if (mounted) {
         Navigator.pushAndRemoveUntil(
           context,
@@ -533,6 +534,11 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
                   ? AppColors.primary.withValues(alpha: 0.12)
                   : Colors.transparent,
               child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 6,
+                ),
+                minVerticalPadding: 12,
                 leading: _ChatAvatarLeading(
                   isNotes: isNotes,
                   accountId: entry.lastKnownAccountId,
@@ -545,15 +551,17 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
                             : entry.peerLogin),
                   style: TextStyle(
                     color: AppColors.textPrimary,
+                    fontSize: 17,
                     fontWeight: entry.unreadCount > 0
                         ? FontWeight.bold
-                        : FontWeight.normal,
+                        : FontWeight.w600,
                   ),
                 ),
                 subtitle: Text(
                   entry.lastMessage,
                   style: TextStyle(
                     color: AppColors.textMuted,
+                    fontSize: 14,
                     fontWeight: entry.unreadCount > 0
                         ? FontWeight.w600
                         : FontWeight.normal,
@@ -707,7 +715,8 @@ class _ChatAvatarLeading extends StatelessWidget {
     if (isNotes) {
       return ValueListenableBuilder<Uint8List?>(
         valueListenable: MyAvatarStore.notifier,
-        builder: (context, bytes, _) => AvatarThumbnail(bytes: bytes),
+        builder: (context, bytes, _) =>
+            AvatarThumbnail(bytes: bytes, radius: 27),
       );
     }
     return _OtherAvatarLeading(accountId: accountId);
@@ -776,7 +785,7 @@ class _OtherAvatarLeadingState extends State<_OtherAvatarLeading> {
     return FutureBuilder<Uint8List?>(
       future: _future,
       builder: (context, snapshot) {
-        return AvatarThumbnail(bytes: snapshot.data);
+        return AvatarThumbnail(bytes: snapshot.data, radius: 27);
       },
     );
   }

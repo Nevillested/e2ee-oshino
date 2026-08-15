@@ -54,4 +54,14 @@ class MyAvatarStore {
   static void setRemoved() {
     notifier.value = null;
   }
+
+  /// Вызывается при выходе из аккаунта/удалении аккаунта (см.
+  /// account_actions.dart) — без этого при логине в ДРУГОЙ аккаунт (без
+  /// полного перезапуска процесса приложения) init() видел бы
+  /// _initStarted=true и молча оставлял висеть фото ПРЕЖНЕГО аккаунта,
+  /// пока кто-нибудь явно не загрузит/не удалит новое.
+  static void reset() {
+    _initStarted = false;
+    notifier.value = null;
+  }
 }
