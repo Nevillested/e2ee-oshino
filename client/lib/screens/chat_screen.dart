@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:camera/camera.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show TapGestureRecognizer;
 import 'package:flutter/material.dart';
@@ -48,6 +49,7 @@ import '../theme/app_theme.dart';
 import '../utils/presence_format.dart';
 import '../utils/time_format.dart';
 import '../storage/default_reaction_store.dart';
+import '../widgets/attach_launcher_overlay.dart';
 import '../widgets/avatar_settings_tile.dart' show AvatarThumbnail;
 import '../widgets/delete_message_dialog.dart';
 import '../widgets/full_emoji_picker.dart';
@@ -2123,10 +2125,46 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  final _attachButtonKey = GlobalKey();
+
   Future<void> _openAttachmentSheet() async {
     _textFocusNode.unfocus();
     setState(() => _emojiMode = false);
 
+    final choice = await showAttachLauncherOverlay(
+      context,
+      anchorKey: _attachButtonKey,
+      // Тот же механизм, что и у showMessageContextMenu ниже — пока это
+      // меню открыто, системный back/свайп-назад должен закрыть ЕГО
+      // (см. _handleBackAction/PopScope/SwipeBackDetector), а не увести с
+      // экрана чата, оставив меню висеть поверх следующего экрана.
+      onOpened: (close) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _closeContextMenu = close);
+        });
+      },
+    );
+    if (mounted) setState(() => _closeContextMenu = null);
+    if (choice == AttachMenuChoice.media) {
+      await _openMediaPanel();
+    } else if (choice == AttachMenuChoice.files) {
+      await _openFilesPanel();
+    }
+  }
+
+  Future<void> _openFilesPanel() async {
+    final result = await FilePicker.platform.pickFiles(allowMultiple: true);
+    if (result == null) return;
+    final files = result.files
+        .where((f) => f.path != null)
+        .map((f) => PickedMedia(file: File(f.path!), isFile: true))
+        .toList();
+    if (files.isNotEmpty) {
+      await _sendPickedMedia(files, '', forceNoGroup: true);
+    }
+  }
+
+  Future<void> _openMediaPanel() async {
     final result = await showMediaPickerSheet(context);
 
     if (result == 'open_camera') {
@@ -2182,13 +2220,17 @@ class _ChatScreenState extends State<ChatScreen> {
     await _sendPickedMedia([PickedMedia(file: file, isVideo: false)], '');
   }
 
-  Future<void> _sendPickedMedia(List<PickedMedia> media, String caption) async {
+  Future<void> _sendPickedMedia(
+    List<PickedMedia> media,
+    String caption, {
+    bool forceNoGroup = false,
+  }) async {
     String? textMessageId;
     final queue =
         <({PickedMedia item, String messageId, int size, String fileName})>[];
 
     final hasCaption = caption.isNotEmpty;
-    final groupId = (media.length + (hasCaption ? 1 : 0)) > 1
+    final groupId = (!forceNoGroup && (media.length + (hasCaption ? 1 : 0)) > 1)
         ? 'grp_${DateTime.now().microsecondsSinceEpoch}'
         : null;
 
@@ -2232,17 +2274,21 @@ class _ChatScreenState extends State<ChatScreen> {
         widget.peerLogin,
         StoredMessage(
           messageId,
-          item.isVideo ? '🎬 ${tr('media.video')}' : '📷 ${tr('media.photo')}',
+          item.isFile
+              ? '📎 ${tr('media.file')}'
+              : item.isVideo
+              ? '🎬 ${tr('media.video')}'
+              : '📷 ${tr('media.photo')}',
           true,
           DateTime.now().millisecondsSinceEpoch,
           isMedia: true,
-          isFile: item.isVideo,
+          isFile: item.isFile || item.isVideo,
           fileSize: size,
           chunked: size > _streamingThresholdBytes,
           fileName: fileName,
           status: 'sending',
           processingStep: tr('chat.queued'),
-          localPreviewPath: item.isVideo ? null : item.file.path,
+          localPreviewPath: (item.isVideo || item.isFile) ? null : item.file.path,
           groupId: groupId,
         ),
         accountId: widget.peerAccountId,
@@ -2366,7 +2412,7 @@ class _ChatScreenState extends State<ChatScreen> {
       'nonce': nonceBase64,
       'mac': macBase64,
       'file_name': fileName,
-      'is_file': item.isVideo,
+      'is_file': item.isFile || item.isVideo,
       'file_size': size,
       'chunked': chunked,
     };
@@ -2444,7 +2490,7 @@ class _ChatScreenState extends State<ChatScreen> {
           nonceBase64: desc['nonce'] as String?,
           macBase64: desc['mac'] as String?,
           fileName: fileName,
-          isFile: item.isVideo,
+          isFile: item.isFile || item.isVideo,
           fileSize: size,
           chunked: desc['chunked'] as bool,
         );
@@ -2753,6 +2799,12 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildAttachmentBubble(StoredMessage msg, {double size = 220}) {
+    // Файлы (в отличие от фото/видео) никогда не показываются квадратным
+    // превью — ни во время отправки, ни при ошибке: своей картинки у них
+    // нет, только имя+иконка по типу (см. _clickableFileRow ниже).
+    if (msg.isFile && msg.isMine && (msg.status == 'sending' || msg.status == 'failed')) {
+      return _clickableFileRow(msg, size: size);
+    }
     if (msg.isMine && (msg.status == 'sending' || msg.status == 'failed')) {
       if (msg.status == 'failed') {
         return Stack(
@@ -2939,7 +2991,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (mounted) setState(() {});
                   });
                   return Icon(
-                    Icons.insert_drive_file,
+                    _iconForFileName(msg.fileName),
                     color: AppColors.textPrimary,
                     size: 28,
                   );
@@ -3003,7 +3055,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   if (mounted) setState(() {});
                 });
                 return Icon(
-                  msg.isFile ? Icons.insert_drive_file : Icons.image,
+                  msg.isFile ? _iconForFileName(msg.fileName) : Icons.image,
                   color: AppColors.textPrimary,
                   size: 28,
                 );
@@ -3037,10 +3089,89 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// Иконка по расширению имени файла — тот же принцип, что у файлового
+  /// менеджера ОС: PDF показывает PDF-иконку, картинка — иконку картинки и
+  /// т.д., а не одну и ту же "просто лист" на всё подряд.
+  IconData _iconForFileName(String? fileName) {
+    final dot = fileName?.lastIndexOf('.') ?? -1;
+    if (fileName == null || dot == -1 || dot == fileName.length - 1) {
+      return Icons.insert_drive_file;
+    }
+    switch (fileName.substring(dot + 1).toLowerCase()) {
+      case 'pdf':
+        return Icons.picture_as_pdf;
+      case 'doc':
+      case 'docx':
+      case 'odt':
+      case 'rtf':
+        return Icons.description;
+      case 'xls':
+      case 'xlsx':
+      case 'csv':
+      case 'ods':
+        return Icons.table_chart;
+      case 'ppt':
+      case 'pptx':
+      case 'odp':
+        return Icons.slideshow;
+      case 'txt':
+        return Icons.article;
+      case 'zip':
+      case 'rar':
+      case '7z':
+      case 'tar':
+      case 'gz':
+        return Icons.folder_zip;
+      case 'mp3':
+      case 'wav':
+      case 'm4a':
+      case 'aac':
+      case 'flac':
+      case 'ogg':
+        return Icons.audiotrack;
+      case 'mp4':
+      case 'mov':
+      case 'avi':
+      case 'mkv':
+      case 'webm':
+      case '3gp':
+        return Icons.videocam;
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'gif':
+      case 'webp':
+      case 'heic':
+      case 'bmp':
+        return Icons.image;
+      case 'apk':
+        return Icons.android;
+      case 'json':
+      case 'xml':
+      case 'html':
+      case 'css':
+      case 'js':
+      case 'dart':
+      case 'py':
+      case 'java':
+      case 'kt':
+      case 'c':
+      case 'cpp':
+        return Icons.code;
+      default:
+        return Icons.insert_drive_file;
+    }
+  }
+
   Widget _clickableFileRow(StoredMessage msg, {double size = 220}) {
+    final sending = msg.isMine && msg.processingStep != null;
+    final failed = msg.isMine && msg.status == 'failed';
+    final icon = failed ? Icons.error_outline : _iconForFileName(msg.fileName);
+    final tappable = !sending && !failed;
+
     if (size < 200) {
       return InkWell(
-        onTap: () => _openFile(msg),
+        onTap: tappable ? () => _openFile(msg) : null,
         child: Container(
           width: size,
           height: size,
@@ -3050,31 +3181,50 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           alignment: Alignment.center,
           child: Icon(
-            Icons.insert_drive_file,
-            color: AppColors.textMuted,
+            icon,
+            color: failed ? Colors.redAccent : AppColors.textMuted,
             size: 32,
           ),
         ),
       );
     }
     return InkWell(
-      onTap: () => _openFile(msg),
+      onTap: tappable ? () => _openFile(msg) : null,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            Icons.insert_drive_file,
-            color: _bubbleTextColor(msg.isMine),
+            icon,
+            color: failed ? Colors.redAccent : _bubbleTextColor(msg.isMine),
             size: 28,
           ),
           const SizedBox(width: 8),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 160),
-            child: Text(
-              msg.fileName ?? msg.text,
-              style: TextStyle(color: _bubbleTextColor(msg.isMine)),
-              overflow: TextOverflow.ellipsis,
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 160),
+                child: Text(
+                  msg.fileName ?? msg.text,
+                  style: TextStyle(color: _bubbleTextColor(msg.isMine)),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (sending)
+                Text(
+                  msg.processingStep!,
+                  style: TextStyle(
+                    color: _bubbleTextColor(msg.isMine).withValues(alpha: 0.7),
+                    fontSize: 11,
+                  ),
+                )
+              else if (failed)
+                Text(
+                  tr('error.uploadFailed'),
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 11),
+                ),
+            ],
           ),
         ],
       ),
@@ -4726,6 +4876,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                         )
                                       else ...[
                                         IconButton(
+                                          key: _attachButtonKey,
                                           padding: const EdgeInsets.all(6),
                                           constraints: const BoxConstraints(),
                                           visualDensity: VisualDensity.compact,
