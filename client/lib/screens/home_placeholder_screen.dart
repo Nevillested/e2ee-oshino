@@ -118,18 +118,25 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
     CallService.instance.incomingCalls.listen((info) async {
       final currentToken = await Session.getToken();
       String peerLogin = tr('common.unknown');
+      String peerAccountId = '';
       if (currentToken != null) {
         final owner = await ApiClient().getDeviceOwnerInfo(
           currentToken,
           info.peerDeviceId,
         );
-        if (owner != null) peerLogin = owner.login;
+        if (owner != null) {
+          peerLogin = owner.login;
+          peerAccountId = owner.accountId;
+        }
       }
       if (!mounted) return;
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => IncomingCallScreen(peerLogin: peerLogin),
+          builder: (context) => IncomingCallScreen(
+            peerLogin: peerLogin,
+            peerAccountId: peerAccountId,
+          ),
         ),
       );
     });

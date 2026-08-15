@@ -1,16 +1,24 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../l10n/app_strings.dart';
+import '../services/avatar_cache.dart';
 import '../services/call_service.dart';
 import '../services/pip_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/avatar_settings_tile.dart';
 import '../widgets/theme_reactive.dart';
 
 class CallScreen extends StatefulWidget {
   final String peerLogin;
-  const CallScreen({super.key, required this.peerLogin});
+  final String peerAccountId;
+  const CallScreen({
+    super.key,
+    required this.peerLogin,
+    required this.peerAccountId,
+  });
 
   @override
   State<CallScreen> createState() => _CallScreenState();
@@ -25,6 +33,7 @@ class _CallScreenState extends State<CallScreen> {
   MediaStream? _lastRemoteStream;
 
   Offset _selfViewOffset = const Offset(16, 60);
+  Future<Uint8List?>? _peerAvatarFuture;
 
   Timer? _durationTicker;
   StreamSubscription<String>? _statusSub;
@@ -43,6 +52,10 @@ class _CallScreenState extends State<CallScreen> {
     // на них, чтобы показать/спрятать себя при уходе на другой экран
     // приложения, пока звонок продолжается в фоне.
     _call.currentPeerLogin = widget.peerLogin;
+    _call.currentPeerAccountId = widget.peerAccountId;
+    _peerAvatarFuture = widget.peerAccountId.isEmpty
+        ? null
+        : AvatarCache.get(widget.peerAccountId);
     _call.setCallScreenVisible(true);
     _init();
     _statusSub = _call.statusUpdates.listen((_) {
@@ -201,9 +214,12 @@ class _CallScreenState extends State<CallScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const CircleAvatar(
-                            radius: 48,
-                            child: Icon(Icons.person, size: 48),
+                          FutureBuilder<Uint8List?>(
+                            future: _peerAvatarFuture,
+                            builder: (context, snapshot) => AvatarThumbnail(
+                              bytes: snapshot.data,
+                              radius: 48,
+                            ),
                           ),
                           const SizedBox(height: 16),
                           Text(

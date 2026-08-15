@@ -1,15 +1,23 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
+import '../services/avatar_cache.dart';
 import '../services/call_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/avatar_settings_tile.dart';
 import '../widgets/theme_reactive.dart';
 import 'call_screen.dart';
 
 class IncomingCallScreen extends StatefulWidget {
   final String peerLogin;
-  const IncomingCallScreen({super.key, required this.peerLogin});
+  final String peerAccountId;
+  const IncomingCallScreen({
+    super.key,
+    required this.peerLogin,
+    required this.peerAccountId,
+  });
 
   @override
   State<IncomingCallScreen> createState() => _IncomingCallScreenState();
@@ -18,10 +26,14 @@ class IncomingCallScreen extends StatefulWidget {
 class _IncomingCallScreenState extends State<IncomingCallScreen> {
   StreamSubscription<CallState>? _stateSub;
   bool _navigatedAway = false;
+  Future<Uint8List?>? _peerAvatarFuture;
 
   @override
   void initState() {
     super.initState();
+    _peerAvatarFuture = widget.peerAccountId.isEmpty
+        ? null
+        : AvatarCache.get(widget.peerAccountId);
     debugPrint('IncomingCallScreen: initState (peerLogin=${widget.peerLogin})');
     // Звонящий мог сбросить вызов (или он сам оборвался) до того, как мы
     // ответили/отклонили — CallService в этом случае сам уходит в idle
@@ -78,7 +90,11 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
         child: Column(
           children: [
             const Spacer(),
-            const CircleAvatar(radius: 56, child: Icon(Icons.person, size: 56)),
+            FutureBuilder<Uint8List?>(
+              future: _peerAvatarFuture,
+              builder: (context, snapshot) =>
+                  AvatarThumbnail(bytes: snapshot.data, radius: 56),
+            ),
             const SizedBox(height: 20),
             Text(
               peerLogin,
@@ -115,8 +131,10 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                       Navigator.pushReplacement(
                         context,
                         MaterialPageRoute(
-                          builder: (context) =>
-                              CallScreen(peerLogin: peerLogin),
+                          builder: (context) => CallScreen(
+                            peerLogin: peerLogin,
+                            peerAccountId: widget.peerAccountId,
+                          ),
                         ),
                       );
                     },

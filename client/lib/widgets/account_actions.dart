@@ -11,6 +11,20 @@ import '../theme/app_theme.dart';
 
 Future<void> _wipeLocalDataAndGoToWelcome(BuildContext context) async {
   WebSocketService.instance.disconnect();
+
+  // Отвязываем push-токен ЭТОГО устройства от аккаунта, пока сессия ещё
+  // жива — иначе он остаётся в базе на старом device_id, и если на этом
+  // же телефоне потом войдут в ДРУГОЙ аккаунт, сообщения прежнему
+  // аккаунту всё ещё будят этот телефон пушем (см. unregisterPushToken).
+  // Best-effort: не блокируем выход из аккаунта, если сети сейчас нет.
+  final token = await Session.getToken();
+  final deviceId = await KeyStore.getStoredDeviceId();
+  if (token != null && deviceId != null) {
+    try {
+      await ApiClient().unregisterPushToken(token, deviceId);
+    } catch (_) {}
+  }
+
   await Session.clearToken();
   await KeyStore.clearAll();
   await CallRingPlugin.clearCredentials();

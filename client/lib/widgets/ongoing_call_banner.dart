@@ -74,7 +74,10 @@ class _OngoingCallBannerState extends State<OngoingCallBanner> {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => CallScreen(peerLogin: widget.peerLogin),
+              builder: (_) => CallScreen(
+                peerLogin: widget.peerLogin,
+                peerAccountId: _call.currentPeerAccountId ?? '',
+              ),
             ),
           );
         },

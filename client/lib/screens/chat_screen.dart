@@ -760,7 +760,10 @@ class _ChatScreenState extends State<ChatScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => CallScreen(peerLogin: widget.peerLogin),
+        builder: (context) => CallScreen(
+          peerLogin: widget.peerLogin,
+          peerAccountId: widget.peerAccountId,
+        ),
       ),
     );
   }

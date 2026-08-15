@@ -792,6 +792,35 @@ class ApiClient {
     }
   }
 
+  /// DELETE /push/register — отвязывает FCM-токен от устройства (см.
+  /// account_actions.dart) — без этого при выходе из аккаунта push-токен
+  /// физического телефона оставался в базе на СТАРОМ device_id, и если на
+  /// этом же телефоне логинились в ДРУГОЙ аккаунт, сообщения прежнему
+  /// аккаунту всё ещё будили этот телефон пушем.
+  Future<bool> unregisterPushToken(String token, String deviceId) async {
+    try {
+      final response = await http
+          .delete(
+            Uri.parse('${ApiConfig.baseUrl}/push/register'),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'device_id': deviceId}),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode != 200) {
+        debugPrint(
+          'unregisterPushToken: HTTP ${response.statusCode}: ${response.body}',
+        );
+      }
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('unregisterPushToken: exception: $e');
+      return false;
+    }
+  }
+
   Future<bool> deleteAccount(String token) async {
     final response = await http
         .delete(

@@ -120,6 +120,12 @@ class CallService {
   /// показать имя, не имея собственного BuildContext/навигации.
   String? currentPeerLogin;
 
+  /// account_id собеседника — тем же принципом, что и currentPeerLogin выше:
+  /// нужен _openCallScreen(), чтобы пересобрать CallScreen (с фото
+  /// профиля) при повторном открытии из PiP/уведомления, когда исходный
+  /// вызывающий виджет (ChatScreen/IncomingCallScreen) уже не на сцене.
+  String? currentPeerAccountId;
+
   /// true, пока CallScreen реально смонтирован (пользователь на экране
   /// разговора). НЕ то же самое, что "звонок активен" — звонок может
   /// продолжаться (см. CallState), пока пользователь ушёл в другой экран
@@ -305,6 +311,7 @@ class CallService {
       final owner = await ApiClient().getDeviceOwnerInfo(token, peerDeviceId);
       if (owner != null) {
         currentPeerLogin = owner.login;
+        currentPeerAccountId = owner.accountId;
         debugPrint('CallService: _resolvePeerLogin -> ${owner.login}');
       } else {
         debugPrint(
@@ -336,7 +343,12 @@ class CallService {
       'CallService: _openCallScreen: push CallScreen(peerLogin=$peerLogin), navigatorState=$nav',
     );
     nav?.push(
-      MaterialPageRoute(builder: (_) => CallScreen(peerLogin: peerLogin)),
+      MaterialPageRoute(
+        builder: (_) => CallScreen(
+          peerLogin: peerLogin,
+          peerAccountId: currentPeerAccountId ?? '',
+        ),
+      ),
     );
   }
 
@@ -649,6 +661,7 @@ class CallService {
     PipService.setRemoteVideoActive(false);
     _autoSpeakerTriggered = false;
     currentPeerLogin = null;
+    currentPeerAccountId = null;
     _setState(CallState.idle);
     debugPrint('CallService: _resetLocal() завершён');
   }
