@@ -99,6 +99,11 @@ class _ChatScreenState extends State<ChatScreen> {
   static const int _autoDownloadLimitBytes = 10 * 1024 * 1024; // 10 МБ
   static const int _streamingThresholdBytes = 20 * 1024 * 1024; // 20 МБ
   static const int _maxAttachmentSizeBytes = 500 * 1024 * 1024; // 500 МБ
+  // Голосовые — без ограничения по времени, только видео-кружочки: у них
+  // заметно тяжелее байт на секунду (видео+аудио), и на них же завязан
+  // enablePersistentRecording, который держит файл открытым всё время
+  // записи (см. _beginRecording).
+  static const Duration _maxVideoNoteDuration = Duration(minutes: 5);
 
   final _textController = TextEditingController();
   final _textFocusNode = FocusNode();
@@ -1497,6 +1502,13 @@ class _ChatScreenState extends State<ChatScreen> {
     _recTicker = Timer.periodic(const Duration(milliseconds: 200), (_) {
       if (!mounted || _recStartedAt == null) return;
       setState(() => _recElapsed = DateTime.now().difference(_recStartedAt!));
+      // Только видео-кружочки — голосовые нарочно без ограничения (см.
+      // _maxVideoNoteDuration). send: true — ведём себя так, будто
+      // пользователь сам отпустил палец, а не обрываем запись молча.
+      if (_recActiveKind == _RecKind.video &&
+          _recElapsed >= _maxVideoNoteDuration) {
+        _finishRecording(send: true);
+      }
     });
 
     setState(() {

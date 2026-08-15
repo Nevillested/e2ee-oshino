@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"server/internal/db"
@@ -10,6 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/minio/minio-go/v7"
 )
+
+// то же значение, что и клиентский _maxAttachmentSizeBytes
+// (chat_screen.dart) и nginx client_max_body_size — здесь нужен НЕ
+// столько для клиента (он и так режет раньше), сколько подстраховкой на
+// случай, если запрос когда-нибудь придёт в обход текущего nginx (см.
+// обсуждение resilience/relay) — без этого сервер молча лил бы файл любого
+// размера прямо в MinIO.
+const maxUploadSizeBytes = 500 * 1024 * 1024 // 500 МБ
 
 func NewUploadMediaHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
 
@@ -25,12 +34,19 @@ func NewUploadMediaHandler(queries *db.Queries, minioClient *minio.Client) func(
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSizeBytes)
+
 		//Нам надо сделать в базе запись о загружаемом файле. Для этого:
 		//получаем файл из запроса
 		file, header, err := r.FormFile("file")
 
 		//проверяем есть ли ошибка при получении файла из запроса
 		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				http.Error(w, "Файл превышает максимально допустимый размер (500 МБ)", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "ошибка получения файла из запроса", http.StatusBadRequest)
 			return
 		}
