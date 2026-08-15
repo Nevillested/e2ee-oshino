@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -103,11 +104,20 @@ class CallRingService : Service() {
     override fun onBind(intent: Intent?) = null
 
     private fun startRingtone() {
+        // Звоним тем рингтоном, что выбран у пользователя в настройках
+        // самого Android (Settings > Sound > Phone ringtone) — как и любая
+        // обычная звонилка, а не своей "зашитой" мелодией. content://
+        // settings/system/ringtone — это не файл конкретного трека, а
+        // указатель, который система сама разрешает в АКТУАЛЬНО выбранный
+        // пользователем рингтон (в т.ч. если он его потом сменит).
         try {
             val player = MediaPlayer()
-            val afd = resources.openRawResourceFd(R.raw.incoming_call)
-            player.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-            afd.close()
+            val systemRingtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+            if (systemRingtoneUri != null) {
+                player.setDataSource(this, systemRingtoneUri)
+            } else {
+                setBundledRingtoneSource(player)
+            }
             player.setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
@@ -130,10 +140,43 @@ class CallRingService : Service() {
             }
             player.prepareAsync()
             mediaPlayer = player
-            Log.d(TAG, "startRingtone: MediaPlayer created, preparing")
+            Log.d(TAG, "startRingtone: MediaPlayer created (system ringtone=${systemRingtoneUri != null}), preparing")
         } catch (e: Exception) {
-            // Нет звука — не должно ронять сам сервис/уведомление.
-            Log.e(TAG, "startRingtone failed", e)
+            // Системный URI по какой-то причине не сыграл (редкий случай на
+            // некоторых прошивках) — пробуем зашитый запасной звук вместо
+            // того, чтобы звонок остался вообще без звука.
+            Log.e(TAG, "startRingtone with system ringtone failed, falling back to bundled sound", e)
+            startBundledRingtoneFallback()
+        }
+    }
+
+    private fun setBundledRingtoneSource(player: MediaPlayer) {
+        val afd = resources.openRawResourceFd(R.raw.incoming_call)
+        player.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+        afd.close()
+    }
+
+    private fun startBundledRingtoneFallback() {
+        try {
+            val player = MediaPlayer()
+            setBundledRingtoneSource(player)
+            player.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build(),
+            )
+            player.isLooping = true
+            player.setOnPreparedListener { it.start() }
+            player.setOnErrorListener { _, what, extra ->
+                Log.e(TAG, "fallback MediaPlayer error: what=$what extra=$extra")
+                true
+            }
+            player.prepareAsync()
+            mediaPlayer = player
+        } catch (e: Exception) {
+            // Нет звука вообще — не должно ронять сам сервис/уведомление.
+            Log.e(TAG, "startBundledRingtoneFallback failed", e)
         }
     }
 

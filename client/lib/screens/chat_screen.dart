@@ -921,6 +921,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final result = await showDeleteMessagesDialog(
       context,
       peerName: widget.peerLogin,
+      showPeerCheckbox: !_isNotes,
     );
     if (result == null || !mounted) return;
 

@@ -12,11 +12,20 @@ class DeleteConfirmResult {
 /// собеседника тоже" 1-в-1 подходит и для очистки истории, и для удаления
 /// всего чата целиком (см. showChatListContextMenu в home_placeholder_screen)
 /// — там передаются свои формулировки.
+///
+/// showPeerCheckbox=false — для "Заметок" (переписка с самим собой,
+/// см. notesPeerLogin): там в принципе нет собеседника, которому можно
+/// было бы что-то доудалить, чекбокс с бессмысленным (и по факту
+/// нерабочим — control-сообщение туда никогда не уходит, см. _isNotes в
+/// chat_screen.dart) вопросом "удалить у Заметок тоже?" только запутывал
+/// бы. В этом режиме диалог — просто да/нет на само удаление, alsoForPeer
+/// в результате всегда false.
 Future<DeleteConfirmResult?> showDeleteMessagesDialog(
   BuildContext context, {
   required String peerName,
   String? title,
   String? confirmLabel,
+  bool showPeerCheckbox = true,
 }) {
   return showDialog<DeleteConfirmResult>(
     context: context,
@@ -24,6 +33,7 @@ Future<DeleteConfirmResult?> showDeleteMessagesDialog(
       peerName: peerName,
       title: title,
       confirmLabel: confirmLabel,
+      showPeerCheckbox: showPeerCheckbox,
     ),
   );
 }
@@ -32,10 +42,12 @@ class _DeleteMessagesDialog extends StatefulWidget {
   final String peerName;
   final String? title;
   final String? confirmLabel;
+  final bool showPeerCheckbox;
   const _DeleteMessagesDialog({
     required this.peerName,
     this.title,
     this.confirmLabel,
+    this.showPeerCheckbox = true,
   });
 
   @override
@@ -61,38 +73,41 @@ class _DeleteMessagesDialogState extends State<_DeleteMessagesDialog> {
           fontWeight: FontWeight.w500,
         ),
       ),
-      content: InkWell(
-        onTap: () => setState(() => _alsoForPeer = !_alsoForPeer),
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                width: 22,
-                height: 22,
-                child: Checkbox(
-                  value: _alsoForPeer,
-                  onChanged: (v) => setState(() => _alsoForPeer = v ?? false),
-                  activeColor: AppColors.primary,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      content: !widget.showPeerCheckbox
+          ? null
+          : InkWell(
+              onTap: () => setState(() => _alsoForPeer = !_alsoForPeer),
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: Checkbox(
+                        value: _alsoForPeer,
+                        onChanged: (v) =>
+                            setState(() => _alsoForPeer = v ?? false),
+                        activeColor: AppColors.primary,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        '${tr('deleteMessage.alsoForPeer')} ${widget.peerName}',
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Text(
-                  '${tr('deleteMessage.alsoForPeer')} ${widget.peerName}',
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+            ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
