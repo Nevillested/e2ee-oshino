@@ -11,6 +11,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deletePendingMessage = `-- name: DeletePendingMessage :exec
+DELETE FROM pending_messages WHERE id = $1
+`
+
+func (q *Queries) DeletePendingMessage(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deletePendingMessage, id)
+	return err
+}
+
 const deletePendingMessages = `-- name: DeletePendingMessages :exec
 DELETE FROM pending_messages WHERE to_device_id = $1
 `

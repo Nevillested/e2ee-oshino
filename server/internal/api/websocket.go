@@ -277,18 +277,57 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 		if SqlErr != nil {
 			log.Printf("ошибка получения сообщений из бд: %v", SqlErr)
 		} else {
+			// Каждое отложенное сообщение уходит с собственным DeliveryId и
+			// удаляется из очереди ТОЛЬКО после ack от клиента — раньше вся
+			// пачка стиралась из pending_messages сразу после записи в сокет,
+			// не дожидаясь вообще никакого подтверждения (в отличие от живой
+			// доставки чуть ниже, у которой ack уже был). Любой сбой между
+			// "сервер записал в сокет" и "клиент успел расшифровать и
+			// сохранить" (обрыв сети сразу после реконнекта, ОС прибила
+			// процесс на середине и т.п.) означал безвозвратную потерю
+			// сообщения. Теперь неподтверждённые просто остаются в очереди
+			// до следующего подключения — безопасно: клиент и так должен
+			// уметь игнорировать повторно пришедшее сообщение по message_id.
 			for _, msg := range PendingMessages {
-				var err = ws_object.Write(r.Context(), websocket.MessageText, []byte(msg.Ciphertext))
-				if err != nil {
-					log.Printf("ошибка отправки сообщения: %v", err)
+				var parsed WSMsgFrom
+				if err := json.Unmarshal([]byte(msg.Ciphertext), &parsed); err != nil {
+					log.Printf("ошибка разбора отложенного сообщения: %v", err)
+					continue
 				}
-			}
-		}
 
-		SqlErr = queries.DeletePendingMessages(r.Context(), ToDeviceIDUUID)
-		if SqlErr != nil {
-			log.Printf("ошибка удаления сообщений в бд: %v", SqlErr)
-			return
+				deliveryID := generateDeliveryID()
+				relay := WSMsgRelay{
+					ToDeviceId: parsed.ToDeviceId,
+					Ciphertext: parsed.Ciphertext,
+					Type:       parsed.Type,
+					DeliveryId: deliveryID,
+				}
+				relayBytes, _ := json.Marshal(relay)
+
+				ackChan := acks.Wait(deliveryID)
+				writeErr := ws_object.Write(r.Context(), websocket.MessageText, relayBytes)
+				if writeErr != nil {
+					log.Printf("ошибка отправки отложенного сообщения: %v", writeErr)
+					acks.Cancel(deliveryID)
+					continue
+				}
+
+				// Само чтение ack идёт из readLoop ниже (он стартует сразу
+				// после этого цикла) — ждать здесь синхронно нельзя, до
+				// readLoop сокет никто не читает, ack физически не может
+				// прийти. Поэтому ждём в фоне, не блокируя вход в readLoop.
+				msgID := msg.ID
+				go func() {
+					select {
+					case <-ackChan:
+						if err := queries.DeletePendingMessage(context.Background(), msgID); err != nil {
+							log.Printf("ошибка удаления доставленного отложенного сообщения: %v", err)
+						}
+					case <-time.After(5 * time.Second):
+						acks.Cancel(deliveryID)
+					}
+				}()
+			}
 		}
 
 	readLoop:
