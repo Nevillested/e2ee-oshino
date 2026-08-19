@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../api/api_client.dart';
 import '../crypto/double_ratchet.dart';
@@ -65,8 +66,10 @@ class MessageRouter {
 
   static const _resetFailureThreshold = 3;
   static const _resetCooldown = Duration(seconds: 30);
-  static final Map<String, int> _failureCounts = {};
-  static final Map<String, DateTime> _lastResetRequestAt = {};
+  static String _failureCountKey(String deviceId) =>
+      'session_reset_failcount:$deviceId';
+  static String _lastResetKey(String deviceId) =>
+      'session_reset_last_request:$deviceId';
 
   static Future<void> _processIncoming(
     String senderDeviceId,
@@ -82,7 +85,7 @@ class MessageRouter {
           'Router session_reset received from=$senderDeviceId — clearing local session state',
         );
         await SessionStore.clearState(senderDeviceId);
-        _failureCounts.remove(senderDeviceId);
+        await _clearFailureCount(senderDeviceId);
         if (deliveryId != null) {
           WebSocketService.instance.ackDelivery(deliveryId);
         }
@@ -123,7 +126,7 @@ class MessageRouter {
             ? null
             : await _establishFreshIncoming(senderDeviceId, envelope);
         if (fresh == null) {
-          await _onDecryptFailure(senderDeviceId);
+          await _onDecryptFailure(senderDeviceId, deliveryId);
           rethrow;
         }
         DebugLog.log(
@@ -134,7 +137,7 @@ class MessageRouter {
         state = fresh;
       }
 
-      _failureCounts.remove(senderDeviceId);
+      await _clearFailureCount(senderDeviceId);
       await SessionStore.saveState(senderDeviceId, state);
 
       final inner = InnerMessage.decode(rawInner);
@@ -390,31 +393,63 @@ class MessageRouter {
   }
 
   /// Считает подряд идущие неудачные попытки расшифровки от одного
-  /// отправителя — после нескольких подряд решаем, что наша сессия с ним
+  /// отправителя — хранит счётчик на диске (а не просто в памяти
+  /// процесса), потому что на свёрнутом приложении Android может убить и
+  /// поднять процесс заново между двумя доставками (см. лог — "WS status
+  /// -> connected" без предшествующего "connecting" — признак холодного
+  /// старта): счётчик в оперативной памяти в этом случае каждый раз
+  /// обнулялся бы, так и не доходя до порога.
+  ///
+  /// После нескольких подряд решаем, что сессия с этим отправителем
   /// рассинхронизирована навсегда (см. docstring в double_ratchet.dart:
   /// такое состояние само себя не чинит), сбрасываем её у себя и просим
   /// собеседника сделать то же самое, чтобы его следующая отправка сама
   /// подняла свежий X3DH.
-  static Future<void> _onDecryptFailure(String senderDeviceId) async {
-    final count = (_failureCounts[senderDeviceId] ?? 0) + 1;
-    _failureCounts[senderDeviceId] = count;
+  static Future<void> _onDecryptFailure(
+    String senderDeviceId,
+    String? deliveryId,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final countKey = _failureCountKey(senderDeviceId);
+    final count = (prefs.getInt(countKey) ?? 0) + 1;
+    await prefs.setInt(countKey, count);
     DebugLog.log(
       'Router decrypt-failure-count from=$senderDeviceId count=$count',
     );
     if (count < _resetFailureThreshold) return;
 
-    final lastRequest = _lastResetRequestAt[senderDeviceId];
-    if (lastRequest != null &&
-        DateTime.now().difference(lastRequest) < _resetCooldown) {
+    // Дальше отступать некуда — конкретно ЭТО сообщение зашифровано
+    // цепочкой, которую мы уже не расшифруем, даже после сброса сессии
+    // ниже (сброс лечит будущие сообщения, а не то, что уже зашифровано
+    // мёртвым ключом). Подтверждаем его серверу, чтобы оно не приходило
+    // заново при каждом переподключении бесконечно.
+    if (deliveryId != null) {
+      WebSocketService.instance.ackDelivery(deliveryId);
+      DebugLog.log(
+        'Router giving up on undecryptable delivery=$deliveryId from=$senderDeviceId',
+      );
+    }
+
+    final lastRequestKey = _lastResetKey(senderDeviceId);
+    final lastRequestMs = prefs.getInt(lastRequestKey);
+    final now = DateTime.now();
+    if (lastRequestMs != null &&
+        now.difference(DateTime.fromMillisecondsSinceEpoch(lastRequestMs)) <
+            _resetCooldown) {
       return;
     }
-    _lastResetRequestAt[senderDeviceId] = DateTime.now();
+    await prefs.setInt(lastRequestKey, now.millisecondsSinceEpoch);
 
     DebugLog.log(
       'Router auto session-reset triggered for=$senderDeviceId after $count consecutive decrypt failures',
     );
     await SessionStore.clearState(senderDeviceId);
     await _sendSessionReset(senderDeviceId);
+  }
+
+  static Future<void> _clearFailureCount(String senderDeviceId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_failureCountKey(senderDeviceId));
   }
 
   static Future<void> _sendSessionReset(String toDeviceId) async {
