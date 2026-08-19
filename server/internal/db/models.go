@@ -58,6 +58,7 @@ type Feedback struct {
 	AccountLogin string
 	Message      string
 	CreatedAt    pgtype.Timestamptz
+	ReviewedAt   pgtype.Timestamptz
 }
 
 type InviteCode struct {
@@ -86,6 +87,7 @@ type MessageReport struct {
 	MessageText       string
 	Reason            pgtype.Text
 	CreatedAt         pgtype.Timestamptz
+	ReviewedAt        pgtype.Timestamptz
 }
 
 type OneTimePrekey struct {

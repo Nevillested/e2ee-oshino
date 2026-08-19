@@ -12,6 +12,7 @@ import '../session.dart';
 import '../storage/chat_store.dart';
 import '../storage/peer_identity_store.dart';
 import 'active_chat_tracker.dart';
+import 'debug_log.dart';
 import 'send_lock.dart';
 import 'sound_service.dart';
 import 'websocket_service.dart';
@@ -42,6 +43,9 @@ class MessageRouter {
     // Транспортный довесок от WebSocketService (см. комментарий там) —
     // не часть самого конверта, вынимаем до передачи дальше.
     final deliveryId = envelope.remove('_deliveryId') as String?;
+    DebugLog.log(
+      'Router incoming from=$senderDeviceId deliveryId=${deliveryId ?? '-'}',
+    );
 
     await SendLock.run(
       senderDeviceId,
@@ -65,6 +69,9 @@ class MessageRouter {
             '$senderDeviceId, а конверт не содержит данных для нового '
             'X3DH-хендшейка — сообщение отброшено, расшифровать нечем',
           );
+          DebugLog.log(
+            'Router DROP from=$senderDeviceId reason=no-session-and-no-handshake',
+          );
           return;
         }
         await PeerIdentityStore.save(
@@ -85,8 +92,16 @@ class MessageRouter {
       await SessionStore.saveState(senderDeviceId, state);
 
       final inner = InnerMessage.decode(rawInner);
+      DebugLog.log(
+        'Router decrypted from=$senderDeviceId type=${inner.type} messageId=${inner.messageId}',
+      );
       final ownerInfo = await _resolveOwner(senderDeviceId);
-      if (ownerInfo == null) return;
+      if (ownerInfo == null) {
+        DebugLog.log(
+          'Router DROP from=$senderDeviceId reason=resolve-owner-failed',
+        );
+        return;
+      }
 
       final chatIsOpen = ActiveChatTracker.currentPeerLogin == ownerInfo.login;
 
@@ -283,6 +298,9 @@ class MessageRouter {
       if (deliveryId != null) {
         WebSocketService.instance.ackDelivery(deliveryId);
       }
+      DebugLog.log(
+        'Router OK from=$senderDeviceId type=${inner.type} messageId=${inner.messageId}',
+      );
 
       // Реакция/пин/правка/удаление — служебные события, не самостоятельные
       // сообщения: не заслуживают звука, даже если чат закрыт (собеседник
@@ -297,6 +315,9 @@ class MessageRouter {
       }
     } catch (e, stackTrace) {
       debugPrint('MessageRouter: ошибка обработки сообщения: $e\n$stackTrace');
+      DebugLog.log(
+        'Router FAILED from=$senderDeviceId deliveryId=${deliveryId ?? '-'} error=$e',
+      );
     }
   }
 

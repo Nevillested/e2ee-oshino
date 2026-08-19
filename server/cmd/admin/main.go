@@ -115,9 +115,9 @@ func runMenu(ctx context.Context, queries *db.Queries, reader *bufio.Reader) {
 		case "5":
 			runListInviteCodes(ctx, queries)
 		case "6":
-			runListReports(ctx, queries)
+			runListReports(ctx, queries, reader)
 		case "7":
-			runListFeedback(ctx, queries)
+			runListFeedback(ctx, queries, reader)
 		case "8":
 			fmt.Println("Пока.")
 			return

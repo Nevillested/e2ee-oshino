@@ -4,3 +4,6 @@ VALUES ($1, $2, $3);
 
 -- name: ListFeedback :many
 SELECT * FROM feedback ORDER BY created_at DESC;
+
+-- name: MarkFeedbackReviewed :exec
+UPDATE feedback SET reviewed_at = now() WHERE id = $1;

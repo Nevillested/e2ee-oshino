@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../api/api_client.dart';
+import '../l10n/app_locale.dart';
 import '../l10n/app_strings.dart';
+import '../services/debug_log.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
 import '../widgets/theme_reactive.dart';
 
-const _termsUrl = 'https://ee2e.oshino.space/terms';
-const _privacyUrl = 'https://ee2e.oshino.space/privacy';
+// /en/ или /ru/ в зависимости от текущего языка интерфейса (см.
+// AppStrings.locale) — обе версии страниц уже развёрнуты на сервере.
+String get _termsUrl =>
+    'https://ee2e.oshino.space/terms/${AppStrings.locale == AppLocale.ru ? 'ru' : 'en'}/';
+String get _privacyUrl =>
+    'https://ee2e.oshino.space/privacy/${AppStrings.locale == AppLocale.ru ? 'ru' : 'en'}/';
 
 class AboutScreen extends StatefulWidget {
   const AboutScreen({super.key});
@@ -41,6 +48,22 @@ class _AboutScreenState extends State<AboutScreen> {
       // Нет приложения, способного открыть ссылку, или запрет от ОС —
       // молча игнорируем, как и _openLink в chat_screen.dart.
     }
+  }
+
+  /// Лог пишется постоянно (см. DebugLog) — эта кнопка просто отдаёт файл
+  /// через системный диалог "Поделиться", чтобы можно было переслать его
+  /// куда угодно (себе на почту, в другой чат) сразу же, как баг
+  /// воспроизвёлся, не дожидаясь доступа к компьютеру с adb.
+  Future<void> _shareDebugLog() async {
+    final file = await DebugLog.getFile();
+    if (!await file.exists()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(tr('about.logEmpty'))));
+      return;
+    }
+    await Share.shareXFiles([XFile(file.path)], text: 'Oshinobu debug log');
   }
 
   @override
@@ -96,6 +119,17 @@ class _AboutScreenState extends State<AboutScreen> {
               context: context,
               builder: (context) => const _FeedbackDialog(),
             ),
+          ),
+          ListTile(
+            leading: Icon(
+              Icons.bug_report_outlined,
+              color: AppColors.textMuted,
+            ),
+            title: Text(
+              tr('about.shareLog'),
+              style: TextStyle(color: AppColors.textPrimary),
+            ),
+            onTap: _shareDebugLog,
           ),
         ],
       ),

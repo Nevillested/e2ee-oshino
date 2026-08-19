@@ -773,6 +773,14 @@ class AppStrings {
       AppLocale.ru: 'Спасибо! Отзыв отправлен',
       AppLocale.en: 'Thanks! Feedback sent',
     },
+    'about.shareLog': {
+      AppLocale.ru: 'Поделиться логом',
+      AppLocale.en: 'Share debug log',
+    },
+    'about.logEmpty': {
+      AppLocale.ru: 'Лог пока пуст',
+      AppLocale.en: 'Log is empty',
+    },
 
     'account.logoutTitle': {
       AppLocale.ru: 'Выйти из аккаунта?',

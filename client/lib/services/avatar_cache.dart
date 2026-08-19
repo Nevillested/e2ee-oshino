@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
+import 'package:path_provider/path_provider.dart';
 import '../api/api_client.dart';
 import '../session.dart';
 
@@ -43,6 +45,11 @@ class AvatarCache {
   static final _changesController = StreamController<String>.broadcast();
   static Stream<String> get changes => _changesController.stream;
 
+  static Future<File> _diskFileFor(String accountId) async {
+    final dir = await getTemporaryDirectory();
+    return File('${dir.path}/avatar_cache_$accountId');
+  }
+
   /// null — либо у аккаунта нет фото, либо запрос не удался; вызывающая
   /// сторона в обоих случаях показывает заглушку, различать не нужно.
   static Future<Uint8List?> get(String accountId) async {
@@ -52,6 +59,30 @@ class AvatarCache {
     if (isFresh && _cache.containsKey(accountId)) return _cache[accountId];
     final inFlight = _inFlight[accountId];
     if (inFlight != null) return inFlight;
+
+    // Диск (в отличие от карт выше) переживает перезапуск процесса — на
+    // холодном старте приложения показываем то, что было закэшировано в
+    // ПРОШЛЫЙ раз, сразу же, вместо пустой заглушки на секунду-другую,
+    // пока летит сетевой запрос (это и была причина "аватарки подтягиваются
+    // с задержкой при каждом входе" — карты выше при каждом новом запуске
+    // процесса всегда пустые). Свежесть диска при этом не гарантирована —
+    // ниже всё равно запускаем обычный сетевой рефреш в фоне, который
+    // молча обновит и диск, и память, и пришлёт сигнал через `changes`,
+    // если фото на сервере успело смениться, пока приложение было закрыто.
+    if (!_cache.containsKey(accountId)) {
+      final diskFile = await _diskFileFor(accountId);
+      if (await diskFile.exists()) {
+        try {
+          final diskBytes = await diskFile.readAsBytes();
+          _cache[accountId] = diskBytes;
+          _cachedAt[accountId] = DateTime.now();
+          unawaited(_refreshInBackground(accountId));
+          return diskBytes;
+        } catch (_) {
+          // Повреждённый/недочитанный файл — просто идём обычным путём ниже.
+        }
+      }
+    }
 
     final myGeneration = _generation[accountId] ?? 0;
     final future = _fetch(accountId);
@@ -66,7 +97,45 @@ class AvatarCache {
     }
     _cache[accountId] = result;
     _cachedAt[accountId] = DateTime.now();
+    unawaited(_writeToDisk(accountId, result));
     return result;
+  }
+
+  /// Тихий фоновый рефреш вслед за мгновенным ответом с диска — сам ничего
+  /// никому не возвращает напрямую, только докатывает то, что реально
+  /// сейчас на сервере, и будит подписчиков `changes`, если оказалось, что
+  /// фото поменялось, пока приложение было закрыто.
+  static Future<void> _refreshInBackground(String accountId) async {
+    final myGeneration = _generation[accountId] ?? 0;
+    final fresh = await _fetch(accountId);
+    if ((_generation[accountId] ?? 0) != myGeneration) return;
+    final old = _cache[accountId];
+    _cache[accountId] = fresh;
+    _cachedAt[accountId] = DateTime.now();
+    unawaited(_writeToDisk(accountId, fresh));
+    if (!_bytesEqual(old, fresh)) {
+      _changesController.add(accountId);
+    }
+  }
+
+  static Future<void> _writeToDisk(String accountId, Uint8List? bytes) async {
+    if (bytes == null || bytes.isEmpty) return;
+    try {
+      final file = await _diskFileFor(accountId);
+      await file.writeAsBytes(bytes);
+    } catch (_) {
+      // Диск переполнен/недоступен на запись — не критично, просто в
+      // следующий раз холодный старт снова пойдёт в сеть.
+    }
+  }
+
+  static bool _bytesEqual(Uint8List? a, Uint8List? b) {
+    if (a == null || b == null) return a == b;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   static Future<Uint8List?> _fetch(String accountId) async {

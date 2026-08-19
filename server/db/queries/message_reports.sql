@@ -7,3 +7,6 @@ INSERT INTO message_reports (
 
 -- name: ListReports :many
 SELECT * FROM message_reports ORDER BY created_at DESC;
+
+-- name: MarkReportReviewed :exec
+UPDATE message_reports SET reviewed_at = now() WHERE id = $1;

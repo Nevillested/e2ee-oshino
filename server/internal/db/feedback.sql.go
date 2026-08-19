@@ -28,7 +28,7 @@ func (q *Queries) CreateFeedback(ctx context.Context, arg CreateFeedbackParams) 
 }
 
 const listFeedback = `-- name: ListFeedback :many
-SELECT id, account_id, account_login, message, created_at FROM feedback ORDER BY created_at DESC
+SELECT id, account_id, account_login, message, created_at, reviewed_at FROM feedback ORDER BY created_at DESC
 `
 
 func (q *Queries) ListFeedback(ctx context.Context) ([]Feedback, error) {
@@ -46,6 +46,7 @@ func (q *Queries) ListFeedback(ctx context.Context) ([]Feedback, error) {
 			&i.AccountLogin,
 			&i.Message,
 			&i.CreatedAt,
+			&i.ReviewedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -55,4 +56,13 @@ func (q *Queries) ListFeedback(ctx context.Context) ([]Feedback, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const markFeedbackReviewed = `-- name: MarkFeedbackReviewed :exec
+UPDATE feedback SET reviewed_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkFeedbackReviewed(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markFeedbackReviewed, id)
+	return err
 }

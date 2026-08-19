@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart' show TapGestureRecognizer;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../api/api_client.dart';
+import '../l10n/app_locale.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/password_validator.dart';
@@ -10,8 +11,12 @@ import '../widgets/theme_reactive.dart';
 import 'verify_totp_screen.dart';
 import '../widgets/loading_overlay.dart';
 
-const _termsUrl = 'https://ee2e.oshino.space/terms';
-const _privacyUrl = 'https://ee2e.oshino.space/privacy';
+// /en/ или /ru/ в зависимости от текущего языка интерфейса (см.
+// AppStrings.locale) — обе версии страниц уже развёрнуты на сервере.
+String get _termsUrl =>
+    'https://ee2e.oshino.space/terms/${AppStrings.locale == AppLocale.ru ? 'ru' : 'en'}/';
+String get _privacyUrl =>
+    'https://ee2e.oshino.space/privacy/${AppStrings.locale == AppLocale.ru ? 'ru' : 'en'}/';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});

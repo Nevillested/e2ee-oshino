@@ -8,6 +8,7 @@ import '../config.dart';
 import '../storage/outbox_store.dart';
 import '../storage/chat_store.dart';
 import '../api/api_client.dart';
+import 'debug_log.dart';
 
 /// Человекочитаемое состояние подключения к серверу — для индикатора в
 /// шапке списка чатов. Не претендует на бОльшую детализацию, чем реально
@@ -28,6 +29,7 @@ class WebSocketService {
     if (status == s) return;
     status = s;
     _statusController.add(s);
+    DebugLog.log('WS status -> $s');
   }
 
   WebSocketChannel? _channel;
@@ -160,6 +162,11 @@ class WebSocketService {
         try {
           final outer = jsonDecode(raw as String) as Map<String, dynamic>;
           final type = outer['Type'] as String?;
+          final frameDeliveryId = outer['DeliveryId'];
+          DebugLog.log(
+            'WS recv type=$type'
+            '${frameDeliveryId is String && frameDeliveryId.isNotEmpty ? ' deliveryId=$frameDeliveryId' : ''}',
+          );
 
           if (type == 'presence' || type == 'typing') {
             _presenceController.add(outer);
@@ -275,6 +282,7 @@ class WebSocketService {
   /// его (см. комментарий в listener() выше про то, почему ack больше не
   /// шлётся отсюда же по факту получения кадра).
   void ackDelivery(String deliveryId) {
+    DebugLog.log('WS send ack deliveryId=$deliveryId connected=${_channel != null}');
     _channel?.sink.add(jsonEncode({'Type': 'ack', 'DeliveryId': deliveryId}));
   }
 

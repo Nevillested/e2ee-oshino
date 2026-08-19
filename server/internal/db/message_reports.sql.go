@@ -41,7 +41,7 @@ func (q *Queries) CreateReport(ctx context.Context, arg CreateReportParams) erro
 }
 
 const listReports = `-- name: ListReports :many
-SELECT id, reporter_account_id, reporter_login, reported_account_id, reported_login, message_text, reason, created_at FROM message_reports ORDER BY created_at DESC
+SELECT id, reporter_account_id, reporter_login, reported_account_id, reported_login, message_text, reason, created_at, reviewed_at FROM message_reports ORDER BY created_at DESC
 `
 
 func (q *Queries) ListReports(ctx context.Context) ([]MessageReport, error) {
@@ -62,6 +62,7 @@ func (q *Queries) ListReports(ctx context.Context) ([]MessageReport, error) {
 			&i.MessageText,
 			&i.Reason,
 			&i.CreatedAt,
+			&i.ReviewedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -71,4 +72,13 @@ func (q *Queries) ListReports(ctx context.Context) ([]MessageReport, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const markReportReviewed = `-- name: MarkReportReviewed :exec
+UPDATE message_reports SET reviewed_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkReportReviewed(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markReportReviewed, id)
+	return err
 }

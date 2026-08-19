@@ -9,6 +9,7 @@ import '../crypto/key_store.dart';
 import '../l10n/app_strings.dart';
 import '../session.dart';
 import '../storage/locale_store.dart';
+import 'debug_log.dart';
 import 'local_notifications.dart';
 
 const _messagesChannelId = 'messages';
@@ -71,6 +72,7 @@ class PushService {
       // нужно физически показать входящий вызов) — поэтому для 'call' здесь
       // делаем то же самое, что и в фоновом обработчике.
       final type = message.data['type'];
+      DebugLog.log('Push received (foreground) type=$type');
       if (type == 'call') {
         CallRingPlugin.startRinging(
           callId: message.data['call_id'],
@@ -129,6 +131,7 @@ Future<void> pushBackgroundHandler(RemoteMessage message) async {
   await LocaleStore.init();
 
   final type = message.data['type'];
+  DebugLog.log('Push received (background) type=$type');
   if (type != 'message' && type != 'call' && type != 'call_cancel') return;
 
   if (type == 'call') {
