@@ -39,16 +39,20 @@ class MessageRouter {
   static Future<void> _handleIncoming(Map<String, dynamic> envelope) async {
     final senderDeviceId = envelope['sender_device_id'] as String?;
     if (senderDeviceId == null) return;
+    // Транспортный довесок от WebSocketService (см. комментарий там) —
+    // не часть самого конверта, вынимаем до передачи дальше.
+    final deliveryId = envelope.remove('_deliveryId') as String?;
 
     await SendLock.run(
       senderDeviceId,
-      () => _processIncoming(senderDeviceId, envelope),
+      () => _processIncoming(senderDeviceId, envelope, deliveryId),
     );
   }
 
   static Future<void> _processIncoming(
     String senderDeviceId,
     Map<String, dynamic> envelope,
+    String? deliveryId,
   ) async {
     try {
       var state = await SessionStore.getState(senderDeviceId);
@@ -268,6 +272,16 @@ class MessageRouter {
         final targetIds =
             (data['target_ids'] as List<dynamic>?)?.cast<String>() ?? const [];
         await ChatStore.markMessagesRead(ownerInfo.login, targetIds);
+      }
+
+      // Подтверждаем серверу доставку ТОЛЬКО теперь — конверт уже реально
+      // расшифрован и сохранён (или осознанно ни во что не превратился,
+      // как read_receipt/пустая реакция — тоже "обработано", ack честен).
+      // Раньше ack уходил сразу по получении кадра, до этого места — любой
+      // сбой ниже по цепочке (расшифровка, запись) означал, что сервер уже
+      // считал сообщение доставленным и стирал его, а оно фактически терялось.
+      if (deliveryId != null) {
+        WebSocketService.instance.ackDelivery(deliveryId);
       }
 
       // Реакция/пин/правка/удаление — служебные события, не самостоятельные

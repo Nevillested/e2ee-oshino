@@ -28,6 +28,7 @@ class AppStrings {
     'common.cancel': {AppLocale.ru: 'Отмена', AppLocale.en: 'Cancel'},
     'common.save': {AppLocale.ru: 'Сохранить', AppLocale.en: 'Save'},
     'common.done': {AppLocale.ru: 'Готово', AppLocale.en: 'Done'},
+    'common.send': {AppLocale.ru: 'Отправить', AppLocale.en: 'Send'},
     'common.next': {AppLocale.ru: 'Далее', AppLocale.en: 'Next'},
 
     'auth.loginHint': {AppLocale.ru: 'Логин', AppLocale.en: 'Login'},
@@ -289,6 +290,26 @@ class AppStrings {
       AppLocale.ru: 'Убрать почту',
       AppLocale.en: 'Remove email',
     },
+    'email.addButton': {
+      AppLocale.ru: 'Добавить почту',
+      AppLocale.en: 'Add email',
+    },
+    'email.notSet': {
+      AppLocale.ru: 'Почта для восстановления пока не добавлена',
+      AppLocale.en: 'No recovery email added yet',
+    },
+    'email.removeConfirmTitle': {
+      AppLocale.ru: 'Удалить почту?',
+      AppLocale.en: 'Remove email?',
+    },
+    'email.removeConfirmBody': {
+      AppLocale.ru:
+          'Без почты восстановить доступ при утере пароля будет '
+          'невозможно.',
+      AppLocale.en:
+          "Without an email on file, you won't be able to recover "
+          'access if you forget your password.',
+    },
     'email.codeSentTo': {
       AppLocale.ru: 'Код отправлен на',
       AppLocale.en: 'Code sent to',
@@ -314,6 +335,14 @@ class AppStrings {
       AppLocale.ru: 'Сервер не вернул account_id пользователя',
       AppLocale.en: "Server did not return the user's account_id",
     },
+    'error.reportFailed': {
+      AppLocale.ru: 'Не удалось отправить жалобу',
+      AppLocale.en: 'Failed to send the report',
+    },
+    'error.feedbackFailed': {
+      AppLocale.ru: 'Не удалось отправить отзыв',
+      AppLocale.en: 'Failed to send feedback',
+    },
 
     'encryption.info': {
       AppLocale.ru:
@@ -334,6 +363,14 @@ class AppStrings {
     'register.title': {
       AppLocale.ru: 'Регистрация',
       AppLocale.en: 'Registration',
+    },
+    'register.agreementPrefix': {
+      AppLocale.ru: 'Регистрируясь, вы соглашаетесь с ',
+      AppLocale.en: 'By registering, you agree to the ',
+    },
+    'register.agreementJoiner': {
+      AppLocale.ru: ' и ',
+      AppLocale.en: ' and ',
     },
 
     'recovery.forgotPassword': {
@@ -555,6 +592,22 @@ class AppStrings {
     'action.edit': {AppLocale.ru: 'Изменить', AppLocale.en: 'Edit'},
     'action.select': {AppLocale.ru: 'Выбрать', AppLocale.en: 'Select'},
     'action.delete': {AppLocale.ru: 'Удалить', AppLocale.en: 'Delete'},
+    'action.report': {
+      AppLocale.ru: 'Пожаловаться',
+      AppLocale.en: 'Report',
+    },
+    'report.title': {
+      AppLocale.ru: 'Пожаловаться на сообщение',
+      AppLocale.en: 'Report message',
+    },
+    'report.commentHint': {
+      AppLocale.ru: 'Комментарий (необязательно) — почему вы жалуетесь',
+      AppLocale.en: 'Comment (optional) — why are you reporting this',
+    },
+    'report.sent': {
+      AppLocale.ru: 'Жалоба отправлена',
+      AppLocale.en: 'Report sent',
+    },
 
     'media.limitedAccess': {
       AppLocale.ru: 'Доступны не все файлы — нажмите, чтобы разрешить полный доступ',
@@ -685,6 +738,40 @@ class AppStrings {
     'settings.backToChats': {
       AppLocale.ru: 'Вернуться к чатам',
       AppLocale.en: 'Back to chats',
+    },
+    'settings.about': {
+      AppLocale.ru: 'О приложении',
+      AppLocale.en: 'About the app',
+    },
+
+    'about.title': {AppLocale.ru: 'О приложении', AppLocale.en: 'About'},
+    'about.version': {
+      AppLocale.ru: 'Версия приложения',
+      AppLocale.en: 'App version',
+    },
+    'about.terms': {
+      AppLocale.ru: 'Условия использования',
+      AppLocale.en: 'Terms of Service',
+    },
+    'about.privacy': {
+      AppLocale.ru: 'Политика конфиденциальности',
+      AppLocale.en: 'Privacy Policy',
+    },
+    'about.feedback': {
+      AppLocale.ru: 'Обратная связь',
+      AppLocale.en: 'Feedback',
+    },
+    'about.feedbackHint': {
+      AppLocale.ru: 'Расскажите, что понравилось или что стоит улучшить',
+      AppLocale.en: "Tell us what you liked or what we should improve",
+    },
+    'about.feedbackEmpty': {
+      AppLocale.ru: 'Напишите хотя бы пару слов',
+      AppLocale.en: 'Please write at least a few words',
+    },
+    'about.feedbackSent': {
+      AppLocale.ru: 'Спасибо! Отзыв отправлен',
+      AppLocale.en: 'Thanks! Feedback sent',
     },
 
     'account.logoutTitle': {

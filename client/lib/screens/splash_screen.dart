@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../crypto/key_store.dart';
 import '../services/my_avatar_store.dart';
+import '../services/my_email_store.dart';
 import '../session.dart';
 import 'home_placeholder_screen.dart';
 import 'welcome_screen.dart';
@@ -40,6 +41,7 @@ class _SplashScreenState extends State<SplashScreen> {
       await KeyStore.clearAll();
       await CallRingPlugin.clearCredentials();
       MyAvatarStore.reset();
+      MyEmailStore.reset();
       _goTo(const WelcomeScreen());
       return;
     }

@@ -1,0 +1,6 @@
+-- name: CreateFeedback :exec
+INSERT INTO feedback (account_id, account_login, message)
+VALUES ($1, $2, $3);
+
+-- name: ListFeedback :many
+SELECT * FROM feedback ORDER BY created_at DESC;

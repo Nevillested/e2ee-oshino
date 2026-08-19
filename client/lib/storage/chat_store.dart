@@ -362,11 +362,21 @@ class ChatStore {
     String? accountId,
     bool incrementUnread = false,
   }) async {
+    var added = false;
     await _withPeerLock(peerLogin, () async {
       final messages = await getMessages(peerLogin);
+      // На переподключении сервер теперь ждёт ack перед тем, как убрать
+      // сообщение из своей очереди (см. websocket.go) — если ack потеряется
+      // по пути обратно, то же самое сообщение может честно прийти ещё раз
+      // при следующем подключении. Тут — единственная точка, куда стекаются
+      // все входящие сообщения, поэтому дубль по message_id гасим именно
+      // здесь, а не в каждом месте, откуда вызывается addMessage.
+      if (messages.any((m) => m.messageId == message.messageId)) return;
       messages.add(message);
+      added = true;
       await _writeMessages(peerLogin, messages);
     });
+    if (!added) return;
     await _touchPeer(
       peerLogin,
       message.text,
@@ -386,12 +396,20 @@ class ChatStore {
     bool incrementUnread = false,
   }) async {
     if (newMessages.isEmpty) return;
+    var actuallyAdded = <StoredMessage>[];
     await _withPeerLock(peerLogin, () async {
       final messages = await getMessages(peerLogin);
-      messages.addAll(newMessages);
+      final existingIds = messages.map((m) => m.messageId).toSet();
+      // Тот же дубль-гард, что и в addMessage — см. комментарий там.
+      actuallyAdded = newMessages
+          .where((m) => !existingIds.contains(m.messageId))
+          .toList();
+      if (actuallyAdded.isEmpty) return;
+      messages.addAll(actuallyAdded);
       await _writeMessages(peerLogin, messages);
     });
-    final last = newMessages.reduce(
+    if (actuallyAdded.isEmpty) return;
+    final last = actuallyAdded.reduce(
       (a, b) => a.timestamp >= b.timestamp ? a : b,
     );
     await _touchPeer(

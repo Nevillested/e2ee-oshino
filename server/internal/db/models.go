@@ -52,6 +52,14 @@ type EmailVerificationToken struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type Feedback struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AccountLogin string
+	Message      string
+	CreatedAt    pgtype.Timestamptz
+}
+
 type InviteCode struct {
 	ID              pgtype.UUID
 	Code            string
@@ -67,6 +75,17 @@ type MediaFile struct {
 	ObjectKey           string
 	SizeBytes           int64
 	CreatedAt           pgtype.Timestamptz
+}
+
+type MessageReport struct {
+	ID                pgtype.UUID
+	ReporterAccountID pgtype.UUID
+	ReporterLogin     string
+	ReportedAccountID pgtype.UUID
+	ReportedLogin     string
+	MessageText       string
+	Reason            pgtype.Text
+	CreatedAt         pgtype.Timestamptz
 }
 
 type OneTimePrekey struct {

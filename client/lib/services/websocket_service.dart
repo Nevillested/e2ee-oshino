@@ -114,11 +114,12 @@ class WebSocketService {
     // о разрыве. С pingInterval dart:io сам шлёт ping и, не дождавшись
     // pong, закрывает сокет — тогда уже отработает наш обычный
     // onDone/onError → _scheduleReconnect().
-    _channel = IOWebSocketChannel.connect(
+    final channel = IOWebSocketChannel.connect(
       uri,
       headers: {'Authorization': 'Bearer $_token'},
       pingInterval: const Duration(seconds: 20),
     );
+    _channel = channel;
 
     // connect() возвращает канал сразу, а само подключение (включая DNS)
     // происходит асинхронно — если сети нет ("Failed host lookup" и т.п.),
@@ -126,20 +127,35 @@ class WebSocketService {
     // как необработанное исключение (просто шум в логах, а не крэш —
     // .listen(onError:) ниже слушает уже установленное соединение и здесь
     // не участвует). Ловим и тихо уходим в обычный цикл переподключения.
-    _channel!.ready
+    //
+    // .timeout(8s) — без него зависшая на "чёрной дыре" сети попытка (пакеты
+    // молча пропадают, никто явно не отвечает отказом — обычное дело при
+    // смене вышки/сети на мобильном) висела бы неопределённо долго, пока не
+    // сработает таймаут TCP-connect уровня ОС (может быть заметно больше
+    // минуты) — всё это время приложение выглядит "открытым и онлайн", а
+    // сервер уже считает устройство отключённым и кладёт сообщения в очередь
+    // вместо живой доставки.
+    channel.ready
+        .timeout(const Duration(seconds: 8))
         .then((_) {
           _setStatus(ConnectionStatus.connected);
         })
         .catchError((Object e) {
+          // Могли успеть переподключиться другим циклом, пока эта, уже
+          // отвязанная попытка донашивала свой таймаут — тогда трогать
+          // текущее (уже другое) соединение нельзя.
+          if (!identical(_channel, channel)) return;
           debugPrint(
             'WebSocketService: не удалось подключиться ($e), повтор через reconnect',
           );
+          channel.sink.close();
+          _channel = null;
           _scheduleReconnect();
         });
 
     flushOutbox();
 
-    _subscription = _channel!.stream.listen(
+    _subscription = channel.stream.listen(
       (raw) {
         try {
           final outer = jsonDecode(raw as String) as Map<String, dynamic>;
@@ -183,16 +199,25 @@ class WebSocketService {
             return;
           }
 
+          // ВАЖНО: ack тут раньше слался сразу по факту получения кадра —
+          // до того, как конверт вообще успевал расшифроваться и
+          // сохраниться (MessageRouter обрабатывает его асинхронно, из
+          // отдельной подписки на _messageController, уже после того как
+          // этот listener отработал). Если расшифровка/запись потом падали
+          // (сбойная сессия, гонка и т.п.), сервер к этому моменту уже
+          // считал сообщение доставленным и стирал его из очереди —
+          // тихая, необратимая потеря уже на клиенте, поверх любой
+          // серверной надёжности. Теперь ack шлёт сам MessageRouter,
+          // только после того как реально сохранил сообщение (см.
+          // ackDelivery/message_router.dart) — DeliveryId едет вместе с
+          // конвертом как транспортный довесок, а не отправляется отсюда.
           final deliveryId = outer['DeliveryId'];
-          if (deliveryId is String && deliveryId.isNotEmpty) {
-            _channel?.sink.add(
-              jsonEncode({'Type': 'ack', 'DeliveryId': deliveryId}),
-            );
-          }
-
           final ciphertext = outer['Ciphertext'];
           if (ciphertext is String) {
             final envelope = jsonDecode(ciphertext) as Map<String, dynamic>;
+            if (deliveryId is String && deliveryId.isNotEmpty) {
+              envelope['_deliveryId'] = deliveryId;
+            }
             _messageController.add(envelope);
           }
         } catch (_) {}
@@ -243,6 +268,14 @@ class WebSocketService {
     _subscription?.cancel();
     _channel?.sink.close();
     _channel = null;
+  }
+
+  /// Подтверждает серверу доставку сообщения с данным DeliveryId — вызывает
+  /// MessageRouter, и ТОЛЬКО после того, как реально расшифровал и сохранил
+  /// его (см. комментарий в listener() выше про то, почему ack больше не
+  /// шлётся отсюда же по факту получения кадра).
+  void ackDelivery(String deliveryId) {
+    _channel?.sink.add(jsonEncode({'Type': 'ack', 'DeliveryId': deliveryId}));
   }
 
   /// silent — служебное control-сообщение (реакция/пин/правка/удаление),

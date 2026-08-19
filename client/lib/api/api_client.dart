@@ -872,4 +872,52 @@ class ApiClient {
       return null;
     }
   }
+
+  /// POST /reports — жалоба на сообщение. Переписка E2E-зашифрована,
+  /// сервер физически не может увидеть текст сам — поэтому messageText
+  /// шлём открытым текстом добровольно, тем же, что уже видно в своём
+  /// пузыре сообщения (см. _reportMessage в chat_screen.dart).
+  Future<void> reportMessage(
+    String token,
+    String reportedDeviceId,
+    String messageText,
+    String reason,
+  ) async {
+    final response = await http
+        .post(
+          Uri.parse('${ApiConfig.baseUrl}/reports'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            'reported_device_id': reportedDeviceId,
+            'message_text': messageText,
+            'reason': reason,
+          }),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      throw ApiException('${tr('error.reportFailed')} (${response.statusCode})');
+    }
+  }
+
+  /// POST /feedback — произвольный отзыв из экрана "О приложении".
+  Future<void> sendFeedback(String token, String message) async {
+    final response = await http
+        .post(
+          Uri.parse('${ApiConfig.baseUrl}/feedback'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({'message': message}),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) {
+      throw ApiException(
+        '${tr('error.feedbackFailed')} (${response.statusCode})',
+      );
+    }
+  }
 }

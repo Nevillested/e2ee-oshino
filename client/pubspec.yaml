@@ -60,6 +60,7 @@ dependencies:
   flutter_local_notifications: ^18.0.1
   url_launcher: ^6.3.1
   animations: ^2.0.11
+  package_info_plus: ^8.3.0
   call_ring_plugin:
     path: packages/call_ring_plugin
 dev_dependencies:

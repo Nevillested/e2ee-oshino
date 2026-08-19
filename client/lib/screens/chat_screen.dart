@@ -57,6 +57,7 @@ import '../widgets/media_picker_sheet.dart';
 import '../widgets/message_context_menu.dart';
 import '../widgets/ongoing_call_banner.dart';
 import '../widgets/particle_shatter_overlay.dart';
+import '../widgets/report_message_dialog.dart';
 import '../widgets/swipe_back_page_route.dart';
 import '../widgets/theme_reactive.dart';
 import '../widgets/video_note_player.dart';
@@ -429,12 +430,6 @@ class _ChatScreenState extends State<ChatScreen> {
     KeyboardHeightStore.getKnownHeight().then((height) {
       if (mounted) setState(() => _keyboardHeight = height);
     });
-    // Заранее, до тапа по скрепке — см. MediaAssetCache: запрос списка
-    // галереи заметно небыстрый, и раньше выполнялся ровно в момент
-    // открытия шторки вложений, отсюда промелькивающий спиннер поверх
-    // открывающей анимации.
-    MediaAssetCache.prefetch();
-
     if (!_isNotes) {
       _subscribePeerPresence();
       _presenceSub = WebSocketService.instance.presenceEvents.listen(
@@ -1177,6 +1172,13 @@ class _ChatScreenState extends State<ChatScreen> {
         break;
       case MessageMenuAction.delete:
         await _deleteMessages(groupMessageIds ?? [msg.messageId]);
+        break;
+      case MessageMenuAction.report:
+        await showReportMessageDialog(
+          context,
+          reportedDeviceId: _currentPeerDeviceId,
+          messageText: msg.text,
+        );
         break;
     }
   }
@@ -2165,6 +2167,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _openMediaPanel() async {
+    // Запрос доступа к галерее (см. MediaAssetCache) — ровно в момент
+    // выбора "Медиа" в меню скрепки, а не заранее при входе в чат: Google
+    // Play требует спрашивать разрешение по факту намерения им
+    // воспользоваться, а не на всякий случай. prefetch() стартует чуть
+    // раньше, чем откроется сама шторка (showMediaPickerSheet ниже) — так
+    // список успевает частично подгрузиться, пока играет анимация
+    // открытия, без полноценного холодного запроса внутри шторки.
+    MediaAssetCache.prefetch();
     final result = await showMediaPickerSheet(context);
 
     if (result == 'open_camera') {

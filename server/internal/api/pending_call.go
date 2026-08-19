@@ -87,15 +87,35 @@ func (r *PendingCallRegistry) Cancel(toDeviceID, callID, callerDeviceID string) 
 	return true
 }
 
-// Take забирает и удаляет все отложенные кадры для получателя — вызывается
-// сразу при его подключении, чтобы доставить их первым делом. Возвращает
-// nil, если отложенного звонка не было.
-func (r *PendingCallRegistry) Take(toDeviceID string) [][]byte {
+// Peek возвращает кадры отложенного звонка для получателя, НЕ удаляя саму
+// запись и не останавливая её TTL-таймер — используется, когда доставку
+// ещё только предстоит подтвердить (см. NewWebSocketHandler): пока ack на
+// call_offer не пришёл, звонок должен оставаться в очереди, а таймер — по
+// прежнему тикать, чтобы звонящий в любом случае получил "недоступен" по
+// истечении TTL, а не завис в неопределённости, если доставка тихо не
+// удалась (зомби-соединение и т.п.).
+func (r *PendingCallRegistry) Peek(toDeviceID string) (callID string, frames [][]byte, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	entry, exists := r.calls[toDeviceID]
+	if !exists {
+		return "", nil, false
+	}
+	return entry.callID, entry.frames, true
+}
+
+// TakeIfSame — как Take, но удаляет запись, только если это всё ещё тот же
+// звонок (callID совпадает) — защита от гонки: пока сервер ждал ack на
+// доставку call_offer, звонящий мог успеть отменить этот звонок или начать
+// новый для того же получателя (Start молча вытесняет предыдущую запись).
+// Возвращает nil и ничего не трогает, если запись уже другая.
+func (r *PendingCallRegistry) TakeIfSame(toDeviceID, callID string) [][]byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	entry, ok := r.calls[toDeviceID]
-	if !ok {
+	if !ok || entry.callID != callID {
 		return nil
 	}
 	entry.timer.Stop()

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
+import '../services/my_email_store.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
 
@@ -9,36 +10,136 @@ import '../theme/app_theme.dart';
 /// по сети и сразу подсветить ошибку.
 final _emailFormatRe = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
 
-/// Установка НОВОЙ почты требует подтверждения владения (код на неё же) —
-/// поэтому диалог двухшаговый: ввод адреса → код из письма. Снятие уже
-/// сохранённой почты (пустое поле) подтверждения не требует, это делается
-/// сразу. Весь сетевой обмен и закрытие диалога — внутри самого виджета,
-/// вызывающей стороне (settings_screen.dart) достаточно просто открыть его.
+/// Точка входа из настроек — НЕ ходит в сеть, читает уже закэшированное
+/// значение (см. MyEmailStore, наполняется один раз при входе в
+/// аккаунт) и открывает "хаб": если почта уже есть — показываем её как
+/// есть (нередактируемо, менять — значит сначала удалить, затем добавить
+/// заново с новым подтверждением) с кнопкой удаления; если нет —
+/// предлагаем добавить.
 Future<void> showEmailDialog(BuildContext context) async {
   final token = await Session.getToken();
   if (token == null) return;
-  final info = await ApiClient().getMyAccountInfo(token);
-  if (!context.mounted) return;
-
   await showDialog<void>(
     context: context,
-    builder: (context) => _EmailDialog(initial: info?.email ?? '', token: token),
+    builder: (context) => _EmailHubDialog(token: token),
   );
+}
+
+class _EmailHubDialog extends StatelessWidget {
+  final String token;
+  const _EmailHubDialog({required this.token});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<String?>(
+      valueListenable: MyEmailStore.notifier,
+      builder: (context, email, _) {
+        final hasEmail = email != null && email.isNotEmpty;
+        return AlertDialog(
+          backgroundColor: AppColors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          title: Text(
+            tr('email.title'),
+            style: TextStyle(color: AppColors.textPrimary),
+          ),
+          content: Text(
+            hasEmail ? email : tr('email.notSet'),
+            style: TextStyle(
+              color: hasEmail ? AppColors.textPrimary : AppColors.textMuted,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(tr('common.cancel')),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                if (hasEmail) {
+                  _showRemoveConfirmDialog(context, token);
+                } else {
+                  showDialog<void>(
+                    context: context,
+                    builder: (context) => _AddEmailDialog(token: token),
+                  );
+                }
+              },
+              child: Text(
+                hasEmail ? tr('email.removeButton') : tr('email.addButton'),
+                style: hasEmail ? const TextStyle(color: Colors.red) : null,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+Future<void> _showRemoveConfirmDialog(
+  BuildContext context,
+  String token,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      title: Text(
+        tr('email.removeConfirmTitle'),
+        style: TextStyle(color: AppColors.textPrimary),
+      ),
+      content: Text(
+        tr('email.removeConfirmBody'),
+        style: TextStyle(color: AppColors.textMuted),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: Text(tr('common.cancel')),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: Text(
+            tr('email.removeButton'),
+            style: const TextStyle(color: Colors.red),
+          ),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+
+  try {
+    await ApiClient().updateEmail(token, '');
+    MyEmailStore.clear();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(tr('email.removed'))));
+  } on ApiException catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(e.message)));
+  }
 }
 
 enum _Step { enterEmail, enterCode }
 
-class _EmailDialog extends StatefulWidget {
-  final String initial;
+class _AddEmailDialog extends StatefulWidget {
   final String token;
-  const _EmailDialog({required this.initial, required this.token});
+  const _AddEmailDialog({required this.token});
 
   @override
-  State<_EmailDialog> createState() => _EmailDialogState();
+  State<_AddEmailDialog> createState() => _AddEmailDialogState();
 }
 
-class _EmailDialogState extends State<_EmailDialog> {
-  late final _emailController = TextEditingController(text: widget.initial);
+class _AddEmailDialogState extends State<_AddEmailDialog> {
+  final _emailController = TextEditingController();
   final _codeController = TextEditingController();
   final _apiClient = ApiClient();
 
@@ -54,30 +155,8 @@ class _EmailDialogState extends State<_EmailDialog> {
     super.dispose();
   }
 
-  Future<void> _handlePrimaryAction() async {
+  Future<void> _handleSendCode() async {
     final value = _emailController.text.trim();
-
-    if (value.isEmpty) {
-      // Пустое поле — просто снять уже сохранённую почту, без кода.
-      setState(() {
-        _isLoading = true;
-        _error = null;
-      });
-      try {
-        await _apiClient.updateEmail(widget.token, '');
-        if (!mounted) return;
-        Navigator.pop(context);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(tr('email.removed'))));
-      } on ApiException catch (e) {
-        setState(() => _error = e.message);
-      } finally {
-        if (mounted) setState(() => _isLoading = false);
-      }
-      return;
-    }
-
     if (!_emailFormatRe.hasMatch(value)) {
       setState(() => _error = tr('email.invalid'));
       return;
@@ -112,6 +191,7 @@ class _EmailDialogState extends State<_EmailDialog> {
     try {
       await _apiClient.confirmEmailVerification(widget.token, code);
       if (!mounted) return;
+      MyEmailStore.setEmail(_pendingEmail!);
       Navigator.pop(context);
       ScaffoldMessenger.of(
         context,
@@ -150,7 +230,7 @@ class _EmailDialogState extends State<_EmailDialog> {
           onPressed: _isLoading
               ? null
               : (_step == _Step.enterEmail
-                    ? _handlePrimaryAction
+                    ? _handleSendCode
                     : _handleConfirmCode),
           child: _isLoading
               ? const SizedBox(
@@ -160,9 +240,7 @@ class _EmailDialogState extends State<_EmailDialog> {
                 )
               : Text(
                   _step == _Step.enterEmail
-                      ? (_emailController.text.trim().isEmpty
-                            ? tr('email.removeButton')
-                            : tr('email.sendCode'))
+                      ? tr('email.sendCode')
                       : tr('recovery.confirmCode'),
                 ),
         ),

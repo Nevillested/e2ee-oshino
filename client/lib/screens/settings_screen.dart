@@ -8,6 +8,7 @@ import '../widgets/email_dialog.dart';
 import '../widgets/font_size_dialog.dart';
 import '../widgets/language_dialog.dart';
 import '../widgets/theme_dialog.dart';
+import 'about_screen.dart';
 import 'change_password_screen.dart';
 
 /// Содержимое "обратной стороны" HomePlaceholderScreen (см.
@@ -77,6 +78,17 @@ class SettingsContent extends StatelessWidget {
             style: TextStyle(color: AppColors.textPrimary),
           ),
           onTap: () => showFontSizeDialog(context),
+        ),
+        ListTile(
+          leading: Icon(Icons.info_outline, color: AppColors.textMuted),
+          title: Text(
+            tr('settings.about'),
+            style: TextStyle(color: AppColors.textPrimary),
+          ),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const AboutScreen()),
+          ),
         ),
         ListTile(
           leading: const Icon(Icons.logout, color: Colors.red),

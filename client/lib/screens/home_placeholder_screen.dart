@@ -13,6 +13,7 @@ import '../services/call_service.dart';
 import '../services/control_message_sender.dart';
 import '../services/message_router.dart';
 import '../services/my_avatar_store.dart';
+import '../services/my_email_store.dart';
 import '../services/pip_service.dart';
 import '../services/push_service.dart';
 import '../services/websocket_service.dart';
@@ -81,6 +82,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
     unawaited(_syncMutedChats(token));
     unawaited(_syncBlockedContacts(token));
     unawaited(MyAvatarStore.init());
+    unawaited(MyEmailStore.init());
     // Живой сигнал "кто-то поменял блокировку" (см. notifyBlockStatusChanged
     // на сервере) — без него локальный кэш обновлялся бы только при
     // следующем подключении/входе в конкретный чат, а не сразу, пока
@@ -146,6 +148,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
       await KeyStore.clearAll();
       await CallRingPlugin.clearCredentials();
       MyAvatarStore.reset();
+      MyEmailStore.reset();
       if (mounted) {
         Navigator.pushAndRemoveUntil(
           context,

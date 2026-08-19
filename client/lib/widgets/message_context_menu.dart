@@ -14,6 +14,7 @@ enum MessageMenuAction {
   edit,
   select,
   delete,
+  report,
 }
 
 /// Результат закрытия контекстного меню сообщения — либо выбранное
@@ -62,7 +63,8 @@ Future<ChatMenuSelection?> showMessageContextMenu(
   // панель реакций — но раскрывается она уже ПОСЛЕ открытия, без смены
   // позиции), но количество пунктов действий известно уже сейчас — оценка
   // по нему заметно точнее старой фиксированной константы.
-  final actionItemCount = 5 + (showCopy ? 1 : 0) + (showEdit ? 1 : 0);
+  final actionItemCount =
+      5 + (showCopy ? 1 : 0) + (showEdit ? 1 : 0) + (isMine ? 0 : 1);
   final estimatedHeight = _kMenuCellSize + actionItemCount * _kActionItemHeight;
 
   final mq = MediaQuery.of(context);
@@ -489,6 +491,14 @@ class _ActionsList extends StatelessWidget {
         MessageMenuAction.delete,
         color: Colors.redAccent,
       ),
+      // Свои сообщения не репортят — только чужие.
+      if (!isMine)
+        _ActionItem(
+          Icons.flag_outlined,
+          tr('action.report'),
+          MessageMenuAction.report,
+          color: Colors.redAccent,
+        ),
     ];
 
     return Column(

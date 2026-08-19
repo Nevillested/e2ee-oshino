@@ -265,10 +265,64 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 
 		// Отложенные звонки доставляем первым делом, до обычных сообщений —
 		// это дозвон в реальном времени, задержка тут особенно чувствуется.
-		for _, frame := range pendingCalls.Take(DeviceID) {
-			if err := ws_object.Write(r.Context(), websocket.MessageText, frame); err != nil {
-				log.Printf("ошибка доставки отложенного звонка: %v", err)
-				break
+		//
+		// Первый кадр в очереди — всегда call_offer (см. pendingCallEntry) —
+		// именно его реальную доставку подтверждаем ack'ом, как и живой
+		// call_offer ниже: раньше Take() безусловно забирал и стирал запись
+		// (вместе с её TTL-таймером) ДО того, как запись в сокет вообще была
+		// подтверждена — при зомби-соединении звонок тихо пропадал, а
+		// звонящий даже не получал "недоступен" по TTL, потому что таймер к
+		// этому моменту был уже остановлен. Теперь запись остаётся в очереди
+		// (и таймер тикает) до подтверждения; не дождались — она просто
+		// ждёт следующего подключения или, в крайнем случае, честно
+		// истекает по своему обычному TTL.
+		if callID, frames, ok := pendingCalls.Peek(DeviceID); ok && len(frames) > 0 {
+			var offer WSMsgFrom
+			if err := json.Unmarshal(frames[0], &offer); err != nil {
+				log.Printf("ошибка разбора отложенного call_offer: %v", err)
+			} else {
+				deliveryID := generateDeliveryID()
+				relay := WSMsgRelay{
+					ToDeviceId: offer.ToDeviceId,
+					Ciphertext: offer.Ciphertext,
+					Type:       offer.Type,
+					DeliveryId: deliveryID,
+				}
+				relayBytes, _ := json.Marshal(relay)
+
+				ackChan := acks.Wait(deliveryID)
+				writeErr := ws_object.Write(r.Context(), websocket.MessageText, relayBytes)
+				if writeErr != nil {
+					log.Printf("ошибка доставки отложенного call_offer: %v", writeErr)
+					acks.Cancel(deliveryID)
+				} else {
+					// Как и с обычными отложенными сообщениями — ждать здесь
+					// синхронно нельзя, readLoop (который единственный читает
+					// ack с этого соединения) ещё не запущен.
+					go func() {
+						select {
+						case <-ackChan:
+							// Подтверждено — теперь можно забрать запись
+							// целиком и следом отправить уже без ожидания
+							// накопившиеся буферные кадры (ICE и т.п.):
+							// поодиночке они не критичны, а звонок к этому
+							// моменту уже точно доставлен.
+							remaining := pendingCalls.TakeIfSame(DeviceID, callID)
+							if len(remaining) <= 1 {
+								return
+							}
+							for _, frame := range remaining[1:] {
+								if err := ws_object.Write(context.Background(), websocket.MessageText, frame); err != nil {
+									log.Printf("ошибка доставки буферного кадра звонка: %v", err)
+									break
+								}
+							}
+						case <-time.After(5 * time.Second):
+							acks.Cancel(deliveryID)
+							log.Printf("получатель не подтвердил отложенный call_offer за 5с, оставляем в очереди")
+						}
+					}()
+				}
 			}
 		}
 
@@ -550,8 +604,14 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 				if Status == true {
 					var write_error = ConnReceiver.Write(r.Context(), message_type, message)
 					if write_error != nil {
-						log.Printf("ошибка отправки сообщения в вебсокет: %v", write_error)
-						break readLoop
+						// write_error — про соединение ПОЛУЧАТЕЛЯ (ConnReceiver),
+						// а не отправителя (это же соединение, чей readLoop
+						// сейчас выполняется) — break readLoop здесь обрывал бы
+						// СВОЁ, рабочее соединение из-за чужого зомби-сокета.
+						// Чистим стухший реестр получателя и просто идём дальше
+						// читать следующий кадр отправителя.
+						log.Printf("ошибка доставки %s получателю (зомби-соединение): %v", MessageType, write_error)
+						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
 					}
 				} else {
 					var callPayload CallSignalPayload

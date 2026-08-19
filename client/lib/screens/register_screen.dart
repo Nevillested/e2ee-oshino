@@ -1,4 +1,6 @@
+import 'package:flutter/gestures.dart' show TapGestureRecognizer;
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
@@ -7,6 +9,9 @@ import '../widgets/auth_text_field.dart';
 import '../widgets/theme_reactive.dart';
 import 'verify_totp_screen.dart';
 import '../widgets/loading_overlay.dart';
+
+const _termsUrl = 'https://ee2e.oshino.space/terms';
+const _privacyUrl = 'https://ee2e.oshino.space/privacy';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -79,6 +84,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      // Нет приложения, способного открыть ссылку — молча игнорируем,
+      // как и аналогичный _openLink в chat_screen.dart.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ThemeReactive(builder: (context) => _build(context));
@@ -142,6 +158,36 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                       )
                     : Text(tr('common.next')),
+              ),
+              const SizedBox(height: 16),
+              RichText(
+                textAlign: TextAlign.center,
+                text: TextSpan(
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                  children: [
+                    TextSpan(text: tr('register.agreementPrefix')),
+                    TextSpan(
+                      text: tr('about.terms'),
+                      style: TextStyle(
+                        color: AppColors.primary,
+                        decoration: TextDecoration.underline,
+                      ),
+                      recognizer: TapGestureRecognizer()
+                        ..onTap = () => _openUrl(_termsUrl),
+                    ),
+                    TextSpan(text: tr('register.agreementJoiner')),
+                    TextSpan(
+                      text: tr('about.privacy'),
+                      style: TextStyle(
+                        color: AppColors.primary,
+                        decoration: TextDecoration.underline,
+                      ),
+                      recognizer: TapGestureRecognizer()
+                        ..onTap = () => _openUrl(_privacyUrl),
+                    ),
+                    const TextSpan(text: '.'),
+                  ],
+                ),
               ),
             ],
           ),
