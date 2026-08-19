@@ -22,4 +22,12 @@ class SessionStore {
     if (stored == null) return null;
     return RatchetState.fromJson(jsonDecode(stored) as Map<String, dynamic>);
   }
+
+  /// Стирает сессию с конкретным собеседником — следующая же попытка
+  /// отправить/принять сообщение от него пойдёт по ветке "сессии нет" и
+  /// начнёт свежий X3DH-хендшейк. См. MessageRouter — используется для
+  /// автовосстановления после рассинхрона ratchet (session_reset).
+  static Future<void> clearState(String remoteDeviceId) async {
+    await _storage.delete(key: _key(remoteDeviceId));
+  }
 }

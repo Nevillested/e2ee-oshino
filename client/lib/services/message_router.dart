@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:uuid/uuid.dart';
 import '../api/api_client.dart';
 import '../crypto/double_ratchet.dart';
+import '../crypto/key_store.dart';
 import '../crypto/message_cipher.dart';
 import '../crypto/message_envelope.dart';
 import '../crypto/session_store.dart';
@@ -16,6 +18,8 @@ import 'debug_log.dart';
 import 'send_lock.dart';
 import 'sound_service.dart';
 import 'websocket_service.dart';
+
+const _uuid = Uuid();
 
 /// Служебные типы control-сообщений — синхронизируются как обычно, но не
 /// считаются "сообщением" для звукового уведомления (см. _processIncoming).
@@ -53,17 +57,44 @@ class MessageRouter {
     );
   }
 
+  /// Служебный конверт (см. _onDecryptFailure) — не шифруется Double
+  /// Ratchet (сессия и есть то, что сломано), просто просит собеседника
+  /// стереть локальную сессию с нами, чтобы следующая же его отправка
+  /// сама подняла свежий X3DH-хендшейк.
+  static const _sessionResetType = 'session_reset';
+
+  static const _resetFailureThreshold = 3;
+  static const _resetCooldown = Duration(seconds: 30);
+  static final Map<String, int> _failureCounts = {};
+  static final Map<String, DateTime> _lastResetRequestAt = {};
+
   static Future<void> _processIncoming(
     String senderDeviceId,
     Map<String, dynamic> envelope,
     String? deliveryId,
   ) async {
     try {
+      if (envelope['type'] == _sessionResetType) {
+        // Собеседник обнаружил у себя рассинхрон при чтении НАШИХ
+        // сообщений и просит начать с чистого листа — стираем сессию,
+        // наша следующая отправка ему сама поднимет новый X3DH.
+        DebugLog.log(
+          'Router session_reset received from=$senderDeviceId — clearing local session state',
+        );
+        await SessionStore.clearState(senderDeviceId);
+        _failureCounts.remove(senderDeviceId);
+        if (deliveryId != null) {
+          WebSocketService.instance.ackDelivery(deliveryId);
+        }
+        return;
+      }
+
       var state = await SessionStore.getState(senderDeviceId);
+      var isFreshSession = false;
 
       if (state == null) {
-        final rootKey = await establishIncomingSessionRaw(envelope);
-        if (rootKey == null) {
+        final fresh = await _establishFreshIncoming(senderDeviceId, envelope);
+        if (fresh == null) {
           debugPrint(
             'MessageRouter: нет локальной сессии для senderDeviceId='
             '$senderDeviceId, а конверт не содержит данных для нового '
@@ -74,21 +105,36 @@ class MessageRouter {
           );
           return;
         }
-        await PeerIdentityStore.save(
-          senderDeviceId,
-          envelope['sender_identity_dh_pubkey'] as String,
-        );
-        state = await RatchetState.initAsReceiver(
-          rootKey: rootKey,
-          remoteEphemeralPubkey: base64DecodeSafe(
-            envelope['ephemeral_pubkey'] as String,
-          ),
-        );
+        state = fresh;
+        isFreshSession = true;
       }
 
-      final messageKey = await state.nextReceivingKey(envelope);
+      String rawInner;
+      try {
+        final messageKey = await state.nextReceivingKey(envelope);
+        rawInner = await decryptMessage(messageKey, envelope);
+      } catch (e) {
+        // Расшифровка с текущим состоянием не удалась — если конверт
+        // всё же несёт валидные X3DH-поля (собеседник уже сам поднял
+        // свежую сессию, а мы этого не заметили, потому что у нас
+        // формально "было" старое состояние), пробуем принять её как
+        // новую и повторить один раз, прежде чем считать это неудачей.
+        final fresh = isFreshSession
+            ? null
+            : await _establishFreshIncoming(senderDeviceId, envelope);
+        if (fresh == null) {
+          await _onDecryptFailure(senderDeviceId);
+          rethrow;
+        }
+        DebugLog.log(
+          'Router recovered via fresh X3DH init from=$senderDeviceId after decrypt failure',
+        );
+        final messageKey = await fresh.nextReceivingKey(envelope);
+        rawInner = await decryptMessage(messageKey, envelope);
+        state = fresh;
+      }
 
-      final rawInner = await decryptMessage(messageKey, envelope);
+      _failureCounts.remove(senderDeviceId);
       await SessionStore.saveState(senderDeviceId, state);
 
       final inner = InnerMessage.decode(rawInner);
@@ -319,6 +365,71 @@ class MessageRouter {
         'Router FAILED from=$senderDeviceId deliveryId=${deliveryId ?? '-'} error=$e',
       );
     }
+  }
+
+  /// Пытается поднять входящую сессию с нуля из X3DH-полей конверта (если
+  /// они там есть) — используется и когда локальной сессии вообще нет, и
+  /// как fallback, когда расшифровка с уже имеющимся (рассинхронизированным)
+  /// состоянием не удалась, но собеседник прислал свежий хендшейк.
+  static Future<RatchetState?> _establishFreshIncoming(
+    String senderDeviceId,
+    Map<String, dynamic> envelope,
+  ) async {
+    final rootKey = await establishIncomingSessionRaw(envelope);
+    if (rootKey == null) return null;
+    await PeerIdentityStore.save(
+      senderDeviceId,
+      envelope['sender_identity_dh_pubkey'] as String,
+    );
+    return RatchetState.initAsReceiver(
+      rootKey: rootKey,
+      remoteEphemeralPubkey: base64DecodeSafe(
+        envelope['ephemeral_pubkey'] as String,
+      ),
+    );
+  }
+
+  /// Считает подряд идущие неудачные попытки расшифровки от одного
+  /// отправителя — после нескольких подряд решаем, что наша сессия с ним
+  /// рассинхронизирована навсегда (см. docstring в double_ratchet.dart:
+  /// такое состояние само себя не чинит), сбрасываем её у себя и просим
+  /// собеседника сделать то же самое, чтобы его следующая отправка сама
+  /// подняла свежий X3DH.
+  static Future<void> _onDecryptFailure(String senderDeviceId) async {
+    final count = (_failureCounts[senderDeviceId] ?? 0) + 1;
+    _failureCounts[senderDeviceId] = count;
+    DebugLog.log(
+      'Router decrypt-failure-count from=$senderDeviceId count=$count',
+    );
+    if (count < _resetFailureThreshold) return;
+
+    final lastRequest = _lastResetRequestAt[senderDeviceId];
+    if (lastRequest != null &&
+        DateTime.now().difference(lastRequest) < _resetCooldown) {
+      return;
+    }
+    _lastResetRequestAt[senderDeviceId] = DateTime.now();
+
+    DebugLog.log(
+      'Router auto session-reset triggered for=$senderDeviceId after $count consecutive decrypt failures',
+    );
+    await SessionStore.clearState(senderDeviceId);
+    await _sendSessionReset(senderDeviceId);
+  }
+
+  static Future<void> _sendSessionReset(String toDeviceId) async {
+    final myDeviceId = await KeyStore.getStoredDeviceId();
+    if (myDeviceId == null) return;
+    final envelope = <String, dynamic>{
+      'type': _sessionResetType,
+      'sender_device_id': myDeviceId,
+    };
+    await WebSocketService.instance.sendEnvelope(
+      toDeviceId,
+      envelope,
+      _uuid.v4(),
+      silent: true,
+    );
   }
 
   static Future<({String accountId, String login})?> _resolveOwner(
