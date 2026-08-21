@@ -8,6 +8,7 @@ import '../crypto/x3dh.dart';
 import '../session.dart';
 import '../storage/peer_account_store.dart';
 import '../storage/peer_identity_store.dart';
+import 'debug_log.dart';
 import 'websocket_service.dart';
 
 /// Отправка одного зашифрованного сообщения конкретному устройству вне
@@ -29,6 +30,11 @@ Future<void> sendPeerMessage(String peerDeviceId, InnerMessage inner) async {
   var state = await SessionStore.getState(peerDeviceId);
   Map<String, dynamic>? initHeader;
 
+  DebugLog.log(
+    'PeerMessenger send to=$peerDeviceId type=${inner.type} '
+    'hadLocalSession=${state != null}',
+  );
+
   if (state == null) {
     final bundle = await ApiClient().getPrekeyBundle(token!, peerDeviceId);
     await PeerAccountStore.save(peerDeviceId, bundle['account_id'] as String);
@@ -46,9 +52,17 @@ Future<void> sendPeerMessage(String peerDeviceId, InnerMessage inner) async {
       ephemeralKeyPair: outgoing.ephemeralKeyPair,
     );
     initHeader = outgoing.initHeader;
+    DebugLog.log(
+      'PeerMessenger established fresh X3DH outgoing session to=$peerDeviceId '
+      'usedOneTimePrekey=${bundle['one_time_prekey'] != null}',
+    );
   }
 
   final next = await state.nextSendingKey();
+  DebugLog.log(
+    'PeerMessenger sending key to=$peerDeviceId messageNumber=${next.header['message_number']} '
+    'ratchetPubkey=${next.header['ratchet_pubkey']}',
+  );
   await SessionStore.saveState(peerDeviceId, state);
   final encrypted = await encryptMessage(next.messageKey, inner.encode());
   final envelope = <String, dynamic>{

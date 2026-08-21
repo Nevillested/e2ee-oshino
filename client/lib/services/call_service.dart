@@ -14,6 +14,7 @@ import '../session.dart';
 import '../navigator_key.dart';
 import '../screens/call_screen.dart';
 import '../storage/chat_store.dart';
+import 'debug_log.dart';
 import 'peer_messenger.dart';
 import 'pip_service.dart';
 import 'send_lock.dart';
@@ -707,6 +708,7 @@ class CallService {
             timestamp: startedAt.millisecondsSinceEpoch,
             durationSeconds: durationSeconds,
             accountId: owner.accountId,
+            callId: _callId,
           );
 
           if (peerWasUnavailable && _isOutgoingCall) {
@@ -717,12 +719,16 @@ class CallService {
                   peerDeviceId,
                   InnerMessage.missedCall(
                     calledAt: startedAt.millisecondsSinceEpoch,
+                    callId: _callId,
                   ),
                 ),
               );
-            } catch (_) {
+            } catch (e) {
               // Не получилось доставить уведомление сейчас — не критично,
               // при следующем звонке будет ещё одна попытка.
+              DebugLog.log(
+                'CallService missedCall notify FAILED to=$peerDeviceId error=$e',
+              );
             }
           }
         }
@@ -761,6 +767,16 @@ class CallService {
     }
 
     await _send('call_video_state', {'enabled': videoEnabled});
+  }
+
+  /// Переключает фронтальную/тыловую камеру на уже открытой видео-дорожке
+  /// (flutter_webrtc сам умеет это через нативный слой — ничего заново
+  /// захватывать/пересоздавать не нужно). Имеет смысл вызывать, только
+  /// пока видео включено — если дорожки ещё нет, тихо ничего не делает.
+  Future<void> switchCamera() async {
+    final track = _videoTrack;
+    if (track == null) return;
+    await Helper.switchCamera(track);
   }
 
   Future<void> toggleSpeaker() async {

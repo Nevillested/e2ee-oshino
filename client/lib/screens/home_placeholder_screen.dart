@@ -11,6 +11,7 @@ import '../l10n/app_strings.dart';
 import '../services/avatar_cache.dart';
 import '../services/call_service.dart';
 import '../services/control_message_sender.dart';
+import '../services/local_notifications.dart';
 import '../services/message_router.dart';
 import '../services/my_avatar_store.dart';
 import '../services/my_email_store.dart';
@@ -52,7 +53,8 @@ class HomePlaceholderScreen extends StatefulWidget {
   State<HomePlaceholderScreen> createState() => _HomePlaceholderScreenState();
 }
 
-class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
+class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
+    with WidgetsBindingObserver {
   final _webSocketService = WebSocketService.instance;
   List<ChatSummary> _entries = [];
 
@@ -67,7 +69,25 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _connect();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Раньше пуш "У вас новое сообщение" так и висел в шторке уведомлений
+  // даже после того, как пользователь открыл приложение и увидел
+  // сообщение своими глазами — нигде в клиенте не было ни одного
+  // WidgetsBindingObserver, чтобы вообще заметить возврат в foreground.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      localNotifications.cancelAll();
+    }
   }
 
   Future<void> _connect() async {
@@ -429,7 +449,13 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen> {
   }
 
   Widget _build(BuildContext context) {
-    final barHeight = MediaQuery.of(context).size.height / 15;
+    // Держим в синхроне с BottomActionBar.build() — та теперь тоже
+    // прибавляет системный нижний инсет к своей высоте (см. её комментарий),
+    // иначе на 3-кнопочной навигации содержимое списка чатов пряталось бы
+    // за подросшей панелью.
+    final barHeight =
+        MediaQuery.of(context).size.height / 15 +
+        MediaQuery.of(context).padding.bottom;
 
     return PopScope(
       // На "обратной стороне" (настройки) системный back должен сначала

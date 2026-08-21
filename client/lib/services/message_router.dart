@@ -95,6 +95,21 @@ class MessageRouter {
       var state = await SessionStore.getState(senderDeviceId);
       var isFreshSession = false;
 
+      // Временное расширенное логирование расшифровки на период
+      // closed-тестирования (см. обсуждение с пользователем) — снимаем
+      // перед релизом в проде. Логируем только БЕЗОПАСНЫЕ метаданные:
+      // публичные ключи ratchet (это Diffie-Hellman public key, не
+      // секрет), номера сообщений, счётчики — НИКОГДА rootKey/chain key/
+      // message key и уж тем более текст сообщения.
+      DebugLog.log(
+        'Router decrypt-attempt from=$senderDeviceId '
+        'hadLocalSession=${state != null} '
+        'envelopeHasX3dhInit=${envelope['ephemeral_pubkey'] != null} '
+        'envelope.message_number=${envelope['message_number']} '
+        'envelope.ratchet_pubkey=${envelope['ratchet_pubkey']} '
+        '${state != null ? _stateDebugInfo(state) : ''}',
+      );
+
       if (state == null) {
         final fresh = await _establishFreshIncoming(senderDeviceId, envelope);
         if (fresh == null) {
@@ -108,6 +123,9 @@ class MessageRouter {
           );
           return;
         }
+        DebugLog.log(
+          'Router accepted fresh X3DH init from=$senderDeviceId (no prior session)',
+        );
         state = fresh;
         isFreshSession = true;
       }
@@ -122,10 +140,21 @@ class MessageRouter {
         // свежую сессию, а мы этого не заметили, потому что у нас
         // формально "было" старое состояние), пробуем принять её как
         // новую и повторить один раз, прежде чем считать это неудачей.
+        DebugLog.log(
+          'Router decrypt-FAILED from=$senderDeviceId error=$e '
+          'isFreshSession=$isFreshSession '
+          'envelope.message_number=${envelope['message_number']} '
+          'envelope.ratchet_pubkey=${envelope['ratchet_pubkey']} '
+          '${_stateDebugInfo(state)} — trying fallback fresh-session establish',
+        );
         final fresh = isFreshSession
             ? null
             : await _establishFreshIncoming(senderDeviceId, envelope);
         if (fresh == null) {
+          DebugLog.log(
+            'Router decrypt-FAILED from=$senderDeviceId — no fallback available '
+            '(envelope carries no X3DH init fields, or session was already fresh)',
+          );
           await _onDecryptFailure(senderDeviceId, deliveryId);
           rethrow;
         }
@@ -287,6 +316,7 @@ class MessageRouter {
           timestamp: calledAt,
           accountId: ownerInfo.accountId,
           incrementUnread: !chatIsOpen,
+          callId: callInfo['call_id'] as String?,
         );
       } else if (inner.type == 'reaction') {
         // Реакция от собеседника — с НАШЕЙ стороны это всегда "peer"-реакция,
@@ -368,6 +398,21 @@ class MessageRouter {
         'Router FAILED from=$senderDeviceId deliveryId=${deliveryId ?? '-'} error=$e',
       );
     }
+  }
+
+  /// Только БЕЗОПАСНЫЕ для логов поля состояния сессии — публичный ключ
+  /// ratchet собеседника (это Diffie-Hellman public key, не секрет) и
+  /// голые счётчики/флаги. rootKey/chain key/message key — секретный
+  /// материал, сюда никогда не попадают ни в каком виде.
+  static String _stateDebugInfo(RatchetState state) {
+    final peerPubkey = state.receivingRatchetPublicKey != null
+        ? base64Encode(state.receivingRatchetPublicKey!)
+        : 'null';
+    return 'receiveMsgNum=${state.receiveMessageNumber} '
+        'sendMsgNum=${state.sendMessageNumber} '
+        'needsSendingRatchet=${state.needsSendingRatchet} '
+        'receivingRatchetPubkey=$peerPubkey '
+        'skippedKeys=${state.skippedReceivingKeys.keys.toList()}';
   }
 
   /// Пытается поднять входящую сессию с нуля из X3DH-полей конверта (если

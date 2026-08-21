@@ -46,6 +46,14 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
         await controller.pause();
         if (mounted) setState(() => _playing = false);
       } else {
+        // На случай, если предыдущий _onTick ещё не успел довести до конца
+        // свою перемотку в начало — досрочно дожидаемся её здесь тоже,
+        // иначе play() может уйти на контроллер, который вот-вот сам
+        // домотает до 0 и "перепрыгнет" только что начавшееся воспроизведение.
+        if (controller.value.position > Duration.zero &&
+            controller.value.position >= controller.value.duration) {
+          await controller.seekTo(Duration.zero);
+        }
         await controller.play();
         if (mounted) setState(() => _playing = true);
       }
@@ -74,13 +82,18 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
     }
   }
 
-  void _onTick() {
+  Future<void> _onTick() async {
     final c = _controller;
     if (c == null || !c.value.isInitialized) return;
     if (c.value.duration > Duration.zero &&
         c.value.position >= c.value.duration) {
-      c.pause();
-      c.seekTo(Duration.zero);
+      await c.pause();
+      // Дожидаемся реального завершения перемотки, прежде чем сообщать UI
+      // "готово к повторному воспроизведению" — раньше seekTo не
+      // ожидался, и повторный тап мог прийти на контроллер, ещё не
+      // закончивший перематываться в начало (видимо застревал на
+      // развороте контейнера без реального рестарта видео).
+      await c.seekTo(Duration.zero);
       if (mounted) setState(() => _playing = false);
     }
   }

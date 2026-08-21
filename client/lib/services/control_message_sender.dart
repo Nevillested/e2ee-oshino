@@ -9,6 +9,7 @@ import '../crypto/x3dh.dart';
 import '../session.dart';
 import '../storage/peer_account_store.dart';
 import '../storage/peer_identity_store.dart';
+import 'debug_log.dart';
 import 'send_lock.dart';
 import 'websocket_service.dart';
 
@@ -30,6 +31,11 @@ class ControlMessageSender {
         final myDeviceId = await KeyStore.getStoredDeviceId();
         var state = await SessionStore.getState(peerDeviceId);
         Map<String, dynamic>? initHeader;
+
+        DebugLog.log(
+          'ControlMessageSender send to=$peerDeviceId type=${inner.type} '
+          'hadLocalSession=${state != null}',
+        );
 
         if (state == null) {
           final token = await Session.getToken();
@@ -54,9 +60,17 @@ class ControlMessageSender {
             ephemeralKeyPair: outgoing.ephemeralKeyPair,
           );
           initHeader = outgoing.initHeader;
+          DebugLog.log(
+            'ControlMessageSender established fresh X3DH outgoing session to=$peerDeviceId',
+          );
         }
 
         final next = await state.nextSendingKey();
+        DebugLog.log(
+          'ControlMessageSender sending key to=$peerDeviceId '
+          'messageNumber=${next.header['message_number']} '
+          'ratchetPubkey=${next.header['ratchet_pubkey']}',
+        );
         await SessionStore.saveState(peerDeviceId, state);
 
         final encrypted = await encryptMessage(next.messageKey, inner.encode());
@@ -76,6 +90,9 @@ class ControlMessageSender {
       });
     } catch (e) {
       debugPrint('Ошибка отправки служебного сообщения (вне чата): $e');
+      DebugLog.log(
+        'ControlMessageSender send-FAILED to=$peerDeviceId type=${inner.type} error=$e',
+      );
     }
   }
 }

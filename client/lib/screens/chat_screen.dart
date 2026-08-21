@@ -35,6 +35,7 @@ import '../services/active_chat_tracker.dart';
 import '../services/avatar_cache.dart';
 import '../services/call_service.dart';
 import '../services/chat_scroll_position_store.dart';
+import '../services/debug_log.dart';
 import '../services/keyboard_height_store.dart';
 import '../services/media_asset_cache.dart';
 import '../services/my_avatar_store.dart';
@@ -79,6 +80,12 @@ Color _bubbleTextColor(bool isMine) =>
     isMine ? Colors.white : AppColors.textPrimary;
 Color _bubbleMutedColor(bool isMine) =>
     isMine ? Colors.white70 : AppColors.textMuted;
+// Ссылка не должна сливаться ни с фоном пузыря, ни с обычным текстом на
+// нём — на своих (синих) пузырях обычный светло-голубой акцент почти не
+// отличим от фона, поэтому там нужен контрастный жёлтый, а не тот же
+// оттенок синего.
+Color _linkColor(bool isMine) =>
+    isMine ? const Color(0xFFFFD54F) : const Color(0xFF2AABEE);
 
 class ChatScreen extends StatefulWidget {
   final String peerDeviceId;
@@ -154,6 +161,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _awaitingKeyboardOpen = false;
   bool _hasText = false;
   double _lastReserved = 0;
+  double? _lastLoggedBottomInset;
 
   List<StoredMessage> _messages = [];
 
@@ -677,8 +685,19 @@ class _ChatScreenState extends State<ChatScreen> {
         .map((m) => m.messageId)
         .toList();
     if (toMark.isEmpty) return;
+    // Раньше помечали "квитанция отправлена" ДО подтверждения, что отправка
+    // реально прошла — любой разовый сбой (например, сессия ещё не
+    // установлена, или временная проблема сети) навсегда и незаметно терял
+    // именно эту квитанцию: флаг уже стоял, повторной попытки никогда не
+    // случалось. Теперь помечаем только при успехе — при неудаче эти же id
+    // просто снова попадут в toMark при следующем естественном триггере
+    // (открытие чата, новое сообщение от собеседника), без отдельного
+    // специального retry-механизма.
+    final sent = await _sendControlMessage(
+      InnerMessage.readReceipt(targetMessageIds: toMark),
+    );
+    if (!sent) return;
     await ChatStore.markReadReceiptsSent(widget.peerLogin, toMark);
-    await _sendControlMessage(InnerMessage.readReceipt(targetMessageIds: toMark));
   }
 
   /// Прыгает к offset'у, а затем несколько раз перепроверяет и
@@ -1188,6 +1207,10 @@ class _ChatScreenState extends State<ChatScreen> {
     var state = await SessionStore.getState(_currentPeerDeviceId);
     if (state != null) return state;
 
+    DebugLog.log(
+      'ChatScreen establishing fresh X3DH outgoing session to=$_currentPeerDeviceId '
+      '(no local session found)',
+    );
     final token = await Session.getToken();
     final myDeviceId = await KeyStore.getStoredDeviceId();
     final bundle = await _apiClient.getPrekeyBundle(
@@ -1256,8 +1279,8 @@ class _ChatScreenState extends State<ChatScreen> {
   /// тем же каналом (Double Ratchet + офлайн-очередь на сервере), что и
   /// обычные сообщения — но без записи в локальную историю чата, у этих
   /// типов нет собственного пузыря.
-  Future<void> _sendControlMessage(InnerMessage inner) async {
-    if (_isNotes) return;
+  Future<bool> _sendControlMessage(InnerMessage inner) async {
+    if (_isNotes) return true;
     try {
       await SendLock.run(widget.peerLogin, () async {
         final myDeviceId = await KeyStore.getStoredDeviceId();
@@ -1266,6 +1289,11 @@ class _ChatScreenState extends State<ChatScreen> {
         _pendingInitHeader = null;
 
         final next = await state.nextSendingKey();
+        DebugLog.log(
+          'ChatScreen sending key (control msg type=${inner.type}) '
+          'to=$_currentPeerDeviceId messageNumber=${next.header['message_number']} '
+          'ratchetPubkey=${next.header['ratchet_pubkey']}',
+        );
         await SessionStore.saveState(_currentPeerDeviceId, state);
 
         final encrypted = await encryptMessage(next.messageKey, inner.encode());
@@ -1283,8 +1311,10 @@ class _ChatScreenState extends State<ChatScreen> {
           silent: true,
         );
       });
+      return true;
     } catch (e) {
       debugPrint('Ошибка отправки служебного сообщения: $e');
+      return false;
     }
   }
 
@@ -1352,6 +1382,11 @@ class _ChatScreenState extends State<ChatScreen> {
         _pendingInitHeader = null;
 
         final next = await state.nextSendingKey();
+        DebugLog.log(
+          'ChatScreen sending key (text messageId=${inner.messageId}) '
+          'to=$_currentPeerDeviceId messageNumber=${next.header['message_number']} '
+          'ratchetPubkey=${next.header['ratchet_pubkey']}',
+        );
         await SessionStore.saveState(_currentPeerDeviceId, state);
 
         final encrypted = await encryptMessage(next.messageKey, inner.encode());
@@ -1794,6 +1829,12 @@ class _ChatScreenState extends State<ChatScreen> {
               );
 
         final next = await state.nextSendingKey();
+        DebugLog.log(
+          'ChatScreen sending key (voice/video_note type=${inner.type} '
+          'messageId=${inner.messageId}) to=$_currentPeerDeviceId '
+          'messageNumber=${next.header['message_number']} '
+          'ratchetPubkey=${next.header['ratchet_pubkey']}',
+        );
         await SessionStore.saveState(_currentPeerDeviceId, state);
         final encryptedEnvelope = await encryptMessage(
           next.messageKey,
@@ -2130,8 +2171,24 @@ class _ChatScreenState extends State<ChatScreen> {
   final _attachButtonKey = GlobalKey();
 
   Future<void> _openAttachmentSheet() async {
+    // Если клавиатура сейчас открыта — showAttachLauncherOverlay снимает
+    // позицию кнопки-скрепки ОДИН раз, синхронно (см. её реализацию), а
+    // клавиатура ещё не успела закрыться и композер — переехать на новое
+    // место. Раньше из-за этого панель вложений "зависала в воздухе" там,
+    // где скрепка была ПРИ ОТКРЫТОЙ клавиатуре. Дожидаемся, пока инсет
+    // клавиатуры реально осядет, и только потом измеряем позицию.
+    final wasKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 50;
     _textFocusNode.unfocus();
     setState(() => _emojiMode = false);
+
+    if (wasKeyboardVisible) {
+      for (var i = 0; i < 30; i++) {
+        await WidgetsBinding.instance.endOfFrame;
+        if (!mounted) return;
+        if (MediaQuery.of(context).viewInsets.bottom <= 50) break;
+      }
+      if (!mounted) return;
+    }
 
     final choice = await showAttachLauncherOverlay(
       context,
@@ -2506,6 +2563,11 @@ class _ChatScreenState extends State<ChatScreen> {
         );
 
         final next = await state.nextSendingKey();
+        DebugLog.log(
+          'ChatScreen sending key (media messageId=${inner.messageId}) '
+          'to=$_currentPeerDeviceId messageNumber=${next.header['message_number']} '
+          'ratchetPubkey=${next.header['ratchet_pubkey']}',
+        );
         await SessionStore.saveState(_currentPeerDeviceId, state);
         final encryptedEnvelope = await encryptMessage(
           next.messageKey,
@@ -2650,6 +2712,11 @@ class _ChatScreenState extends State<ChatScreen> {
         );
 
         final next = await state.nextSendingKey();
+        DebugLog.log(
+          'ChatScreen sending key (media_group groupId=$groupId) '
+          'to=$_currentPeerDeviceId messageNumber=${next.header['message_number']} '
+          'ratchetPubkey=${next.header['ratchet_pubkey']}',
+        );
         await SessionStore.saveState(_currentPeerDeviceId, state);
         final encryptedEnvelope = await encryptMessage(
           next.messageKey,
@@ -3531,7 +3598,11 @@ class _ChatScreenState extends State<ChatScreen> {
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildLinkifiedText(msg.text, _bubbleTextColor(msg.isMine)),
+          _buildLinkifiedText(
+            msg.text,
+            _bubbleTextColor(msg.isMine),
+            isMine: msg.isMine,
+          ),
           const SizedBox(height: 2),
           _buildMetaRow(msg),
         ],
@@ -3552,7 +3623,12 @@ class _ChatScreenState extends State<ChatScreen> {
   /// подчёркнутые и кликабельные (см. _openLink). Единая точка для обоих
   /// мест, где рендерится текст сообщения (одиночный пузырь и подпись в
   /// групповом), см. _buildGroupBubble.
-  Widget _buildLinkifiedText(String text, Color baseColor, {double fontSize = 16}) {
+  Widget _buildLinkifiedText(
+    String text,
+    Color baseColor, {
+    required bool isMine,
+    double fontSize = 16,
+  }) {
     final matches = _urlRegex.allMatches(text).toList();
     if (matches.isEmpty) {
       return Text(text, style: TextStyle(color: baseColor, fontSize: fontSize));
@@ -3568,10 +3644,7 @@ class _ChatScreenState extends State<ChatScreen> {
       spans.add(
         TextSpan(
           text: url,
-          style: const TextStyle(
-            color: Colors.lightBlueAccent,
-            decoration: TextDecoration.underline,
-          ),
+          style: TextStyle(color: _linkColor(isMine)),
           recognizer: TapGestureRecognizer()..onTap = () => _openLink(url),
         ),
       );
@@ -3860,6 +3933,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: _buildLinkifiedText(
                   textMsgs.first.text,
                   _bubbleTextColor(isMine),
+                  isMine: isMine,
                 ),
               ),
           ],
@@ -4254,7 +4328,11 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     if (_replyTarget != null) {
       final target = _replyTarget!;
-      final preview = target.isMedia
+      final preview = target.isVoice
+          ? '🎤 ${tr('media.voiceNote')}'
+          : target.isVideoNote
+          ? '🎥 ${tr('media.videoNote')}'
+          : target.isMedia
           ? (target.isFile ? '📎 ${tr('media.file')}' : '📷 ${tr('media.photo')}')
           : target.text;
       return _bannerRow(
@@ -4433,6 +4511,20 @@ class _ChatScreenState extends State<ChatScreen> {
     // см. комментарий у зазора-спейсера ниже про то, почему брать его надо
     // ИМЕННО отсюда, а не из MediaQuery.padding.
     final systemBottomInset = MediaQuery.of(context).viewPadding.bottom;
+    // Диагностика для жалобы "на Samsung с 3-кнопочной навигацией панель
+    // сообщения перекрыта системной панелью" — на Pixel (gesture-навигация)
+    // такого не воспроизвели, а слепой переход на SafeArea тут неверен
+    // (сознательно отключён чуть ниже — он ломает высоту эмодзи-панели,
+    // см. комментарий у зазора-спейсера). Логируем только при реальном
+    // изменении значения, а не на каждый build(), чтобы не забить лог.
+    if (_lastLoggedBottomInset != systemBottomInset) {
+      _lastLoggedBottomInset = systemBottomInset;
+      DebugLog.log(
+        'Chat composer systemBottomInset=$systemBottomInset '
+        'padding.bottom=${MediaQuery.of(context).padding.bottom} '
+        'viewInsets.bottom=$realInset',
+      );
+    }
 
     // Измеряем высоту клавиатуры только когда она перестала МЕНЯТЬСЯ —
     // во время собственной анимации выезда ОС на некоторых устройствах
@@ -4828,6 +4920,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                         child: TextField(
                                           controller: _textController,
                                           focusNode: _textFocusNode,
+                                          textCapitalization:
+                                              TextCapitalization.sentences,
                                           onTap: () {
                                             if (_emojiMode) {
                                               setState(

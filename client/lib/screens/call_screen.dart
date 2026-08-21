@@ -363,6 +363,11 @@ class _CallScreenState extends State<CallScreen> {
                       if (mounted) setState(() {});
                     },
                   ),
+                  if (_call.videoEnabled)
+                    _controlButton(
+                      icon: Icons.cameraswitch,
+                      onTap: () => _call.switchCamera(),
+                    ),
                   _controlButton(
                     icon: Icons.call_end,
                     background: Colors.red,

@@ -35,9 +35,14 @@ class StoredMessage {
   final String? localPreviewPath;
   final String? groupId;
 
-  /// Запись о звонке — чисто локальная (звонки не идут через серверную
-  /// доставку сообщений), каждое устройство пишет её на основе того, что
-  /// само наблюдало во время звонка.
+  /// Запись о звонке — каждое устройство по-прежнему пишет её на основе
+  /// того, что само наблюдало во время звонка (звонки не идут через
+  /// серверную доставку сообщений, кроме офлайн-подстраховки missedCall),
+  /// но во всём остальном звонок — такое же сообщение, как текст: тот же
+  /// id (см. addCallLog(callId:)), то же участие в "удалить у обоих" и в
+  /// read-receipt (см. status/readReceiptSent выше) — просто с
+  /// исключением "собеседник ответил → сразу считается прочитанным", это
+  /// решается в addCallLog.
   final bool isCallLog;
   final String? callDirection; // 'outgoing' | 'incoming'
   final String? callOutcome; // 'answered' | 'no_answer' | 'missed'
@@ -414,7 +419,11 @@ class ChatStore {
     );
     await _touchPeer(
       peerLogin,
-      last.isMedia
+      last.isVoice
+          ? '🎤 ${tr('media.voiceNote')}'
+          : last.isVideoNote
+          ? '🎥 ${tr('media.videoNote')}'
+          : last.isMedia
           ? (last.isFile ? (last.fileName ?? '📎 ${tr('media.file')}') : '📷 ${tr('media.photo')}')
           : last.text,
       last.timestamp,
@@ -433,8 +442,16 @@ class ChatStore {
     int? durationSeconds,
     String? accountId,
     bool incrementUnread = false,
+    // Общий для обеих сторон звонка UUID (см. CallService._callId) — даёт
+    // записи звонка ОДИНАКОВЫЙ id на обоих устройствах, поэтому "удалить у
+    // обоих" (InnerMessage.delete по messageId) теперь находит и стирает
+    // её и у собеседника тоже, а не только локально. Если не передан
+    // (редкий краевой случай — звонок отклонили кнопкой в уведомлении при
+    // полностью закрытом приложении, там callId нативная сторона пока не
+    // хранит) — старая, чисто локальная схема id, как и раньше.
+    String? callId,
   }) {
-    final id = 'call_${timestamp}_$direction';
+    final id = callId != null ? 'call_$callId' : 'call_${timestamp}_$direction';
     // text используется только как превью последнего сообщения в списке
     // чатов (ChatSummary) — сам пузырь звонка в чате рендерится отдельно
     // и это поле не читает.
@@ -443,6 +460,12 @@ class ChatStore {
       'missed' => '📞 ${tr('call.missed')}',
       _ => '📞 ${tr('call.noAnswer')}',
     };
+    // Единственное исключение из общих правил read-receipt: если
+    // собеседник реально ответил — это уже живое, синхронное
+    // подтверждение "он в курсе" само по себе, отдельно спрашивать не
+    // нужно. На missed/no_answer — обычные дефолты, звонок пойдёт по
+    // тому же пути read-receipt, что и любое другое сообщение.
+    final answered = outcome == 'answered';
     return addMessage(
       peerLogin,
       StoredMessage(
@@ -454,6 +477,8 @@ class ChatStore {
         callDirection: direction,
         callOutcome: outcome,
         callDurationSeconds: durationSeconds,
+        status: answered ? 'read' : 'sent',
+        readReceiptSent: answered,
       ),
       accountId: accountId,
       incrementUnread: incrementUnread,

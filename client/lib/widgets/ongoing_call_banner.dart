@@ -20,10 +20,17 @@ class OngoingCallBanner extends StatefulWidget {
 class _OngoingCallBannerState extends State<OngoingCallBanner> {
   final _call = CallService.instance;
   StreamSubscription<CallState>? _stateSub;
+  StreamSubscription<String>? _statusSub;
   Timer? _ticker;
 
+  // Раньше проверялось только CallState.connected — банер не появлялся,
+  // пока идут гудки (собеседник ещё не ответил), и вернуться к экрану
+  // звонка из чата было никак. Теперь актуален весь "живой" диапазон
+  // состояний звонка с этим собеседником, не только уже соединённый.
   bool get _isRelevant =>
-      _call.state == CallState.connected &&
+      (_call.state == CallState.outgoingRinging ||
+          _call.state == CallState.incomingRinging ||
+          _call.state == CallState.connected) &&
       _call.currentPeerLogin == widget.peerLogin;
 
   @override
@@ -31,6 +38,9 @@ class _OngoingCallBannerState extends State<OngoingCallBanner> {
     super.initState();
     _stateSub = _call.stateStream.listen((_) {
       if (mounted) setState(_syncTicker);
+    });
+    _statusSub = _call.statusUpdates.listen((_) {
+      if (mounted) setState(() {});
     });
     _syncTicker();
   }
@@ -46,9 +56,12 @@ class _OngoingCallBannerState extends State<OngoingCallBanner> {
     }
   }
 
-  String _durationText() {
+  // Пока звонок ещё не соединился — таймера длительности честно ещё нет,
+  // вместо него та же строка статуса, что показывает сам CallScreen
+  // (call.dialing/call.ringing/… — единая точка истины в CallService).
+  String _durationOrStatusText() {
     final connectedAt = _call.connectedAt;
-    if (connectedAt == null) return '';
+    if (connectedAt == null) return _call.status;
     final seconds = DateTime.now().difference(connectedAt).inSeconds;
     final minutes = seconds ~/ 60;
     final secs = seconds % 60;
@@ -58,6 +71,7 @@ class _OngoingCallBannerState extends State<OngoingCallBanner> {
   @override
   void dispose() {
     _stateSub?.cancel();
+    _statusSub?.cancel();
     _ticker?.cancel();
     super.dispose();
   }
@@ -97,7 +111,7 @@ class _OngoingCallBannerState extends State<OngoingCallBanner> {
               ),
               const SizedBox(width: 8),
               Text(
-                _durationText(),
+                _durationOrStatusText(),
                 style: const TextStyle(
                   color: Colors.black87,
                   fontWeight: FontWeight.w600,

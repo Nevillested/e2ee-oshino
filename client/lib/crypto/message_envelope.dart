@@ -170,8 +170,13 @@ class InnerMessage {
   /// хранит вообще. Отправляется только когда сервер прямо подтвердил,
   /// что получатель был офлайн (call_unavailable) — иначе получатель уже
   /// увидел звонок в реальном времени и сам записал его локально.
-  factory InnerMessage.missedCall({required int calledAt}) {
-    final body = jsonEncode({'called_at': calledAt});
+  /// callId — тот же UUID звонка (CallService._callId), что уже известен
+  /// звонившему с самого начала попытки — даёт записи в истории
+  /// получателя тот же id, что и у звонившего (см. ChatStore.addCallLog),
+  /// чтобы "удалить у обоих" тоже находило и эту запись, а не только
+  /// созданные вживую записи обеих сторон при звонке, где оба были онлайн.
+  factory InnerMessage.missedCall({required int calledAt, String? callId}) {
+    final body = jsonEncode({'called_at': calledAt, 'call_id': callId});
     return InnerMessage(
       messageId: _uuid.v4(),
       type: 'call_missed',
