@@ -108,6 +108,24 @@ class ApiClient {
     }
   }
 
+  /// POST /account/recover/reset-totp — как resetPasswordWithRecoveryCode
+  /// выше, но для восстановления доступа к аутентификатору: вводить
+  /// нечего (новый секрет сервер генерирует сам, случайный), в ответ —
+  /// та же форма, что при регистрации (otpauth-ссылка), дальше подходит
+  /// тот же экран подтверждения (VerifyTotpScreen).
+  Future<String> resetTotpWithRecoveryCode(String login, String token) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/account/recover/reset-totp'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'login': login, 'token': token}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.recoveryWrongCode'));
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return data['totp_url'] as String;
+  }
+
   /// POST /verify-totp — подтверждение первого TOTP-кода после регистрации.
   Future<void> verifyTotp(String login, String code) async {
     final response = await http.post(

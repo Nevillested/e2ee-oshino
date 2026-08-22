@@ -364,7 +364,9 @@ class _ChatScreenState extends State<ChatScreen> {
   void _searchGoNext() {
     final matches = _searchMatches;
     if (matches.isEmpty) return;
-    setState(() => _currentMatchIndex = (_currentMatchIndex + 1) % matches.length);
+    setState(
+      () => _currentMatchIndex = (_currentMatchIndex + 1) % matches.length,
+    );
     _jumpToSearchMatch();
   }
 
@@ -1849,52 +1851,52 @@ class _ChatScreenState extends State<ChatScreen> {
             peerAccountIdForUpload,
           );
 
-        await ChatStore.updateProcessingStep(
-          widget.peerLogin,
-          messageId,
-          tr('chat.sending'),
-        );
+          await ChatStore.updateProcessingStep(
+            widget.peerLogin,
+            messageId,
+            tr('chat.sending'),
+          );
 
-        final inner = isVideo
-            ? InnerMessage.videoNote(
-                messageId: messageId,
-                mediaId: desc['media_id'] as String,
-                keyBase64: desc['key'] as String,
-                nonceBase64: desc['nonce'] as String?,
-                macBase64: desc['mac'] as String?,
-                fileSize: size,
-                chunked: desc['chunked'] as bool,
-                durationMs: duration.inMilliseconds,
-              )
-            : InnerMessage.voice(
-                messageId: messageId,
-                mediaId: desc['media_id'] as String,
-                keyBase64: desc['key'] as String,
-                nonceBase64: desc['nonce'] as String?,
-                macBase64: desc['mac'] as String?,
-                fileSize: size,
-                chunked: desc['chunked'] as bool,
-                durationMs: duration.inMilliseconds,
-              );
+          final inner = isVideo
+              ? InnerMessage.videoNote(
+                  messageId: messageId,
+                  mediaId: desc['media_id'] as String,
+                  keyBase64: desc['key'] as String,
+                  nonceBase64: desc['nonce'] as String?,
+                  macBase64: desc['mac'] as String?,
+                  fileSize: size,
+                  chunked: desc['chunked'] as bool,
+                  durationMs: duration.inMilliseconds,
+                )
+              : InnerMessage.voice(
+                  messageId: messageId,
+                  mediaId: desc['media_id'] as String,
+                  keyBase64: desc['key'] as String,
+                  nonceBase64: desc['nonce'] as String?,
+                  macBase64: desc['mac'] as String?,
+                  fileSize: size,
+                  chunked: desc['chunked'] as bool,
+                  durationMs: duration.inMilliseconds,
+                );
 
-        final next = await state.nextSendingKey();
-        DebugLog.log(
-          'ChatScreen sending key (voice/video_note type=${inner.type} '
-          'messageId=${inner.messageId}) to=$_currentPeerDeviceId '
-          'messageNumber=${next.header['message_number']} '
-          'ratchetPubkey=${next.header['ratchet_pubkey']}',
-        );
-        await SessionStore.saveState(_currentPeerDeviceId, state);
-        final encryptedEnvelope = await encryptMessage(
-          next.messageKey,
-          inner.encode(),
-        );
-        final envelope = <String, dynamic>{
-          ...encryptedEnvelope,
-          ...next.header,
-          'sender_device_id': myDeviceId,
-          if (initHeader != null) ...initHeader,
-        };
+          final next = await state.nextSendingKey();
+          DebugLog.log(
+            'ChatScreen sending key (voice/video_note type=${inner.type} '
+            'messageId=${inner.messageId}) to=$_currentPeerDeviceId '
+            'messageNumber=${next.header['message_number']} '
+            'ratchetPubkey=${next.header['ratchet_pubkey']}',
+          );
+          await SessionStore.saveState(_currentPeerDeviceId, state);
+          final encryptedEnvelope = await encryptMessage(
+            next.messageKey,
+            inner.encode(),
+          );
+          final envelope = <String, dynamic>{
+            ...encryptedEnvelope,
+            ...next.header,
+            'sender_device_id': myDeviceId,
+            if (initHeader != null) ...initHeader,
+          };
 
           await SendQueueProcessor.instance.enqueue(
             toDeviceId: _currentPeerDeviceId,
@@ -2412,7 +2414,9 @@ class _ChatScreenState extends State<ChatScreen> {
           fileName: fileName,
           status: 'sending',
           processingStep: tr('chat.queued'),
-          localPreviewPath: (item.isVideo || item.isFile) ? null : item.file.path,
+          localPreviewPath: (item.isVideo || item.isFile)
+              ? null
+              : item.file.path,
           groupId: groupId,
         ),
         accountId: widget.peerAccountId,
@@ -2583,73 +2587,73 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await SendQueueProcessor.instance.runHeavy(
         () => SendLock.run(widget.peerLogin, () async {
-        final token = await Session.getToken();
-        final myDeviceId = await KeyStore.getStoredDeviceId();
-        final state = await _ensureSessionForSending();
-        final initHeader = _pendingInitHeader;
-        _pendingInitHeader = null;
+          final token = await Session.getToken();
+          final myDeviceId = await KeyStore.getStoredDeviceId();
+          final state = await _ensureSessionForSending();
+          final initHeader = _pendingInitHeader;
+          _pendingInitHeader = null;
 
-        final peerAccountIdForUpload =
-            await PeerAccountStore.get(_currentPeerDeviceId) ??
-            widget.peerAccountId;
+          final peerAccountIdForUpload =
+              await PeerAccountStore.get(_currentPeerDeviceId) ??
+              widget.peerAccountId;
 
-        final desc = await _uploadAndDescribeMedia(
-          item,
-          messageId,
-          size,
-          fileName,
-          token!,
-          peerAccountIdForUpload,
-        );
+          final desc = await _uploadAndDescribeMedia(
+            item,
+            messageId,
+            size,
+            fileName,
+            token!,
+            peerAccountIdForUpload,
+          );
 
-        await ChatStore.updateProcessingStep(
-          widget.peerLogin,
-          messageId,
-          tr('chat.negotiating'),
-        );
+          await ChatStore.updateProcessingStep(
+            widget.peerLogin,
+            messageId,
+            tr('chat.negotiating'),
+          );
 
-        final inner = InnerMessage.media(
-          messageId: messageId,
-          mediaId: desc['media_id'] as String,
-          keyBase64: desc['key'] as String,
-          nonceBase64: desc['nonce'] as String?,
-          macBase64: desc['mac'] as String?,
-          fileName: fileName,
-          isFile: item.isFile || item.isVideo,
-          fileSize: size,
-          chunked: desc['chunked'] as bool,
-        );
+          final inner = InnerMessage.media(
+            messageId: messageId,
+            mediaId: desc['media_id'] as String,
+            keyBase64: desc['key'] as String,
+            nonceBase64: desc['nonce'] as String?,
+            macBase64: desc['mac'] as String?,
+            fileName: fileName,
+            isFile: item.isFile || item.isVideo,
+            fileSize: size,
+            chunked: desc['chunked'] as bool,
+          );
 
-        final next = await state.nextSendingKey();
-        DebugLog.log(
-          'ChatScreen sending key (media messageId=${inner.messageId}) '
-          'to=$_currentPeerDeviceId messageNumber=${next.header['message_number']} '
-          'ratchetPubkey=${next.header['ratchet_pubkey']}',
-        );
-        await SessionStore.saveState(_currentPeerDeviceId, state);
-        final encryptedEnvelope = await encryptMessage(
-          next.messageKey,
-          inner.encode(),
-        );
-        final envelope = <String, dynamic>{
-          ...encryptedEnvelope,
-          ...next.header,
-          'sender_device_id': myDeviceId,
-          if (initHeader != null) ...initHeader,
-        };
+          final next = await state.nextSendingKey();
+          DebugLog.log(
+            'ChatScreen sending key (media messageId=${inner.messageId}) '
+            'to=$_currentPeerDeviceId messageNumber=${next.header['message_number']} '
+            'ratchetPubkey=${next.header['ratchet_pubkey']}',
+          );
+          await SessionStore.saveState(_currentPeerDeviceId, state);
+          final encryptedEnvelope = await encryptMessage(
+            next.messageKey,
+            inner.encode(),
+          );
+          final envelope = <String, dynamic>{
+            ...encryptedEnvelope,
+            ...next.header,
+            'sender_device_id': myDeviceId,
+            if (initHeader != null) ...initHeader,
+          };
 
-        await ChatStore.updateProcessingStep(
-          widget.peerLogin,
-          messageId,
-          tr('chat.sending'),
-        );
-        await SendQueueProcessor.instance.enqueue(
-          toDeviceId: _currentPeerDeviceId,
-          envelope: envelope,
-          deliveryId: messageId,
-          messageId: messageId,
-          peerLogin: widget.peerLogin,
-        );
+          await ChatStore.updateProcessingStep(
+            widget.peerLogin,
+            messageId,
+            tr('chat.sending'),
+          );
+          await SendQueueProcessor.instance.enqueue(
+            toDeviceId: _currentPeerDeviceId,
+            envelope: envelope,
+            deliveryId: messageId,
+            messageId: messageId,
+            peerLogin: widget.peerLogin,
+          );
         }),
       );
     } catch (e, stackTrace) {
@@ -2729,96 +2733,96 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await SendQueueProcessor.instance.runHeavy(
         () => SendLock.run(widget.peerLogin, () async {
-        final token = await Session.getToken();
-        final myDeviceId = await KeyStore.getStoredDeviceId();
-        final state = await _ensureSessionForSending();
-        final initHeader = _pendingInitHeader;
-        _pendingInitHeader = null;
+          final token = await Session.getToken();
+          final myDeviceId = await KeyStore.getStoredDeviceId();
+          final state = await _ensureSessionForSending();
+          final initHeader = _pendingInitHeader;
+          _pendingInitHeader = null;
 
-        final peerAccountIdForUpload =
-            await PeerAccountStore.get(_currentPeerDeviceId) ??
-            widget.peerAccountId;
+          final peerAccountIdForUpload =
+              await PeerAccountStore.get(_currentPeerDeviceId) ??
+              widget.peerAccountId;
 
-        final files = <Map<String, dynamic>>[];
-        for (final q in items) {
-          files.add(
-            await _uploadAndDescribeMedia(
-              q.item,
-              q.messageId,
-              q.size,
-              q.fileName,
-              token!,
-              peerAccountIdForUpload,
-            ),
-          );
-        }
-
-        for (final q in items) {
-          await ChatStore.updateProcessingStep(
-            widget.peerLogin,
-            q.messageId,
-            tr('chat.negotiating'),
-          );
-        }
-
-        final inner = InnerMessage.mediaGroup(
-          groupId: groupId,
-          caption: caption,
-          textMessageId: textMessageId,
-          files: files,
-        );
-
-        final next = await state.nextSendingKey();
-        DebugLog.log(
-          'ChatScreen sending key (media_group groupId=$groupId) '
-          'to=$_currentPeerDeviceId messageNumber=${next.header['message_number']} '
-          'ratchetPubkey=${next.header['ratchet_pubkey']}',
-        );
-        await SessionStore.saveState(_currentPeerDeviceId, state);
-        final encryptedEnvelope = await encryptMessage(
-          next.messageKey,
-          inner.encode(),
-        );
-        final envelope = <String, dynamic>{
-          ...encryptedEnvelope,
-          ...next.header,
-          'sender_device_id': myDeviceId,
-          if (initHeader != null) ...initHeader,
-        };
-
-        for (final q in items) {
-          await ChatStore.updateProcessingStep(
-            widget.peerLogin,
-            q.messageId,
-            tr('chat.sending'),
-          );
-        }
-        // Один конверт группы разворачивается в НЕСКОЛЬКО локальных
-        // пузырей (подпись + каждый файл) — обычный messageId/peerLogin
-        // у enqueue() бьёт только по одному id, поэтому статус всех
-        // затронутых сообщений проставляем через onAcked при реальном
-        // подтверждении, а не по одному месту.
-        await SendQueueProcessor.instance.enqueue(
-          toDeviceId: _currentPeerDeviceId,
-          envelope: envelope,
-          deliveryId: inner.messageId,
-          onAcked: () async {
-            if (textMessageId != null) {
-              await ChatStore.updateMessageStatus(
-                widget.peerLogin,
-                textMessageId,
-                'sent',
-              );
-            }
-            for (final q in items) {
-              await ChatStore.updateMessageStatus(
-                widget.peerLogin,
+          final files = <Map<String, dynamic>>[];
+          for (final q in items) {
+            files.add(
+              await _uploadAndDescribeMedia(
+                q.item,
                 q.messageId,
-                'sent',
-              );
-            }
-          },
-        );
+                q.size,
+                q.fileName,
+                token!,
+                peerAccountIdForUpload,
+              ),
+            );
+          }
+
+          for (final q in items) {
+            await ChatStore.updateProcessingStep(
+              widget.peerLogin,
+              q.messageId,
+              tr('chat.negotiating'),
+            );
+          }
+
+          final inner = InnerMessage.mediaGroup(
+            groupId: groupId,
+            caption: caption,
+            textMessageId: textMessageId,
+            files: files,
+          );
+
+          final next = await state.nextSendingKey();
+          DebugLog.log(
+            'ChatScreen sending key (media_group groupId=$groupId) '
+            'to=$_currentPeerDeviceId messageNumber=${next.header['message_number']} '
+            'ratchetPubkey=${next.header['ratchet_pubkey']}',
+          );
+          await SessionStore.saveState(_currentPeerDeviceId, state);
+          final encryptedEnvelope = await encryptMessage(
+            next.messageKey,
+            inner.encode(),
+          );
+          final envelope = <String, dynamic>{
+            ...encryptedEnvelope,
+            ...next.header,
+            'sender_device_id': myDeviceId,
+            if (initHeader != null) ...initHeader,
+          };
+
+          for (final q in items) {
+            await ChatStore.updateProcessingStep(
+              widget.peerLogin,
+              q.messageId,
+              tr('chat.sending'),
+            );
+          }
+          // Один конверт группы разворачивается в НЕСКОЛЬКО локальных
+          // пузырей (подпись + каждый файл) — обычный messageId/peerLogin
+          // у enqueue() бьёт только по одному id, поэтому статус всех
+          // затронутых сообщений проставляем через onAcked при реальном
+          // подтверждении, а не по одному месту.
+          await SendQueueProcessor.instance.enqueue(
+            toDeviceId: _currentPeerDeviceId,
+            envelope: envelope,
+            deliveryId: inner.messageId,
+            onAcked: () async {
+              if (textMessageId != null) {
+                await ChatStore.updateMessageStatus(
+                  widget.peerLogin,
+                  textMessageId,
+                  'sent',
+                );
+              }
+              for (final q in items) {
+                await ChatStore.updateMessageStatus(
+                  widget.peerLogin,
+                  q.messageId,
+                  'sent',
+                );
+              }
+            },
+          );
         }),
       );
     } catch (e, stackTrace) {
@@ -2922,17 +2926,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (result.type != ResultType.done && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              '${tr('chat.openFileFailed')}: ${result.message}',
-            ),
+            content: Text('${tr('chat.openFileFailed')}: ${result.message}'),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${tr('chat.openFileFailed')}: $e')),
         );
       }
@@ -2943,7 +2943,9 @@ class _ChatScreenState extends State<ChatScreen> {
     // Файлы (в отличие от фото/видео) никогда не показываются квадратным
     // превью — ни во время отправки, ни при ошибке: своей картинки у них
     // нет, только имя+иконка по типу (см. _clickableFileRow ниже).
-    if (msg.isFile && msg.isMine && (msg.status == 'sending' || msg.status == 'failed')) {
+    if (msg.isFile &&
+        msg.isMine &&
+        (msg.status == 'sending' || msg.status == 'failed')) {
       return _clickableFileRow(msg, size: size);
     }
     if (msg.isMine && (msg.status == 'sending' || msg.status == 'failed')) {
@@ -3695,7 +3697,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }) {
     final matches = _urlRegex.allMatches(text).toList();
     if (matches.isEmpty) {
-      return Text(text, style: TextStyle(color: baseColor, fontSize: fontSize));
+      return Text(
+        text,
+        style: TextStyle(color: baseColor, fontSize: fontSize),
+      );
     }
 
     final spans = <InlineSpan>[];
@@ -3719,12 +3724,16 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     return Text.rich(
-      TextSpan(style: TextStyle(color: baseColor, fontSize: fontSize), children: spans),
+      TextSpan(
+        style: TextStyle(color: baseColor, fontSize: fontSize),
+        children: spans,
+      ),
     );
   }
 
   Future<void> _openLink(String rawUrl) async {
-    final normalized = rawUrl.startsWith(RegExp(r'https?:\/\/', caseSensitive: false))
+    final normalized =
+        rawUrl.startsWith(RegExp(r'https?:\/\/', caseSensitive: false))
         ? rawUrl
         : 'https://$rawUrl';
     final uri = Uri.tryParse(normalized);
@@ -3806,7 +3815,10 @@ class _ChatScreenState extends State<ChatScreen> {
           opacity: isDissolving ? 0 : 1,
           child: Stack(
             clipBehavior: Clip.none,
-            children: [bubble, _reactionBadges(myReaction, peerReaction, isMine)],
+            children: [
+              bubble,
+              _reactionBadges(myReaction, peerReaction, isMine),
+            ],
           ),
         ),
       ),
@@ -3947,10 +3959,7 @@ class _ChatScreenState extends State<ChatScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         border: Border(
-          left: BorderSide(
-            color: _bubbleMutedColor(msg.isMine),
-            width: 3,
-          ),
+          left: BorderSide(color: _bubbleMutedColor(msg.isMine), width: 3),
         ),
       ),
       child: Text(
@@ -4273,9 +4282,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ? AppColors.primary
                         : Theme.of(
                             context,
-                          ).appBarTheme.foregroundColor?.withValues(
-                            alpha: 0.7,
-                          ),
+                          ).appBarTheme.foregroundColor?.withValues(alpha: 0.7),
                   ),
                 ),
               ],
@@ -4413,7 +4420,9 @@ class _ChatScreenState extends State<ChatScreen> {
           : target.isVideoNote
           ? '🎥 ${tr('media.videoNote')}'
           : target.isMedia
-          ? (target.isFile ? '📎 ${tr('media.file')}' : '📷 ${tr('media.photo')}')
+          ? (target.isFile
+                ? '📎 ${tr('media.file')}'
+                : '📷 ${tr('media.photo')}')
           : target.text;
       return _bannerRow(
         icon: Icons.reply,
@@ -4805,7 +4814,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                       focusNode: _searchFocusNode,
                                       autofocus: true,
                                       onChanged: _onSearchQueryChanged,
-                                      textAlignVertical: TextAlignVertical.center,
+                                      textAlignVertical:
+                                          TextAlignVertical.center,
                                       style: TextStyle(
                                         color: AppColors.textPrimary,
                                         fontSize: 15,
@@ -4885,7 +4895,25 @@ class _ChatScreenState extends State<ChatScreen> {
                               final groups = _groupedMessages();
                               return ListView.builder(
                                 controller: _scrollController,
-                                padding: const EdgeInsets.all(16),
+                                // Снизу — не просто 16 (как раньше), а ещё и
+                                // высота непрозрачной части плавающей панели
+                                // ввода (овальная "таблетка" + резерв под
+                                // клавиатуру/эмодзи, когда открыты) — список
+                                // теперь во весь рост Stack'а, а не сосед
+                                // панели в Column (см. ниже, где эта же
+                                // панель стала Positioned(bottom: 0) поверх
+                                // него). НЕ добавляем сюда сам зазор-спейсер
+                                // (5 + systemBottomInset) — его прозрачность
+                                // и есть весь смысл (см. ТЗ пользователя):
+                                // именно в этой узкой полосе должны быть
+                                // видны кусочки сообщений, а не отступ под
+                                // них.
+                                padding: EdgeInsets.fromLTRB(
+                                  16,
+                                  16,
+                                  16,
+                                  16 + 64 + reserved,
+                                ),
                                 itemCount: groups.length,
                                 itemBuilder: (context, index) {
                                   final group = groups[index];
@@ -4897,263 +4925,360 @@ class _ChatScreenState extends State<ChatScreen> {
                             },
                           ),
                   ),
-                  if (!_composerBlocked && !_searchMode) _buildComposerBanner(),
-                  SafeArea(
-                    key: _composerAreaKey,
-                    top: false,
-                    bottom: false,
-                    child: _searchMode
-                        ? _buildSearchControlPanel()
-                        : Padding(
-                      padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: AppColors.surface,
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 2),
-                        // Высота ЗАФИКСИРОВАНА явно — без этого пилюля-
-                        // контейнер просто shrink-wrap'ился под текущий Row,
-                        // а строка "в покое" (с TextField, ~48px по высоте
-                        // из-за его contentPadding) и строка записи (таймер
-                        // + кнопка, естественно чуть ниже) имели РАЗНУЮ
-                        // натуральную высоту — стоило зажать иконку, и вся
-                        // "овальная" панель мгновенно, без анимации,
-                        // проседала на несколько пикселей: не сама панель
-                        // плавно меняла размер, а буквально новая раскладка
-                        // с другой высотой встала на её место за один кадр.
-                        child: SizedBox(
-                          // Единая высота для обоих состояний (раньше была
-                          // 48/56 — но одновременная смена высоты ВМЕСТЕ с
-                          // 3D-переворотом (см. _FlipSwitcher ниже) выглядит
-                          // как поломанная анимация, а не монетка).
-                          height: 56,
-                          child: _FlipSwitcher(
-                            state: _composerBlocked,
-                            child: _composerBlocked
-                              ? Center(
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                    ),
-                                    child: Text(
-                                      _blockedComposerText,
-                                      textAlign: TextAlign.center,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: AppColors.textMuted,
-                                        fontSize: 12.5,
-                                      ),
-                                    ),
-                                  ),
-                                )
-                              :
-                          // Stack вместо простого условного Row — поле ввода
-                          // (со всем состоянием фокуса) теперь НЕ убирается
-                          // из дерева на время записи, а просто визуально
-                          // прячется через Offstage. Раньше при входе в
-                          // запись TextField буквально исчезал из Row (его
-                          // заменял таймер), а вместе с исчезновением
-                          // сфокусированного виджета Flutter сам снимает с
-                          // него фокус — отсюда самопроизвольно закрывалась
-                          // клавиатура. Offstage держит сам виджет (и его
-                          // FocusNode) смонтированным всё это время.
-                          Stack(
-                            children: [
-                              Positioned.fill(
-                                child: Offstage(
-                                  offstage: _recPhase != _RecPhase.idle,
-                                  child: Row(
-                                    children: [
-                                      IconButton(
-                                        padding: const EdgeInsets.all(6),
-                                        constraints: const BoxConstraints(),
-                                        visualDensity: VisualDensity.compact,
-                                        icon: _buildFlipIcon(
-                                          stateKey: _emojiMode,
-                                          icon: Icon(
-                                            _emojiMode
-                                                ? Icons.keyboard
-                                                : Icons.emoji_emotions_outlined,
-                                            color: AppColors.textMuted,
-                                          ),
-                                        ),
-                                        onPressed: () {
-                                          if (_emojiMode) {
-                                            // Настоящая клавиатура ещё не
-                                            // поднялась — держим reserved на
-                                            // месте (_awaitingKeyboardOpen, см.
-                                            // build()), пока realInset
-                                            // органически не догонит.
-                                            _awaitingKeyboardOpen = true;
-                                            setState(() => _emojiMode = false);
-                                            _textFocusNode.requestFocus();
-                                          } else {
-                                            _textFocusNode.unfocus();
-                                            setState(() => _emojiMode = true);
-                                          }
-                                        },
-                                      ),
-                                      const SizedBox(width: 2),
-                                      Expanded(
-                                        child: TextField(
-                                          controller: _textController,
-                                          focusNode: _textFocusNode,
-                                          textCapitalization:
-                                              TextCapitalization.sentences,
-                                          onTap: () {
-                                            if (_emojiMode) {
-                                              setState(
-                                                () => _emojiMode = false,
-                                              );
-                                            }
-                                          },
-                                          style: TextStyle(
-                                            color: AppColors.textPrimary,
-                                          ),
-                                          contentInsertionConfiguration:
-                                              ContentInsertionConfiguration(
-                                                onContentInserted:
-                                                    _handleContentInserted,
-                                              ),
-                                          decoration: InputDecoration(
-                                            hintText: tr('chat.messageHint'),
-                                            border: InputBorder.none,
-                                            isDense: true,
-                                            contentPadding:
-                                                const EdgeInsets.symmetric(
-                                                  vertical: 12,
+                ],
+              ),
+              // Панель ввода — плавающий оверлей ПОВЕРХ списка сообщений
+              // (см. ТЗ пользователя: список должен быть на всю высоту,
+              // сообщения "проплывают" под панелью, а не упираются в неё
+              // как в соседа по Column). Непрозрачна тут только сама
+              // овальная "таблетка" (Container с AppColors.surface внутри
+              // SafeArea ниже) — ни у этого Positioned, ни у Column внутри
+              // него, ни у зазора-спейсера своего фона нет вообще, так что
+              // в промежутках (по бокам таблетки, и особенно в самом
+              // зазоре) список снизу просвечивает.
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (!_composerBlocked && !_searchMode)
+                      _buildComposerBanner(),
+                    SafeArea(
+                      key: _composerAreaKey,
+                      top: false,
+                      bottom: false,
+                      child: _searchMode
+                          ? _buildSearchControlPanel()
+                          : Padding(
+                              padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: AppColors.surface,
+                                  borderRadius: BorderRadius.circular(24),
+                                ),
+                                // right больше left — скрепка/микрофон/камера
+                                // сидели слишком близко к правому краю экрана (см.
+                                // ТЗ пользователя), сдвигаем их левее без смещения
+                                // иконки эмодзи слева.
+                                padding: const EdgeInsets.only(
+                                  left: 2,
+                                  right: 8,
+                                ),
+                                // Высота ЗАФИКСИРОВАНА явно — без этого пилюля-
+                                // контейнер просто shrink-wrap'ился под текущий Row,
+                                // а строка "в покое" (с TextField, ~48px по высоте
+                                // из-за его contentPadding) и строка записи (таймер
+                                // + кнопка, естественно чуть ниже) имели РАЗНУЮ
+                                // натуральную высоту — стоило зажать иконку, и вся
+                                // "овальная" панель мгновенно, без анимации,
+                                // проседала на несколько пикселей: не сама панель
+                                // плавно меняла размер, а буквально новая раскладка
+                                // с другой высотой встала на её место за один кадр.
+                                child: SizedBox(
+                                  // Единая высота для обоих состояний (раньше была
+                                  // 48/56 — но одновременная смена высоты ВМЕСТЕ с
+                                  // 3D-переворотом (см. _FlipSwitcher ниже) выглядит
+                                  // как поломанная анимация, а не монетка).
+                                  height: 56,
+                                  child: _FlipSwitcher(
+                                    state: _composerBlocked,
+                                    child: _composerBlocked
+                                        ? Center(
+                                            child: Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 16,
+                                                  ),
+                                              child: Text(
+                                                _blockedComposerText,
+                                                textAlign: TextAlign.center,
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  color: AppColors.textMuted,
+                                                  fontSize: 12.5,
                                                 ),
-                                            hintStyle: TextStyle(
-                                              color: AppColors.textMuted,
+                                              ),
                                             ),
+                                          )
+                                        :
+                                          // Stack вместо простого условного Row — поле ввода
+                                          // (со всем состоянием фокуса) теперь НЕ убирается
+                                          // из дерева на время записи, а просто визуально
+                                          // прячется через Offstage. Раньше при входе в
+                                          // запись TextField буквально исчезал из Row (его
+                                          // заменял таймер), а вместе с исчезновением
+                                          // сфокусированного виджета Flutter сам снимает с
+                                          // него фокус — отсюда самопроизвольно закрывалась
+                                          // клавиатура. Offstage держит сам виджет (и его
+                                          // FocusNode) смонтированным всё это время.
+                                          Stack(
+                                            children: [
+                                              Positioned.fill(
+                                                child: Offstage(
+                                                  offstage:
+                                                      _recPhase !=
+                                                      _RecPhase.idle,
+                                                  child: Row(
+                                                    children: [
+                                                      IconButton(
+                                                        padding:
+                                                            const EdgeInsets.all(
+                                                              6,
+                                                            ),
+                                                        constraints:
+                                                            const BoxConstraints(),
+                                                        visualDensity:
+                                                            VisualDensity
+                                                                .compact,
+                                                        icon: _buildFlipIcon(
+                                                          stateKey: _emojiMode,
+                                                          icon: Icon(
+                                                            _emojiMode
+                                                                ? Icons.keyboard
+                                                                : Icons
+                                                                      .emoji_emotions_outlined,
+                                                            color: AppColors
+                                                                .textMuted,
+                                                          ),
+                                                        ),
+                                                        onPressed: () {
+                                                          if (_emojiMode) {
+                                                            // Настоящая клавиатура ещё не
+                                                            // поднялась — держим reserved на
+                                                            // месте (_awaitingKeyboardOpen, см.
+                                                            // build()), пока realInset
+                                                            // органически не догонит.
+                                                            _awaitingKeyboardOpen =
+                                                                true;
+                                                            setState(
+                                                              () => _emojiMode =
+                                                                  false,
+                                                            );
+                                                            _textFocusNode
+                                                                .requestFocus();
+                                                          } else {
+                                                            _textFocusNode
+                                                                .unfocus();
+                                                            setState(
+                                                              () => _emojiMode =
+                                                                  true,
+                                                            );
+                                                          }
+                                                        },
+                                                      ),
+                                                      const SizedBox(width: 2),
+                                                      Expanded(
+                                                        child: TextField(
+                                                          controller:
+                                                              _textController,
+                                                          focusNode:
+                                                              _textFocusNode,
+                                                          textCapitalization:
+                                                              TextCapitalization
+                                                                  .sentences,
+                                                          onTap: () {
+                                                            if (_emojiMode) {
+                                                              setState(
+                                                                () =>
+                                                                    _emojiMode =
+                                                                        false,
+                                                              );
+                                                            }
+                                                          },
+                                                          style: TextStyle(
+                                                            color: AppColors
+                                                                .textPrimary,
+                                                          ),
+                                                          contentInsertionConfiguration:
+                                                              ContentInsertionConfiguration(
+                                                                onContentInserted:
+                                                                    _handleContentInserted,
+                                                              ),
+                                                          decoration: InputDecoration(
+                                                            hintText: tr(
+                                                              'chat.messageHint',
+                                                            ),
+                                                            border: InputBorder
+                                                                .none,
+                                                            isDense: true,
+                                                            contentPadding:
+                                                                const EdgeInsets.symmetric(
+                                                                  vertical: 12,
+                                                                ),
+                                                            hintStyle: TextStyle(
+                                                              color: AppColors
+                                                                  .textMuted,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 2),
+                                                      if (_editingMessage !=
+                                                          null)
+                                                        IconButton(
+                                                          padding:
+                                                              const EdgeInsets.all(
+                                                                6,
+                                                              ),
+                                                          constraints:
+                                                              const BoxConstraints(),
+                                                          visualDensity:
+                                                              VisualDensity
+                                                                  .compact,
+                                                          icon: Icon(
+                                                            Icons.send,
+                                                            color: AppColors
+                                                                .primary,
+                                                          ),
+                                                          onPressed: _hasText
+                                                              ? _handleSendPressed
+                                                              : null,
+                                                        )
+                                                      else if (_hasText ||
+                                                          (_forwardingTexts
+                                                                  ?.isNotEmpty ??
+                                                              false))
+                                                        IconButton(
+                                                          padding:
+                                                              const EdgeInsets.all(
+                                                                6,
+                                                              ),
+                                                          constraints:
+                                                              const BoxConstraints(),
+                                                          visualDensity:
+                                                              VisualDensity
+                                                                  .compact,
+                                                          icon: Icon(
+                                                            Icons.send,
+                                                            color: AppColors
+                                                                .primary,
+                                                          ),
+                                                          onPressed:
+                                                              _handleSendPressed,
+                                                        )
+                                                      else ...[
+                                                        IconButton(
+                                                          key: _attachButtonKey,
+                                                          padding:
+                                                              const EdgeInsets.all(
+                                                                6,
+                                                              ),
+                                                          constraints:
+                                                              const BoxConstraints(),
+                                                          visualDensity:
+                                                              VisualDensity
+                                                                  .compact,
+                                                          icon: Icon(
+                                                            Icons.attach_file,
+                                                            color: AppColors
+                                                                .textMuted,
+                                                          ),
+                                                          onPressed:
+                                                              _openAttachmentSheet,
+                                                        ),
+                                                        _buildRecordControlButton(),
+                                                      ],
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                              if (_recPhase != _RecPhase.idle)
+                                                // БЕЗ своего непрозрачного фона: Offstage
+                                                // выше уже полностью не рисует строку покоя
+                                                // (не просто прячет за чем-то, а не красит
+                                                // вообще), так что закрывать её отдельным
+                                                // Container(color:) не нужно — а он как раз
+                                                // и был багом со скруглением: его собственный
+                                                // ПРЯМОУГОЛЬНЫЙ непрозрачный фон перекрывал
+                                                // скруглённые углы родительского Container'а
+                                                // (тот их не клипует под себя автоматически),
+                                                // отсюда и "квадратные" углы да "выпуклые"
+                                                // стенки на скриншотах.
+                                                Positioned.fill(
+                                                  child: Row(
+                                                    children:
+                                                        _buildRecordingComposerChildren(),
+                                                  ),
+                                                ),
+                                            ],
                                           ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 2),
-                                      if (_editingMessage != null)
-                                        IconButton(
-                                          padding: const EdgeInsets.all(6),
-                                          constraints: const BoxConstraints(),
-                                          visualDensity: VisualDensity.compact,
-                                          icon: Icon(
-                                            Icons.send,
-                                            color: AppColors.primary,
-                                          ),
-                                          onPressed: _hasText
-                                              ? _handleSendPressed
-                                              : null,
-                                        )
-                                      else if (_hasText ||
-                                          (_forwardingTexts?.isNotEmpty ??
-                                              false))
-                                        IconButton(
-                                          padding: const EdgeInsets.all(6),
-                                          constraints: const BoxConstraints(),
-                                          visualDensity: VisualDensity.compact,
-                                          icon: Icon(
-                                            Icons.send,
-                                            color: AppColors.primary,
-                                          ),
-                                          onPressed: _handleSendPressed,
-                                        )
-                                      else ...[
-                                        IconButton(
-                                          key: _attachButtonKey,
-                                          padding: const EdgeInsets.all(6),
-                                          constraints: const BoxConstraints(),
-                                          visualDensity: VisualDensity.compact,
-                                          icon: Icon(
-                                            Icons.attach_file,
-                                            color: AppColors.textMuted,
-                                          ),
-                                          onPressed: _openAttachmentSheet,
-                                        ),
-                                        _buildRecordControlButton(),
-                                      ],
-                                    ],
                                   ),
                                 ),
-                              ),
-                              if (_recPhase != _RecPhase.idle)
-                                // БЕЗ своего непрозрачного фона: Offstage
-                                // выше уже полностью не рисует строку покоя
-                                // (не просто прячет за чем-то, а не красит
-                                // вообще), так что закрывать её отдельным
-                                // Container(color:) не нужно — а он как раз
-                                // и был багом со скруглением: его собственный
-                                // ПРЯМОУГОЛЬНЫЙ непрозрачный фон перекрывал
-                                // скруглённые углы родительского Container'а
-                                // (тот их не клипует под себя автоматически),
-                                // отсюда и "квадратные" углы да "выпуклые"
-                                // стенки на скриншотах.
-                                Positioned.fill(
-                                  child: Row(
-                                    children: _buildRecordingComposerChildren(),
-                                  ),
-                                ),
-                            ],
-                          ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  // Небольшой зазор до самого низа экрана — без него панель
-                  // ввода (и особенно кнопка записи) сидит впритык к краю, и
-                  // при попытке провести пальцем вверх до замочка (запись
-                  // голосового/видео) вместо этого срабатывает системный
-                  // жест "домой", перехватывающий тачи у самого края экрана.
-                  // Нужен только когда СНИЗУ больше ничего нет — как только
-                  // поднимается клавиатура ИЛИ наша панель эмодзи
-                  // (anyPanelOpen), зазор схлопывается в 0.
-                  //
-                  // Системный отступ до жестовой зоны добавляем СВОИМИ
-                  // руками (через viewPadding, а не SafeArea) и тоже только
-                  // в состоянии покоя: MediaQuery.padding у НАСТОЯЩЕЙ
-                  // клавиатуры автоматически зануляется (клавиатура уже
-                  // "занимает" эту зону), а у нашей панели эмодзи — нет,
-                  // ведь для ОС это просто обычный контент, а не системная
-                  // клавиатура. SafeArea использует именно padding, поэтому
-                  // при переключении на эмодзи-панель у неё этот отступ
-                  // внезапно возвращался — ровно то самое "пустое место",
-                  // из-за которого высота панели эмодзи расходилась с
-                  // высотой настоящей клавиатуры.
-                  //
-                  // Пока БЕЗ анимаций (по просьбе) — просто мгновенная
-                  // смена высоты, чтобы сначала проверить сам механизм.
-                  SizedBox(height: anyPanelOpen ? 0 : 5 + systemBottomInset),
-                  // Клавиатура и эмодзи-панель — ОДНО и то же место экрана,
-                  // одной и той же ЗАРАНЕЕ известной высоты (_keyboardHeight,
-                  // см. build()), а не живое значение realInset: показываются
-                  // по очереди, никогда одновременно, без "скачков" между
-                  // ними. Когда видна настоящая клавиатура, здесь просто
-                  // пустой резерв места — сама клавиатура рисуется поверх
-                  // всего системным оверлеем, а не этим виджетом.
-                  Container(
-                    height: reserved,
-                    color: AppColors.surface,
-                    child: _emojiMode
-                        ? ClipRect(
-                            child: RepaintBoundary(
-                              child: FullEmojiPicker(
-                                onEmojiSelected: (emoji) {
-                                  _textController.text += emoji;
-                                },
                               ),
                             ),
-                          )
-                        : null,
-                  ),
-                ],
+                    ),
+                    // Небольшой зазор до самого низа экрана — без него панель
+                    // ввода (и особенно кнопка записи) сидит впритык к краю, и
+                    // при попытке провести пальцем вверх до замочка (запись
+                    // голосового/видео) вместо этого срабатывает системный
+                    // жест "домой", перехватывающий тачи у самого края экрана.
+                    // Нужен только когда СНИЗУ больше ничего нет — как только
+                    // поднимается клавиатура ИЛИ наша панель эмодзи
+                    // (anyPanelOpen), зазор схлопывается в 0.
+                    //
+                    // Системный отступ до жестовой зоны добавляем СВОИМИ
+                    // руками (через viewPadding, а не SafeArea) и тоже только
+                    // в состоянии покоя: MediaQuery.padding у НАСТОЯЩЕЙ
+                    // клавиатуры автоматически зануляется (клавиатура уже
+                    // "занимает" эту зону), а у нашей панели эмодзи — нет,
+                    // ведь для ОС это просто обычный контент, а не системная
+                    // клавиатура. SafeArea использует именно padding, поэтому
+                    // при переключении на эмодзи-панель у неё этот отступ
+                    // внезапно возвращался — ровно то самое "пустое место",
+                    // из-за которого высота панели эмодзи расходилась с
+                    // высотой настоящей клавиатуры.
+                    //
+                    // Пока БЕЗ анимаций (по просьбе) — просто мгновенная
+                    // смена высоты, чтобы сначала проверить сам механизм.
+                    SizedBox(height: anyPanelOpen ? 0 : 5 + systemBottomInset),
+                    // Клавиатура и эмодзи-панель — ОДНО и то же место экрана,
+                    // одной и той же ЗАРАНЕЕ известной высоты (_keyboardHeight,
+                    // см. build()), а не живое значение realInset: показываются
+                    // по очереди, никогда одновременно, без "скачков" между
+                    // ними. Когда видна настоящая клавиатура, здесь просто
+                    // пустой резерв места — сама клавиатура рисуется поверх
+                    // всего системным оверлеем, а не этим виджетом.
+                    Container(
+                      height: reserved,
+                      color: AppColors.surface,
+                      child: _emojiMode
+                          ? ClipRect(
+                              child: RepaintBoundary(
+                                child: FullEmojiPicker(
+                                  onEmojiSelected: (emoji) {
+                                    _textController.text += emoji;
+                                  },
+                                ),
+                              ),
+                            )
+                          : null,
+                    ),
+                  ],
+                ),
               ),
               if (_recActiveKind == _RecKind.video)
                 Positioned.fill(child: _buildVideoLivePreview()),
               if (_recPhase == _RecPhase.dragging)
                 Positioned(
                   right: 18,
-                  bottom: 76,
+                  // Раньше — фиксированный bottom: 76, посчитанный под
+                  // состояние покоя (клавиатура закрыта). При поднятой
+                  // клавиатуре сама панель ввода (и кнопка микрофона/
+                  // камеры на ней) уезжает вверх намного больше, чем на
+                  // 76px, а замочек — нет, оставаясь под клавиатурой (см.
+                  // жалобу пользователя). Тот же приём, что уже есть у
+                  // кнопки переворота камеры чуть ниже — меряем РЕАЛЬНЫЙ
+                  // верх панели ввода через RenderBox, он уже учитывает
+                  // любое её текущее положение (клавиатура/эмодзи-панель/
+                  // баннер ответа), а не жёстко фиксированное число.
+                  top:
+                      (_composerTopYInBodyStack() ??
+                          MediaQuery.of(context).size.height - 76) -
+                      64 -
+                      10,
                   child: _buildRecordingLockIndicator(),
                 ),
               if (_recActiveKind == _RecKind.video &&

@@ -108,6 +108,7 @@ func main() {
 	mux.HandleFunc("POST /account/recover/request", api.NewRecoverRequestHandler(queries))
 	mux.HandleFunc("POST /account/recover/verify", api.NewRecoverVerifyHandler(queries))
 	mux.HandleFunc("POST /account/recover/reset", api.NewRecoverResetHandler(queries))
+	mux.HandleFunc("POST /account/recover/reset-totp", api.NewRecoverResetTotpHandler(queries))
 	mux.HandleFunc("PUT /account/password", api.NewChangePasswordHandler(queries))
 	mux.HandleFunc("POST /contacts/block", api.NewBlockContactHandler(queries, registry))
 	mux.HandleFunc("POST /contacts/unblock", api.NewUnblockContactHandler(queries, registry))

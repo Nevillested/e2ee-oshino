@@ -5,13 +5,17 @@ import '../theme/app_theme.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/theme_reactive.dart';
 import 'recovery_code_screen.dart';
+import 'recovery_purpose.dart';
 
-/// Шаг восстановления пароля (ветка "почта указывалась") — ввод логина.
-/// Сервер отдельно сообщает и "такого логина нет", и "у аккаунта не
-/// указана почта" (см. NewRecoverRequestHandler) — ApiClient превращает
-/// это в понятный текст ошибки, ловим его ниже как обычно.
+/// Шаг восстановления (ветка "почта указывалась") — ввод логина. Общий
+/// для обоих purpose (пароль/аутентификатор) — сервер отдельно сообщает
+/// и "такого логина нет", и "у аккаунта не указана почта" (см.
+/// NewRecoverRequestHandler, он тоже не завязан на цель) — ApiClient
+/// превращает это в понятный текст ошибки, ловим его ниже как обычно.
 class ForgotPasswordScreen extends StatefulWidget {
-  const ForgotPasswordScreen({super.key});
+  final RecoveryPurpose purpose;
+
+  const ForgotPasswordScreen({super.key, required this.purpose});
 
   @override
   State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
@@ -45,7 +49,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => RecoveryCodeScreen(login: login),
+          builder: (context) =>
+              RecoveryCodeScreen(login: login, purpose: widget.purpose),
         ),
       );
     } catch (e) {
@@ -68,7 +73,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   Widget _build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(tr('recovery.title'))),
+      appBar: AppBar(
+        title: Text(
+          widget.purpose == RecoveryPurpose.password
+              ? tr('recovery.title')
+              : tr('recovery.titleTotp'),
+        ),
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),

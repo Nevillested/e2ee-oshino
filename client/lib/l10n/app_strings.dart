@@ -30,6 +30,7 @@ class AppStrings {
     'common.done': {AppLocale.ru: 'Готово', AppLocale.en: 'Done'},
     'common.send': {AppLocale.ru: 'Отправить', AppLocale.en: 'Send'},
     'common.next': {AppLocale.ru: 'Далее', AppLocale.en: 'Next'},
+    'common.retry': {AppLocale.ru: 'Повторить', AppLocale.en: 'Retry'},
 
     'auth.loginHint': {AppLocale.ru: 'Логин', AppLocale.en: 'Login'},
     'auth.passwordHint': {AppLocale.ru: 'Пароль', AppLocale.en: 'Password'},
@@ -389,9 +390,17 @@ class AppStrings {
       AppLocale.ru: 'Забыли пароль?',
       AppLocale.en: 'Forgot password?',
     },
+    'recovery.forgotTotp': {
+      AppLocale.ru: 'Нет доступа к аутентификатору?',
+      AppLocale.en: 'Lost access to your authenticator?',
+    },
     'recovery.title': {
       AppLocale.ru: 'Восстановление пароля',
       AppLocale.en: 'Password recovery',
+    },
+    'recovery.titleTotp': {
+      AppLocale.ru: 'Восстановление аутентификатора',
+      AppLocale.en: 'Authenticator recovery',
     },
     'recovery.sendCode': {
       AppLocale.ru: 'Отправить код',
@@ -492,9 +501,17 @@ class AppStrings {
       AppLocale.ru: 'Я указывал(а) email для восстановления пароля',
       AppLocale.en: 'I set an email for password recovery',
     },
+    'recovery.hasEmailButtonTotp': {
+      AppLocale.ru: 'Я указывал(а) email для восстановления доступа',
+      AppLocale.en: 'I set an email for account recovery',
+    },
     'recovery.noEmailButton': {
       AppLocale.ru: 'Я не указывал(а) email для восстановления пароля',
       AppLocale.en: "I didn't set an email for password recovery",
+    },
+    'recovery.noEmailButtonTotp': {
+      AppLocale.ru: 'Я не указывал(а) email для восстановления доступа',
+      AppLocale.en: "I didn't set an email for account recovery",
     },
     'recovery.noEmailTitle': {
       AppLocale.ru: 'Обратитесь в поддержку',
@@ -509,6 +526,18 @@ class AppStrings {
       AppLocale.en:
           'Contact technical support at support@oshino.space.\n\n'
           'Subject: "Forgot my account password".\n\n'
+          'In the body, describe absolutely everything you remember about the '
+          'account. Any detail can help restore access.',
+    },
+    'recovery.noEmailBodyTotp': {
+      AppLocale.ru:
+          'Свяжитесь со службой технической поддержки support@oshino.space.\n\n'
+          'Тема письма: «Нет доступа к аутентификатору».\n\n'
+          'В теле письма опишите по возможности абсолютно всё, что помните об '
+          'аккаунте. В восстановлении доступа поможет любая деталь.',
+      AppLocale.en:
+          'Contact technical support at support@oshino.space.\n\n'
+          'Subject: "Lost access to my authenticator".\n\n'
           'In the body, describe absolutely everything you remember about the '
           'account. Any detail can help restore access.',
     },

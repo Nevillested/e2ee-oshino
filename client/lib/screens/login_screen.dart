@@ -11,6 +11,7 @@ import 'home_placeholder_screen.dart';
 import '../device_setup.dart';
 import '../widgets/loading_overlay.dart';
 import 'recovery_choose_method_screen.dart';
+import 'recovery_purpose.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -151,11 +152,29 @@ class _LoginScreenState extends State<LoginScreen> {
                           context,
                           MaterialPageRoute(
                             builder: (context) =>
-                                const RecoveryChooseMethodScreen(),
+                                const RecoveryChooseMethodScreen(
+                                  purpose: RecoveryPurpose.password,
+                                ),
                           ),
                         );
                       },
                 child: Text(tr('recovery.forgotPassword')),
+              ),
+              TextButton(
+                onPressed: _isLoading
+                    ? null
+                    : () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                const RecoveryChooseMethodScreen(
+                                  purpose: RecoveryPurpose.totp,
+                                ),
+                          ),
+                        );
+                      },
+                child: Text(tr('recovery.forgotTotp')),
               ),
             ],
           ),

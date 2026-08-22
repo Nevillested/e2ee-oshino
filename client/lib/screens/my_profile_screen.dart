@@ -120,9 +120,13 @@ class _MyProfileContentState extends State<MyProfileContent> {
             return const Center(child: CircularProgressIndicator());
           }
           return ListView(
-            padding: EdgeInsets.only(
-              top: MediaQuery.of(context).padding.top + 24,
-            ),
+            // Раньше тут был MediaQuery.padding.top + 24 — компенсация за
+            // AppBar, которого не было (см. home_placeholder_screen.dart).
+            // Теперь пустой AppBar снова есть (нужен, чтобы высота Scaffold
+            // не прыгала при переключении табов), безопасную зону сверху
+            // он уже сам учитывает — тут остаётся только небольшой отступ
+            // до кружка с фото.
+            padding: const EdgeInsets.only(top: 16),
             children: [
               Center(
                 child: GestureDetector(

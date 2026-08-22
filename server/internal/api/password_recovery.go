@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/pquerna/otp/totp"
 )
 
 const (
@@ -169,6 +170,61 @@ func NewRecoverResetHandler(queries *db.Queries) func(http.ResponseWriter, *http
 
 		log.Printf("пароль восстановлен для аккаунта: %s (id: %s)", account.Login, account.ID)
 		w.WriteHeader(http.StatusOK)
+	}
+}
+
+type RecoverResetTotpResponse struct {
+	TotpURL string `json:"totp_url"`
+}
+
+// NewRecoverResetTotpHandler — POST /account/recover/reset-totp. Второй
+// "финальный шаг" восстановления, по тому же коду с почты, что и
+// /account/recover/reset у пароля (см. checkRecoveryToken — она общая для
+// обеих веток, ничего пароль/TOTP-специфичного не проверяет). В отличие от
+// смены пароля тут нечего принимать от пользователя — новый TOTP-секрет
+// всегда генерируется заново, тем же способом, что и при регистрации (см.
+// register.go), и возвращается клиенту той же формой ответа (totp_url) —
+// дальше на клиенте один и тот же экран подтверждения (сканирование QR +
+// текущий код), что при регистрации.
+func NewRecoverResetTotpHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var Req RecoverVerifyRequest
+		if err := json.NewDecoder(r.Body).Decode(&Req); err != nil {
+			http.Error(w, "Ошибка декодирования JSON", http.StatusBadRequest)
+			return
+		}
+
+		login := strings.TrimSpace(Req.Login)
+		ok, account, err := checkRecoveryToken(r.Context(), queries, login, Req.Token)
+		if err != nil || !ok {
+			http.Error(w, "Неверный или истёкший код", http.StatusUnauthorized)
+			return
+		}
+
+		key, genErr := totp.Generate(totp.GenerateOpts{Issuer: "OShinobu", AccountName: account.Login})
+		if genErr != nil {
+			log.Printf("не удалось сгенерировать новый TOTP-секрет при восстановлении: %v", genErr)
+			http.Error(w, "Ошибка генерации ключа TOTP", http.StatusInternalServerError)
+			return
+		}
+
+		if sqlErr := queries.UpdateAccountTotpSecret(r.Context(), db.UpdateAccountTotpSecretParams{
+			ID:         account.ID,
+			TotpSecret: key.Secret(),
+		}); sqlErr != nil {
+			log.Printf("не удалось сохранить новый TOTP-секрет: %v", sqlErr)
+			http.Error(w, "Ошибка сохранения ключа TOTP", http.StatusInternalServerError)
+			return
+		}
+
+		// Тот же одноразовый расход кода, что и у смены пароля — повторно
+		// этот код (и на пароль, и на TOTP) больше не сработает.
+		_ = queries.DeletePasswordResetTokensForAccount(r.Context(), account.ID)
+
+		log.Printf("TOTP-секрет восстановлен для аккаунта: %s (id: %s)", account.Login, account.ID)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(RecoverResetTotpResponse{TotpURL: key.URL()})
 	}
 }
 

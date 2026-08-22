@@ -3,16 +3,25 @@ import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/theme_reactive.dart';
+import 'recovery_purpose.dart';
+import 'reset_totp_screen.dart';
 import 'set_new_password_screen.dart';
 
-/// Второй шаг — код из письма. Проверяется отдельным вызовом (не расходуя
-/// код), реальная смена пароля — на следующем экране: если пользователь
-/// там передумает/ошибётся в новом пароле, код всё ещё будет действителен
-/// для повторной попытки, не придётся запрашивать заново.
+/// Второй шаг — код из письма, общий для обоих purpose (сервер сам не
+/// различает, что именно восстанавливают — см. checkRecoveryToken).
+/// Проверяется отдельным вызовом (не расходуя код), реальный расход —
+/// на следующем экране: если пользователь там передумает/ошибётся,
+/// код всё ещё будет действителен для повторной попытки, не придётся
+/// запрашивать заново.
 class RecoveryCodeScreen extends StatefulWidget {
   final String login;
+  final RecoveryPurpose purpose;
 
-  const RecoveryCodeScreen({super.key, required this.login});
+  const RecoveryCodeScreen({
+    super.key,
+    required this.login,
+    required this.purpose,
+  });
 
   @override
   State<RecoveryCodeScreen> createState() => _RecoveryCodeScreenState();
@@ -46,8 +55,9 @@ class _RecoveryCodeScreenState extends State<RecoveryCodeScreen> {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) =>
-              SetNewPasswordScreen(login: widget.login, token: code),
+          builder: (context) => widget.purpose == RecoveryPurpose.password
+              ? SetNewPasswordScreen(login: widget.login, token: code)
+              : ResetTotpScreen(login: widget.login, token: code),
         ),
       );
     } catch (e) {
