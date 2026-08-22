@@ -4247,6 +4247,223 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
+  /// Общая "таблетка" плавающей шапки — тот же приём (блюр + полупрозрачная
+  /// поверхность + тонкая рамка), что и у BottomActionBar снизу, единый
+  /// визуальный язык обеих плавающих панелей.
+  Widget _headerPill({required Widget child, EdgeInsetsGeometry? padding}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding:
+              padding ??
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: AppColors.surface.withValues(alpha: 0.78),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: AppColors.textMuted.withValues(alpha: 0.18),
+            ),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  /// Обычная (не выбор/не поиск) шапка — три плавающие "таблетки": круглая
+  /// кнопка "назад" слева, овальная с профилем собеседника по ЦЕНТРУ ШИРИНЫ
+  /// ЭКРАНА (а не просто между соседних элементов — поэтому Stack с
+  /// Positioned, а не Row, см. ТЗ пользователя), и овальная с
+  /// звонком+меню справа. Всё вокруг — прозрачно, список сообщений
+  /// просвечивает.
+  Widget _buildFloatingChatHeader() {
+    final topInset = MediaQuery.of(context).padding.top;
+    // Компактные IconButton (как у панели ввода снизу — padding 8,
+    // BoxConstraints() без минимума, VisualDensity.compact), а не
+    // стандартный 48x48 минимальный тап-таргет Material — тот был заметно
+    // выше самой таблетки с логином+статусом (у неё бывает две строки
+    // текста) и обрезался её высотой, отсюда и "BOTTOM OVERFLOWED" на
+    // скриншоте, и визуально срезанные кружки на скрине пользователя.
+    const iconPadding = EdgeInsets.all(8);
+    const iconConstraints = BoxConstraints();
+    return Padding(
+      key: const ValueKey('normal_header'),
+      padding: EdgeInsets.only(top: topInset + 8, bottom: 8),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.55,
+              ),
+              child: _headerPill(
+                child: DefaultTextStyle(
+                  style: TextStyle(color: AppColors.textPrimary),
+                  child: _buildAppBarTitle(),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 12,
+            child: _headerPill(
+              padding: EdgeInsets.zero,
+              child: IconButton(
+                padding: iconPadding,
+                constraints: iconConstraints,
+                visualDensity: VisualDensity.compact,
+                icon: Icon(Icons.arrow_back, color: AppColors.textPrimary),
+                onPressed: () =>
+                    _handleBackAction(emojiOnlyVisible: _emojiMode),
+              ),
+            ),
+          ),
+          Positioned(
+            right: 12,
+            child: _headerPill(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (!_isNotes)
+                    IconButton(
+                      padding: iconPadding,
+                      constraints: iconConstraints,
+                      visualDensity: VisualDensity.compact,
+                      icon: Icon(
+                        Icons.call_outlined,
+                        color: AppColors.textPrimary,
+                      ),
+                      onPressed: _isPeerDeleted || _composerBlocked
+                          ? null
+                          : _startCall,
+                    ),
+                  PopupMenuButton<String>(
+                    padding: iconPadding,
+                    icon: Icon(Icons.more_vert, color: AppColors.textPrimary),
+                    onSelected: (value) {
+                      if (value == 'search') _enterSearchMode();
+                    },
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: 'search',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.search),
+                            const SizedBox(width: 10),
+                            Text(tr('chat.searchAction')),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Шапка режима выбора сообщений — раньше жила в Scaffold.appBar как
+  /// обычный AppBar; сам AppBar прекрасно работает и как самостоятельный
+  /// виджет (сам себя высотой считает, сам добавляет отступ под статус-бар)
+  /// — визуально ничего не поменялось, просто теперь это оверлей в body, а
+  /// не Scaffold-слот (единый механизм с обычной и поисковой шапками, см.
+  /// _buildFloatingChatHeader/_buildSearchHeader).
+  Widget _buildSelectionHeader() {
+    return AppBar(
+      key: const ValueKey('selection_header'),
+      leading: IconButton(
+        icon: const Icon(Icons.close),
+        onPressed: _exitSelectionMode,
+      ),
+      title: Text('${tr('chat.selectedCount')}: ${_selectedMessageIds.length}'),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.copy_outlined),
+          onPressed: _selectedMessageIds.isEmpty ? null : _copySelectedTexts,
+        ),
+        IconButton(
+          icon: const Icon(Icons.forward_outlined),
+          onPressed: _selectedMessageIds.isEmpty
+              ? null
+              : () => _openForward(_selectedTexts()),
+        ),
+        IconButton(
+          icon: const Icon(Icons.delete_outline),
+          onPressed: _selectedMessageIds.isEmpty
+              ? null
+              : () => _deleteMessages(_selectedMessageIds.toList()),
+        ),
+      ],
+    );
+  }
+
+  /// Шапка режима поиска — тот же плавающий стиль, что и у обычной шапки
+  /// (см. _buildFloatingChatHeader/_headerPill): кружок "назад" + овальное
+  /// поле поиска, оба непрозрачны сами по себе, а вокруг них (и между
+  /// ними) — прозрачно, список сообщений просвечивает (раньше тут была
+  /// сплошная непрозрачная полоса на всю ширину — см. ТЗ пользователя).
+  Widget _buildSearchHeader() {
+    final topInset = MediaQuery.of(context).padding.top;
+    return Padding(
+      key: const ValueKey('search_header'),
+      padding: EdgeInsets.only(
+        top: topInset + 8,
+        left: 12,
+        right: 12,
+        bottom: 8,
+      ),
+      child: Row(
+        children: [
+          _headerPill(
+            padding: EdgeInsets.zero,
+            child: IconButton(
+              padding: const EdgeInsets.all(8),
+              constraints: const BoxConstraints(),
+              visualDensity: VisualDensity.compact,
+              icon: Icon(Icons.arrow_back, color: AppColors.textPrimary),
+              onPressed: _exitSearchMode,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _headerPill(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              // isDense — штатный способ сделать поле компактным без
+              // "коробочной" модели InputDecorator, из-за которой курсор/
+              // текст иначе плавают непредсказуемо внутри невысокой
+              // таблетки.
+              child: TextField(
+                controller: _searchController,
+                focusNode: _searchFocusNode,
+                autofocus: true,
+                onChanged: _onSearchQueryChanged,
+                textAlignVertical: TextAlignVertical.center,
+                style: TextStyle(color: AppColors.textPrimary, fontSize: 15),
+                decoration: InputDecoration(
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                  border: InputBorder.none,
+                  hintText: tr('chat.searchHint'),
+                  hintStyle: TextStyle(
+                    color: AppColors.textMuted,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Заголовок обычной (не выбора) шапки чата — логин собеседника, а под
   /// ним, по центру, статус: "печатает…" / "в сети" / когда был последний
   /// раз (см. formatPresenceStatus). Для "Заметок" статуса нет и не будет —
@@ -4691,194 +4908,17 @@ class _ChatScreenState extends State<ChatScreen> {
         onBlockedSwipe: () => _handleBackAction(emojiOnlyVisible: _emojiMode),
         child: Scaffold(
           resizeToAvoidBottomInset: false,
-          // Переключение шапки в режим выбора и обратно — плавный кроссфейд
-          // (AnimatedSwitcher), а не мгновенная подмена виджета: без него
-          // смена заголовка/иконок дёргалась одним кадром одновременно со
-          // сменой всего остального в режиме выбора.
-          appBar: PreferredSize(
-            preferredSize: const Size.fromHeight(kToolbarHeight),
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 280),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              // Переход в/из режима поиска — не обычный кроссфейд, а
-              // "разворачивание" горизонтально от правого края (там, где
-              // была иконка лупы) через SizeTransition: ближе всего к
-              // ощущению, что лупа буквально вытягивается в овальную
-              // строку поиска, без полноценного shape-морфинга виджетов
-              // (Hero между IconButton и TextField технически возможен, но
-              // сильно сложнее ради того же зрительного эффекта).
-              transitionBuilder: (child, animation) {
-                if (child.key == const ValueKey('search_appbar')) {
-                  return ClipRect(
-                    child: FractionallySizedBox(
-                      alignment: Alignment.centerRight,
-                      widthFactor: animation.value.clamp(0.0, 1.0),
-                      child: FadeTransition(opacity: animation, child: child),
-                    ),
-                  );
-                }
-                return FadeTransition(opacity: animation, child: child);
-              },
-              child: _selectionMode
-                  ? AppBar(
-                      key: const ValueKey('selection_appbar'),
-                      leading: IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: _exitSelectionMode,
-                      ),
-                      title: Text(
-                        '${tr('chat.selectedCount')}: ${_selectedMessageIds.length}',
-                      ),
-                      actions: [
-                        IconButton(
-                          icon: const Icon(Icons.copy_outlined),
-                          onPressed: _selectedMessageIds.isEmpty
-                              ? null
-                              : _copySelectedTexts,
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.forward_outlined),
-                          onPressed: _selectedMessageIds.isEmpty
-                              ? null
-                              : () => _openForward(_selectedTexts()),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: _selectedMessageIds.isEmpty
-                              ? null
-                              : () => _deleteMessages(
-                                  _selectedMessageIds.toList(),
-                                ),
-                        ),
-                      ],
-                    )
-                  : _searchMode
-                  ? Material(
-                      key: const ValueKey('search_appbar'),
-                      color:
-                          Theme.of(context).appBarTheme.backgroundColor ??
-                          AppColors.background,
-                      // Собственный Row вместо AppBar.title — у самого
-                      // AppBar середина (title) центрируется только
-                      // ГОРИЗОНТАЛЬНО и не тянется на всю ширину, из-за
-                      // чего наша овальная строка поиска сама решала,
-                      // какой высоты ей быть, и "плавала" в тулбаре не по
-                      // центру. Явный Row с CrossAxisAlignment.center (по
-                      // умолчанию) гарантирует, что и кружок-стрелка, и
-                      // сама строка поиска вертикально ровно посередине.
-                      child: SafeArea(
-                        bottom: false,
-                        child: SizedBox(
-                          height: kToolbarHeight,
-                          child: Row(
-                            children: [
-                              const SizedBox(width: 6),
-                              Material(
-                                color: AppColors.surface,
-                                shape: const CircleBorder(),
-                                child: InkWell(
-                                  customBorder: const CircleBorder(),
-                                  onTap: _exitSearchMode,
-                                  child: const Padding(
-                                    padding: EdgeInsets.all(10),
-                                    child: Icon(Icons.arrow_back, size: 22),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Container(
-                                  height: 42,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: AppColors.surface,
-                                    borderRadius: BorderRadius.circular(21),
-                                  ),
-                                  // isCollapsed+expands (предыдущая попытка)
-                                  // убирает у InputDecorator всю внутреннюю
-                                  // "коробочную" модель, из-за которой сам
-                                  // Flutter обычно и центрирует текст —
-                                  // без неё курсор/текст плавают
-                                  // непредсказуемо. isDense — штатный,
-                                  // хорошо протестированный способ сделать
-                                  // поле компактным, НЕ ломая эту модель;
-                                  // явный Center снаружи — подстраховка на
-                                  // случай, если сам бокс decorator'а
-                                  // всё-таки выйдет чуть выше строки текста.
-                                  child: Center(
-                                    child: TextField(
-                                      controller: _searchController,
-                                      focusNode: _searchFocusNode,
-                                      autofocus: true,
-                                      onChanged: _onSearchQueryChanged,
-                                      textAlignVertical:
-                                          TextAlignVertical.center,
-                                      style: TextStyle(
-                                        color: AppColors.textPrimary,
-                                        fontSize: 15,
-                                      ),
-                                      decoration: InputDecoration(
-                                        isDense: true,
-                                        contentPadding: EdgeInsets.zero,
-                                        border: InputBorder.none,
-                                        hintText: tr('chat.searchHint'),
-                                        hintStyle: TextStyle(
-                                          color: AppColors.textMuted,
-                                          fontSize: 15,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                            ],
-                          ),
-                        ),
-                      ),
-                    )
-                  : AppBar(
-                      key: const ValueKey('normal_appbar'),
-                      centerTitle: true,
-                      title: _buildAppBarTitle(),
-                      actions: [
-                        IconButton(
-                          icon: const Icon(Icons.search),
-                          iconSize: 24,
-                          padding: const EdgeInsets.all(14),
-                          constraints: const BoxConstraints(
-                            minWidth: 52,
-                            minHeight: 52,
-                          ),
-                          onPressed: _enterSearchMode,
-                        ),
-                        if (!_isNotes)
-                          IconButton(
-                            icon: const Icon(Icons.call_outlined),
-                            iconSize: 26,
-                            padding: const EdgeInsets.all(14),
-                            constraints: const BoxConstraints(
-                              minWidth: 56,
-                              minHeight: 56,
-                            ),
-                            onPressed: _isPeerDeleted || _composerBlocked
-                                ? null
-                                : _startCall,
-                          ),
-                      ],
-                    ),
-            ),
-          ),
+          // Шапки больше нет как Scaffold.appBar — весь заголовок стал
+          // плавающим оверлеем ПОВЕРХ списка сообщений (см. Positioned в
+          // body ниже), тем же способом и по тем же причинам, что и панель
+          // ввода снизу (см. ТЗ пользователя про единый стиль: только сами
+          // "таблетки" непрозрачны, всё остальное — просвечивает чат).
+          appBar: null,
           body: Stack(
             key: _bodyStackKey,
             children: [
               Column(
                 children: [
-                  if (!_isNotes) OngoingCallBanner(peerLogin: widget.peerLogin),
-                  if (_pinnedMessageId != null) _buildPinnedBanner(),
                   Expanded(
                     // Список не строится, пока _bootstrapHistory() не узнает
                     // сохранённую позицию — иначе он БЫ построился с нуля,
@@ -4910,7 +4950,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 // них.
                                 padding: EdgeInsets.fromLTRB(
                                   16,
-                                  16,
+                                  16 + MediaQuery.of(context).padding.top + 60,
                                   16,
                                   16 + 64 + reserved,
                                 ),
@@ -4927,6 +4967,70 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ],
               ),
+              // Шапка — плавающий оверлей ПОВЕРХ списка сообщений, тот же
+              // приём, что и у панели ввода снизу (см. ниже): три овальные
+              // "таблетки" (назад / профиль собеседника / звонок+меню), а
+              // всё вокруг них прозрачно — список сообщений просвечивает в
+              // промежутках между ними и по краям. Переключение между
+              // обычным видом, режимом выбора и поиском — тот же
+              // AnimatedSwitcher, что раньше жил в Scaffold.appBar, просто
+              // теперь как оверлей в body, а не отдельный слот Scaffold'а
+              // (тот менялся бы мгновенно без анимации при появлении/
+              // исчезновении — см. аналогичный фикс на экране чатов/
+              // настроек/профиля).
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 280),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (child, animation) {
+                    if (child.key == const ValueKey('search_header')) {
+                      return ClipRect(
+                        child: FractionallySizedBox(
+                          alignment: Alignment.centerRight,
+                          widthFactor: animation.value.clamp(0.0, 1.0),
+                          child: FadeTransition(
+                            opacity: animation,
+                            child: child,
+                          ),
+                        ),
+                      );
+                    }
+                    return FadeTransition(opacity: animation, child: child);
+                  },
+                  child: _selectionMode
+                      ? _buildSelectionHeader()
+                      : _searchMode
+                      ? _buildSearchHeader()
+                      : _buildFloatingChatHeader(),
+                ),
+              ),
+              // Баннер звонка/закреплённого сообщения — раньше был частью
+              // того же Column, что и список (и потому естественно оказывался
+              // ПОД Scaffold.appBar). Теперь список — самостоятельный
+              // full-height Positioned (см. выше, Expanded внутри Column
+              // больше не начинается ниже шапки — иначе список снова не
+              // заходил бы под неё, а весь смысл этой правки как раз в
+              // обратном). Баннеры поэтому — свой отдельный Positioned, НЕ
+              // влияющий на позицию списка, просто отступающий от верха на
+              // высоту шапки, чтобы не оказаться под её "таблетками".
+              if (!_isNotes || _pinnedMessageId != null)
+                Positioned(
+                  top: MediaQuery.of(context).padding.top + 60,
+                  left: 0,
+                  right: 0,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!_isNotes)
+                        OngoingCallBanner(peerLogin: widget.peerLogin),
+                      if (_pinnedMessageId != null) _buildPinnedBanner(),
+                    ],
+                  ),
+                ),
               // Панель ввода — плавающий оверлей ПОВЕРХ списка сообщений
               // (см. ТЗ пользователя: список должен быть на всю высоту,
               // сообщения "проплывают" под панелью, а не упираются в неё

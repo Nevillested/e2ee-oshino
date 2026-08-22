@@ -713,6 +713,10 @@ class AppStrings {
       AppLocale.ru: 'Поиск по переписке',
       AppLocale.en: 'Search chat',
     },
+    'chat.searchAction': {
+      AppLocale.ru: 'Поиск',
+      AppLocale.en: 'Search',
+    },
     'chat.showAsList': {
       AppLocale.ru: 'Показать списком',
       AppLocale.en: 'Show as list',
