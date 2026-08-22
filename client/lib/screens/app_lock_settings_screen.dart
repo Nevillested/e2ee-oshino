@@ -260,14 +260,25 @@ class _TimeoutSheet extends StatelessWidget {
         if ((details.primaryVelocity ?? 0) > 200) Navigator.pop(context);
       },
       child: Container(
+        // 9 вариантов ощутимо выше многих экранов целиком — Column с
+        // mainAxisSize.min тут не спасает (это ограничивает только
+        // МИНИМАЛЬНЫЙ размер, а не максимальный): содержимое просто
+        // вылезало за пределы модалки и рисовало debug-индикатор
+        // переполнения (чёрно-жёлтая полоска на скрине пользователя).
+        // ListView сам умеет прокручиваться внутри ограниченной высоты,
+        // которую даёт showModalBottomSheet, вместо того чтобы вылезать
+        // за неё.
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+        ),
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
         ),
         child: SafeArea(
           top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          child: ListView(
+            shrinkWrap: true,
             children: [
               const SizedBox(height: 8),
               for (final seconds in _timeoutOptions)

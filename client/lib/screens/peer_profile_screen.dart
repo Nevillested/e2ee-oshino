@@ -1,10 +1,9 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
 import '../services/avatar_cache.dart';
 import '../services/peer_profile_cache.dart';
 import '../theme/app_theme.dart';
-import '../widgets/avatar_settings_tile.dart';
+import '../widgets/cached_avatar_image.dart';
 import '../widgets/photo_viewer_screen.dart';
 import '../widgets/theme_reactive.dart';
 
@@ -85,17 +84,15 @@ class _PeerProfileScreenState extends State<PeerProfileScreen> {
                   Center(
                     child: Hero(
                       tag: 'peer-avatar-${widget.peerAccountId}',
-                      child: FutureBuilder<Uint8List?>(
-                        future: AvatarCache.get(widget.peerAccountId),
-                        builder: (context, snapshot) {
-                          final bytes = snapshot.data;
-                          return GestureDetector(
-                            onTap: bytes == null
-                                ? null
-                                : () => showPhotoViewer(context, bytes),
-                            child: AvatarThumbnail(bytes: bytes, radius: 64),
-                          );
+                      child: GestureDetector(
+                        onTap: () {
+                          final bytes = AvatarCache.peek(widget.peerAccountId);
+                          if (bytes != null) showPhotoViewer(context, bytes);
                         },
+                        child: CachedAvatarImage(
+                          accountId: widget.peerAccountId,
+                          radius: 64,
+                        ),
                       ),
                     ),
                   ),

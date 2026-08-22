@@ -39,6 +39,12 @@ class BottomActionBar extends StatelessWidget {
     // 3-кнопочной навигацией Samsung — теперь просто зазор под плавающей
     // капсулой вместо паддинга внутри бывшего полноширинного бара.
     final bottomInset = MediaQuery.of(context).padding.bottom;
+    // Фиксированная ширина кнопки — 1/5 ширины экрана (см. ТЗ пользователя):
+    // с запасом хватает под любую подпись при любом масштабе шрифта из
+    // настроек (TextPainter-измерение ширины текста раньше не учитывало
+    // пользовательский textScaler из настроек, из-за чего подпись при
+    // увеличенном масштабе шрифта переносилась на вторую строку).
+    final buttonSize = MediaQuery.of(context).size.width / 5;
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset + 14),
       child: Center(
@@ -59,7 +65,7 @@ class BottomActionBar extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   for (var i = 0; i < items.length; i++)
-                    _buildItem(i, _maxLabelWidth()),
+                    _buildItem(i, buttonSize),
                 ],
               ),
             ),
@@ -69,28 +75,7 @@ class BottomActionBar extends StatelessWidget {
     );
   }
 
-  // Одинаковая ширина подсветки под всеми кнопками (см. ТЗ пользователя —
-  // раньше каждая была по ширине своей подписи, "Настройки"/"Profile"
-  // ощутимо шире "Чаты"/"Chats"). Меряем по САМОМУ жирному начертанию
-  // (w600, как у выбранного таба) — оно чуть шире обычного, так подсветка
-  // никогда не окажется теснее текста, когда именно этот таб станет
-  // активным.
-  double _maxLabelWidth() {
-    var max = 0.0;
-    for (final item in items) {
-      final painter = TextPainter(
-        text: TextSpan(
-          text: item.label,
-          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      if (painter.width > max) max = painter.width;
-    }
-    return max;
-  }
-
-  Widget _buildItem(int i, double labelWidth) {
+  Widget _buildItem(int i, double buttonSize) {
     final item = items[i];
     final selected = i == selectedIndex;
     final color = selected ? AppColors.primary : AppColors.textPrimary;
@@ -117,31 +102,31 @@ class BottomActionBar extends StatelessWidget {
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOut,
         margin: const EdgeInsets.symmetric(horizontal: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        width: buttonSize,
         decoration: BoxDecoration(
           color: selected
               ? AppColors.primary.withValues(alpha: 0.16)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(999),
         ),
-        child: SizedBox(
-          width: labelWidth,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              leading,
-              const SizedBox(height: 2),
-              Text(
-                item.label,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                  color: color,
-                ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            leading,
+            const SizedBox(height: 2),
+            Text(
+              item.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                color: color,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

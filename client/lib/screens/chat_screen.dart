@@ -32,7 +32,7 @@ import '../screens/call_screen.dart';
 import '../screens/camera_capture_screen.dart';
 import '../screens/media_viewer_screen.dart';
 import '../services/active_chat_tracker.dart';
-import '../services/avatar_cache.dart';
+import '../widgets/cached_avatar_image.dart';
 import '../services/call_service.dart';
 import '../services/chat_scroll_position_store.dart';
 import '../services/debug_log.dart';
@@ -133,13 +133,6 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, Uint8List> _resolvedMedia = {};
   final Map<String, Future<bool>> _existsChecks = {};
   final Map<String, Future<void>> _chunkedDownloads = {};
-  // Вычисляется один раз в initState — не через FutureBuilder(future: ...)
-  // прямо в build(), иначе каждая перестройка шапки (например, тик статуса
-  // "N минут назад" раз в 30с) гоняла бы новый сетевой запрос за одной и
-  // той же аватаркой. НЕ final — обновляется живым сигналом avatar_changed,
-  // см. _avatarChangedSub.
-  Future<Uint8List?>? _peerAvatarFuture;
-  StreamSubscription<String>? _avatarChangedSub;
 
   String _currentPeerDeviceId = '';
   Map<String, dynamic>? _pendingInitHeader;
@@ -421,19 +414,6 @@ class _ChatScreenState extends State<ChatScreen> {
     ChatStore.clearUnread(widget.peerLogin);
     _currentPeerDeviceId = widget.peerDeviceId;
     _forwardingTexts = widget.forwardedTexts;
-    _peerAvatarFuture = (_isNotes || widget.peerAccountId.isEmpty)
-        ? null
-        : AvatarCache.get(widget.peerAccountId);
-    // Живой сигнал (см. AvatarCache.changes) — если СОБЕСЕДНИК только что
-    // поменял фото, пока этот чат открыт, шапка обновится сразу же, а не
-    // при следующем открытии экрана.
-    if (!_isNotes && widget.peerAccountId.isNotEmpty) {
-      _avatarChangedSub = AvatarCache.changes.listen((changedId) {
-        if (changedId == widget.peerAccountId && mounted) {
-          setState(() => _peerAvatarFuture = AvatarCache.get(changedId));
-        }
-      });
-    }
     _textFocusNode.addListener(_onFocusChange);
     _textController.addListener(_onTextChanged);
     _loadKnownDeletedStatus();
@@ -4253,7 +4233,6 @@ class _ChatScreenState extends State<ChatScreen> {
     _presenceSub?.cancel();
     _wsStatusSub?.cancel();
     _blockStatusSub?.cancel();
-    _avatarChangedSub?.cancel();
     _presenceTickTimer?.cancel();
     _peerTypingClearTimer?.cancel();
     super.dispose();
@@ -4345,11 +4324,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     return Hero(
       tag: 'peer-avatar-${widget.peerAccountId}',
-      child: FutureBuilder<Uint8List?>(
-        future: _peerAvatarFuture,
-        builder: (context, snapshot) =>
-            AvatarThumbnail(bytes: snapshot.data, radius: 16),
-      ),
+      child: CachedAvatarImage(accountId: widget.peerAccountId, radius: 16),
     );
   }
 
