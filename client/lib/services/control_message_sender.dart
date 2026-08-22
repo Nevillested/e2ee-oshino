@@ -11,7 +11,7 @@ import '../storage/peer_account_store.dart';
 import '../storage/peer_identity_store.dart';
 import 'debug_log.dart';
 import 'send_lock.dart';
-import 'websocket_service.dart';
+import 'send_queue_processor.dart';
 
 /// Отправка служебного control-сообщения (реакция/пин/правка/удаление) вне
 /// открытого ChatScreen — нужно для действий из списка чатов (например,
@@ -81,10 +81,10 @@ class ControlMessageSender {
           if (initHeader != null) ...initHeader,
         };
 
-        await WebSocketService.instance.sendEnvelope(
-          peerDeviceId,
-          envelope,
-          inner.messageId,
+        await SendQueueProcessor.instance.enqueue(
+          toDeviceId: peerDeviceId,
+          envelope: envelope,
+          deliveryId: inner.messageId,
           silent: true,
         );
       });

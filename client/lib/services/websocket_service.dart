@@ -5,10 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../config.dart';
-import '../storage/outbox_store.dart';
-import '../storage/chat_store.dart';
 import '../api/api_client.dart';
 import 'debug_log.dart';
+import 'send_ack_registry.dart';
 
 /// Человекочитаемое состояние подключения к серверу — для индикатора в
 /// шапке списка чатов. Не претендует на бОльшую детализацию, чем реально
@@ -47,6 +46,8 @@ class WebSocketService {
       StreamController<Map<String, dynamic>>.broadcast();
   final _blockStatusController = StreamController<void>.broadcast();
   final _avatarChangedController = StreamController<String>.broadcast();
+  final _profileChangedController =
+      StreamController<({String accountId, String field})>.broadcast();
 
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
   Stream<Map<String, dynamic>> get callSignals => _callController.stream;
@@ -66,6 +67,14 @@ class WebSocketService {
   // сбросить локальный кэш (см. AvatarCache.invalidate) и перезапросить
   // заново.
   Stream<String> get avatarChangedEvents => _avatarChangedController.stream;
+  // "profile_updated" — у кого-то из контактов поменялось конкретное поле
+  // профиля (статус/дата рождения/фото — см. AccountId+Field, notifyProfileUpdatedIfVisible
+  // на сервере). В отличие от avatar_changed это НЕ broadcast всем подряд
+  // — сервер теперь знает контакты (см. таблицу contacts) и шлёт только
+  // им, поэтому здесь можно спокойно доверять: раз пришло — оно того
+  // стоило перепроверить.
+  Stream<({String accountId, String field})> get profileChangedEvents =>
+      _profileChangedController.stream;
   bool get isConnected => _channel != null;
 
   final _sessionInvalidController = StreamController<void>.broadcast();
@@ -191,8 +200,6 @@ class WebSocketService {
           _scheduleReconnect();
         });
 
-    flushOutbox();
-
     _subscription = channel.stream.listen(
       (raw) {
         try {
@@ -203,6 +210,17 @@ class WebSocketService {
             'WS recv type=$type'
             '${frameDeliveryId is String && frameDeliveryId.isNotEmpty ? ' deliveryId=$frameDeliveryId' : ''}',
           );
+
+          if (type == 'ack') {
+            // Подтверждение НАШЕЙ исходящей отправки (см. websocket.go:
+            // ackSender) — симметрично тому, что клиент сам шлёт серверу
+            // через ackDelivery() для входящих. Раньше такого пути не
+            // было вообще, это основа SendQueueProcessor.
+            if (frameDeliveryId is String && frameDeliveryId.isNotEmpty) {
+              SendAckRegistry.fulfill(frameDeliveryId);
+            }
+            return;
+          }
 
           if (type == 'presence' || type == 'typing') {
             _presenceController.add(outer);
@@ -217,6 +235,15 @@ class WebSocketService {
           if (type == 'avatar_changed') {
             final accountId = outer['AccountId'] as String?;
             if (accountId != null) _avatarChangedController.add(accountId);
+            return;
+          }
+
+          if (type == 'profile_updated') {
+            final accountId = outer['AccountId'] as String?;
+            final field = outer['Field'] as String?;
+            if (accountId != null && field != null) {
+              _profileChangedController.add((accountId: accountId, field: field));
+            }
             return;
           }
 
@@ -339,36 +366,44 @@ class WebSocketService {
     _channel?.sink.add(jsonEncode({'Type': 'ack', 'DeliveryId': deliveryId}));
   }
 
+  /// Отправляет уже готовый (зашифрованный) конверт напрямую в сокет —
+  /// НЕ занимается сама очередью/повтором при обрыве связи, это теперь
+  /// работа SendQueueProcessor (см. client/lib/services/send_queue_processor.dart)
+  /// поверх SendQueueStore/SendAckRegistry. Если канала нет — бросает
+  /// исключение, вызывающая сторона (SendQueueProcessor) сама решает,
+  /// что с этим делать (оставить в очереди до следующего подключения).
+  ///
+  /// [deliveryId] — генерируется ВЫЗЫВАЮЩЕЙ стороной (SendQueueProcessor),
+  /// едет в самом фрейме — сервер, приняв сообщение на доставку/в очередь,
+  /// подтверждает именно этим id обратно (см. websocket.go:ackSender);
+  /// раньше подтверждения в эту сторону не было вообще.
+  ///
   /// silent — служебное control-сообщение (реакция/пин/правка/удаление),
   /// см. WSMsgFrom.Silent на сервере: открытым текстом просим сервер не
   /// слать будящий push офлайн-получателю ради него. Само сообщение
   /// шифруется и доставляется как обычно — флаг влияет только на push.
-  Future<String> sendEnvelope(
+  Future<void> sendEnvelope(
     String toDeviceId,
     Map<String, dynamic> envelope,
-    String messageId, {
+    String deliveryId, {
     bool silent = false,
   }) async {
     if (_channel == null) {
-      DebugLog.log(
-        'WS sendEnvelope to=$toDeviceId messageId=$messageId -> QUEUED (no channel)',
-      );
-      await OutboxStore.add(toDeviceId, envelope, messageId, silent: silent);
-      return 'queued';
+      throw StateError('WebSocket не подключен');
     }
 
     final message = {
       'ToDeviceId': toDeviceId,
       'Ciphertext': jsonEncode(envelope),
       'Type': 'message',
+      'DeliveryId': deliveryId,
       'Silent': silent,
     };
     DebugLog.log(
-      'WS sendEnvelope to=$toDeviceId messageId=$messageId '
-      'channel=${identityHashCode(_channel)} -> sent',
+      'WS sendEnvelope to=$toDeviceId deliveryId=$deliveryId '
+      'channel=${identityHashCode(_channel)}',
     );
     _channel!.sink.add(jsonEncode(message));
-    return 'sent';
   }
 
   /// Сигналы звонка (offer/answer/ICE и т.д.) — не проходят через очередь
@@ -417,29 +452,4 @@ class WebSocketService {
     );
   }
 
-  Future<void> flushOutbox() async {
-    final pending = await OutboxStore.getAll();
-    if (pending.isEmpty) return;
-
-    for (final item in pending) {
-      final toDeviceId = item['to_device_id'] as String;
-      final envelope = item['envelope'] as Map<String, dynamic>;
-      final messageId = item['message_id'] as String?;
-      final silent = item['silent'] as bool? ?? false;
-
-      final message = {
-        'ToDeviceId': toDeviceId,
-        'Ciphertext': jsonEncode(envelope),
-        'Type': 'message',
-        'Silent': silent,
-      };
-      _channel?.sink.add(jsonEncode(message));
-
-      if (messageId != null) {
-        await ChatStore.updateMessageStatus(toDeviceId, messageId, 'sent');
-      }
-    }
-
-    await OutboxStore.clear();
-  }
 }

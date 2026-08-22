@@ -849,6 +849,12 @@ class ApiClient {
       String language,
       String? email,
       bool hasAvatar,
+      String? status,
+      String? birthday,
+      int findByLoginVisibility,
+      int avatarVisibility,
+      int birthdayVisibility,
+      int statusVisibility,
     })?
   >
   getMyAccountInfo(String token) async {
@@ -867,10 +873,111 @@ class ApiClient {
         language: data['language'] as String? ?? 'en',
         email: data['email'] as String?,
         hasAvatar: data['has_avatar'] as bool? ?? false,
+        status: data['status'] as String?,
+        birthday: data['birthday'] as String?,
+        findByLoginVisibility: data['find_by_login_visibility'] as int? ?? 1,
+        avatarVisibility: data['avatar_visibility'] as int? ?? 1,
+        birthdayVisibility: data['birthday_visibility'] as int? ?? 1,
+        statusVisibility: data['status_visibility'] as int? ?? 1,
       );
     } catch (_) {
       return null;
     }
+  }
+
+  /// PUT /account/status — статус профиля, пустая строка валидна (снимает
+  /// статус целиком).
+  Future<void> updateStatus(String token, String status) async {
+    final response = await http.put(
+      Uri.parse('${ApiConfig.baseUrl}/account/status'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'status': status}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.statusSaveFailed'));
+    }
+  }
+
+  /// PUT /account/birthday — birthday: null снимает дату целиком.
+  Future<void> updateBirthday(String token, String? birthday) async {
+    final response = await http.put(
+      Uri.parse('${ApiConfig.baseUrl}/account/birthday'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'birthday': birthday}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.birthdaySaveFailed'));
+    }
+  }
+
+  /// PUT /account/privacy — все 4 настройки видимости профиля разом.
+  Future<void> updatePrivacy(
+    String token, {
+    required int findByLogin,
+    required int avatar,
+    required int birthday,
+    required int status,
+  }) async {
+    final response = await http.put(
+      Uri.parse('${ApiConfig.baseUrl}/account/privacy'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({
+        'find_by_login': findByLogin,
+        'avatar': avatar,
+        'birthday': birthday,
+        'status': status,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.privacySaveFailed'));
+    }
+  }
+
+  /// GET /account/profile/{login} — профиль ЧУЖОГО пользователя, уже
+  /// отфильтрованный сервером по его настройкам приватности (см.
+  /// account_profile.go). 404, если у пользователя find_by_login=0 (его
+  /// "не существует" для поиска) — тот же случай, что и логин не найден.
+  Future<
+    ({
+      String accountId,
+      String login,
+      List<Map<String, dynamic>> devices,
+      String? status,
+      String? birthday,
+      bool hasAvatar,
+    })?
+  >
+  getAccountProfile(String token, String login) async {
+    final response = await http.get(
+      Uri.parse('${ApiConfig.baseUrl}/account/profile/$login'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode == 404) return null;
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.userLookupFailed'));
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final rawDevices = data['devices'];
+    final devices = rawDevices is List
+        ? rawDevices.map((d) => Map<String, dynamic>.from(d as Map)).toList()
+        : <Map<String, dynamic>>[];
+    return (
+      accountId: data['account_id'] as String,
+      login: data['login'] as String,
+      devices: devices,
+      status: data['status'] as String?,
+      birthday: data['birthday'] as String?,
+      hasAvatar: data['has_avatar'] as bool? ?? false,
+    );
   }
 
   /// POST /reports — жалоба на сообщение. Переписка E2E-зашифрована,

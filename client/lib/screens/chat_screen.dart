@@ -40,6 +40,7 @@ import '../services/keyboard_height_store.dart';
 import '../services/media_asset_cache.dart';
 import '../services/my_avatar_store.dart';
 import '../services/send_lock.dart';
+import '../services/send_queue_processor.dart';
 import '../services/websocket_service.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
@@ -58,12 +59,14 @@ import '../widgets/media_picker_sheet.dart';
 import '../widgets/message_context_menu.dart';
 import '../widgets/ongoing_call_banner.dart';
 import '../widgets/particle_shatter_overlay.dart';
+import '../widgets/hero_zoom_page_route.dart';
 import '../widgets/report_message_dialog.dart';
 import '../widgets/swipe_back_page_route.dart';
 import '../widgets/theme_reactive.dart';
 import '../widgets/video_note_player.dart';
 import '../widgets/voice_message_player.dart';
 import 'forward_screen.dart';
+import 'peer_profile_screen.dart';
 
 enum _RecKind { voice, video }
 
@@ -689,15 +692,18 @@ class _ChatScreenState extends State<ChatScreen> {
     // реально прошла — любой разовый сбой (например, сессия ещё не
     // установлена, или временная проблема сети) навсегда и незаметно терял
     // именно эту квитанцию: флаг уже стоял, повторной попытки никогда не
-    // случалось. Теперь помечаем только при успехе — при неудаче эти же id
-    // просто снова попадут в toMark при следующем естественном триггере
-    // (открытие чата, новое сообщение от собеседника), без отдельного
-    // специального retry-механизма.
-    final sent = await _sendControlMessage(
+    // случалось. Теперь помечаем только по РЕАЛЬНОМУ ack от сервера (см.
+    // onAcked/SendQueueProcessor) — просто "поставили в очередь" (то, что
+    // возвращает _sendControlMessage) больше не значит "доставлено", это
+    // асинхронно. При неудаче/потере колбэка (например, если приложение
+    // убьют между постановкой в очередь и ack) эти же id просто снова
+    // попадут в toMark при следующем естественном триггере (открытие
+    // чата, новое сообщение от собеседника) — идемпотентно, без
+    // отдельного специального retry-механизма.
+    await _sendControlMessage(
       InnerMessage.readReceipt(targetMessageIds: toMark),
+      onAcked: () => ChatStore.markReadReceiptsSent(widget.peerLogin, toMark),
     );
-    if (!sent) return;
-    await ChatStore.markReadReceiptsSent(widget.peerLogin, toMark);
   }
 
   /// Прыгает к offset'у, а затем несколько раз перепроверяет и
@@ -1276,10 +1282,19 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Отправляет служебное control-сообщение (реакция/пин/изменение/удаление)
-  /// тем же каналом (Double Ratchet + офлайн-очередь на сервере), что и
-  /// обычные сообщения — но без записи в локальную историю чата, у этих
-  /// типов нет собственного пузыря.
-  Future<bool> _sendControlMessage(InnerMessage inner) async {
+  /// тем же каналом (Double Ratchet + единая надёжная очередь, см.
+  /// SendQueueProcessor), что и обычные сообщения — но без записи в
+  /// локальную историю чата, у этих типов нет собственного пузыря.
+  ///
+  /// Возвращает true, если удалось поставить в очередь (шифрование
+  /// прошло успешно) — НЕ то же самое, что "доставлено", это теперь
+  /// асинхронно и гарантируется самой очередью. Если конкретному вызову
+  /// нужна реакция именно на подтверждённую ДОСТАВКУ (а не просто
+  /// постановку в очередь) — используйте [onAcked].
+  Future<bool> _sendControlMessage(
+    InnerMessage inner, {
+    Future<void> Function()? onAcked,
+  }) async {
     if (_isNotes) return true;
     try {
       await SendLock.run(widget.peerLogin, () async {
@@ -1304,11 +1319,12 @@ class _ChatScreenState extends State<ChatScreen> {
           if (initHeader != null) ...initHeader,
         };
 
-        await WebSocketService.instance.sendEnvelope(
-          _currentPeerDeviceId,
-          envelope,
-          inner.messageId,
+        await SendQueueProcessor.instance.enqueue(
+          toDeviceId: _currentPeerDeviceId,
+          envelope: envelope,
+          deliveryId: inner.messageId,
           silent: true,
+          onAcked: onAcked,
         );
       });
       return true;
@@ -1397,16 +1413,17 @@ class _ChatScreenState extends State<ChatScreen> {
           if (initHeader != null) ...initHeader,
         };
 
-        final status = await WebSocketService.instance.sendEnvelope(
-          _currentPeerDeviceId,
-          envelope,
-          inner.messageId,
-        );
-
-        await ChatStore.updateMessageStatus(
-          widget.peerLogin,
-          inner.messageId,
-          status,
+        // Статус на 'sent' проставляет сама очередь по факту реального
+        // ack от сервера (см. SendQueueProcessor._attempt), не раньше —
+        // до этого момента пузырь остаётся в статусе, с которым был
+        // создан (см. _sendTextMessage), это уже честно "в очереди на
+        // доставку", а не "точно ушло".
+        await SendQueueProcessor.instance.enqueue(
+          toDeviceId: _currentPeerDeviceId,
+          envelope: envelope,
+          deliveryId: inner.messageId,
+          messageId: inner.messageId,
+          peerLogin: widget.peerLogin,
         );
       });
     } catch (_) {
@@ -1780,25 +1797,32 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     try {
-      await SendLock.run(widget.peerLogin, () async {
-        final token = await Session.getToken();
-        final myDeviceId = await KeyStore.getStoredDeviceId();
-        final state = await _ensureSessionForSending();
-        final initHeader = _pendingInitHeader;
-        _pendingInitHeader = null;
+      // runHeavy — глобальная (across всех собеседников) сериализация
+      // самой загрузки: следующее тяжёлое (фото/видео/файл/голосовое)
+      // не начинает грузиться, пока не закончилось (успехом или
+      // неудачей) предыдущее. SendLock внутри — как и раньше, отдельная,
+      // более узкая сериализация именно крипто-состояния ЭТОГО
+      // собеседника, друг другу эти два уровня не мешают.
+      await SendQueueProcessor.instance.runHeavy(
+        () => SendLock.run(widget.peerLogin, () async {
+          final token = await Session.getToken();
+          final myDeviceId = await KeyStore.getStoredDeviceId();
+          final state = await _ensureSessionForSending();
+          final initHeader = _pendingInitHeader;
+          _pendingInitHeader = null;
 
-        final peerAccountIdForUpload =
-            await PeerAccountStore.get(_currentPeerDeviceId) ??
-            widget.peerAccountId;
+          final peerAccountIdForUpload =
+              await PeerAccountStore.get(_currentPeerDeviceId) ??
+              widget.peerAccountId;
 
-        final desc = await _uploadAndDescribeMedia(
-          PickedMedia(file: file, isVideo: isVideo),
-          messageId,
-          size,
-          isVideo ? 'video_note.mp4' : 'voice.m4a',
-          token!,
-          peerAccountIdForUpload,
-        );
+          final desc = await _uploadAndDescribeMedia(
+            PickedMedia(file: file, isVideo: isVideo),
+            messageId,
+            size,
+            isVideo ? 'video_note.mp4' : 'voice.m4a',
+            token!,
+            peerAccountIdForUpload,
+          );
 
         await ChatStore.updateProcessingStep(
           widget.peerLogin,
@@ -1847,17 +1871,15 @@ class _ChatScreenState extends State<ChatScreen> {
           if (initHeader != null) ...initHeader,
         };
 
-        final status = await WebSocketService.instance.sendEnvelope(
-          _currentPeerDeviceId,
-          envelope,
-          messageId,
-        );
-        await ChatStore.updateMessageStatus(
-          widget.peerLogin,
-          messageId,
-          status,
-        );
-      });
+          await SendQueueProcessor.instance.enqueue(
+            toDeviceId: _currentPeerDeviceId,
+            envelope: envelope,
+            deliveryId: messageId,
+            messageId: messageId,
+            peerLogin: widget.peerLogin,
+          );
+        }),
+      );
     } catch (e, stackTrace) {
       debugPrint('Ошибка отправки голосового/видео сообщения: $e\n$stackTrace');
       await ChatStore.updateMessageStatus(
@@ -2524,7 +2546,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     try {
-      await SendLock.run(widget.peerLogin, () async {
+      await SendQueueProcessor.instance.runHeavy(
+        () => SendLock.run(widget.peerLogin, () async {
         final token = await Session.getToken();
         final myDeviceId = await KeyStore.getStoredDeviceId();
         final state = await _ensureSessionForSending();
@@ -2585,17 +2608,15 @@ class _ChatScreenState extends State<ChatScreen> {
           messageId,
           tr('chat.sending'),
         );
-        final status = await WebSocketService.instance.sendEnvelope(
-          _currentPeerDeviceId,
-          envelope,
-          messageId,
+        await SendQueueProcessor.instance.enqueue(
+          toDeviceId: _currentPeerDeviceId,
+          envelope: envelope,
+          deliveryId: messageId,
+          messageId: messageId,
+          peerLogin: widget.peerLogin,
         );
-        await ChatStore.updateMessageStatus(
-          widget.peerLogin,
-          messageId,
-          status,
-        );
-      });
+        }),
+      );
     } catch (e, stackTrace) {
       debugPrint('Ошибка отправки медиа $messageId: $e\n$stackTrace');
       await ChatStore.updateMessageStatus(
@@ -2671,7 +2692,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     try {
-      await SendLock.run(widget.peerLogin, () async {
+      await SendQueueProcessor.instance.runHeavy(
+        () => SendLock.run(widget.peerLogin, () async {
         final token = await Session.getToken();
         final myDeviceId = await KeyStore.getStoredDeviceId();
         final state = await _ensureSessionForSending();
@@ -2736,27 +2758,34 @@ class _ChatScreenState extends State<ChatScreen> {
             tr('chat.sending'),
           );
         }
-        final status = await WebSocketService.instance.sendEnvelope(
-          _currentPeerDeviceId,
-          envelope,
-          inner.messageId,
+        // Один конверт группы разворачивается в НЕСКОЛЬКО локальных
+        // пузырей (подпись + каждый файл) — обычный messageId/peerLogin
+        // у enqueue() бьёт только по одному id, поэтому статус всех
+        // затронутых сообщений проставляем через onAcked при реальном
+        // подтверждении, а не по одному месту.
+        await SendQueueProcessor.instance.enqueue(
+          toDeviceId: _currentPeerDeviceId,
+          envelope: envelope,
+          deliveryId: inner.messageId,
+          onAcked: () async {
+            if (textMessageId != null) {
+              await ChatStore.updateMessageStatus(
+                widget.peerLogin,
+                textMessageId,
+                'sent',
+              );
+            }
+            for (final q in items) {
+              await ChatStore.updateMessageStatus(
+                widget.peerLogin,
+                q.messageId,
+                'sent',
+              );
+            }
+          },
         );
-
-        if (textMessageId != null) {
-          await ChatStore.updateMessageStatus(
-            widget.peerLogin,
-            textMessageId,
-            status,
-          );
-        }
-        for (final q in items) {
-          await ChatStore.updateMessageStatus(
-            widget.peerLogin,
-            q.messageId,
-            status,
-          );
-        }
-      });
+        }),
+      );
     } catch (e, stackTrace) {
       debugPrint('Ошибка отправки группы: $e\n$stackTrace');
       if (textMessageId != null) {
@@ -4223,13 +4252,31 @@ class _ChatScreenState extends State<ChatScreen> {
     // всё равно уже не отдаст, а заглушка тут выглядела бы лишней.
     if (_isPeerDeleted) return textColumn;
 
-    return Row(
+    final row = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         _buildHeaderAvatar(),
         const SizedBox(width: 8),
         Flexible(child: textColumn),
       ],
+    );
+
+    // "Заметки" — это ты сам, открывать отдельный "чужой профиль" тут
+    // бессмысленно (и там нет peerAccountId в смысле, ожидаемом
+    // PeerProfileScreen/Hero-тегом ниже).
+    if (_isNotes) return row;
+
+    return InkWell(
+      onTap: () => Navigator.push(
+        context,
+        HeroZoomPageRoute(
+          builder: (_) => PeerProfileScreen(
+            peerAccountId: widget.peerAccountId,
+            peerLogin: widget.peerLogin,
+          ),
+        ),
+      ),
+      child: row,
     );
   }
 
@@ -4241,10 +4288,13 @@ class _ChatScreenState extends State<ChatScreen> {
             AvatarThumbnail(bytes: bytes, radius: 16),
       );
     }
-    return FutureBuilder<Uint8List?>(
-      future: _peerAvatarFuture,
-      builder: (context, snapshot) =>
-          AvatarThumbnail(bytes: snapshot.data, radius: 16),
+    return Hero(
+      tag: 'peer-avatar-${widget.peerAccountId}',
+      child: FutureBuilder<Uint8List?>(
+        future: _peerAvatarFuture,
+        builder: (context, snapshot) =>
+            AvatarThumbnail(bytes: snapshot.data, radius: 16),
+      ),
     );
   }
 

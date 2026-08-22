@@ -9,7 +9,7 @@ import '../session.dart';
 import '../storage/peer_account_store.dart';
 import '../storage/peer_identity_store.dart';
 import 'debug_log.dart';
-import 'websocket_service.dart';
+import 'send_queue_processor.dart';
 
 /// Отправка одного зашифрованного сообщения конкретному устройству вне
 /// контекста экрана чата (используется, например, для уведомления о
@@ -72,9 +72,9 @@ Future<void> sendPeerMessage(String peerDeviceId, InnerMessage inner) async {
     if (initHeader != null) ...initHeader,
   };
 
-  await WebSocketService.instance.sendEnvelope(
-    peerDeviceId,
-    envelope,
-    inner.messageId,
+  await SendQueueProcessor.instance.enqueue(
+    toDeviceId: peerDeviceId,
+    envelope: envelope,
+    deliveryId: inner.messageId,
   );
 }

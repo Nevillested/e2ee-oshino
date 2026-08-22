@@ -254,6 +254,18 @@ class AppStrings {
       AppLocale.ru: 'Не удалось сохранить почту',
       AppLocale.en: 'Failed to save email',
     },
+    'error.statusSaveFailed': {
+      AppLocale.ru: 'Не удалось сохранить статус',
+      AppLocale.en: 'Failed to save status',
+    },
+    'error.birthdaySaveFailed': {
+      AppLocale.ru: 'Не удалось сохранить дату рождения',
+      AppLocale.en: 'Failed to save birthday',
+    },
+    'error.privacySaveFailed': {
+      AppLocale.ru: 'Не удалось сохранить настройки приватности',
+      AppLocale.en: 'Failed to save privacy settings',
+    },
     'email.title': {
       AppLocale.ru: 'Почта для восстановления',
       AppLocale.en: 'Recovery email',
@@ -742,6 +754,73 @@ class AppStrings {
     'settings.about': {
       AppLocale.ru: 'О приложении',
       AppLocale.en: 'About the app',
+    },
+    'settings.privacy': {
+      AppLocale.ru: 'Приватность и безопасность',
+      AppLocale.en: 'Privacy and security',
+    },
+
+    'nav.chats': {AppLocale.ru: 'Чаты', AppLocale.en: 'Chats'},
+    'nav.settings': {AppLocale.ru: 'Настройки', AppLocale.en: 'Settings'},
+    'nav.profile': {AppLocale.ru: 'Профиль', AppLocale.en: 'Profile'},
+
+    'profile.title': {AppLocale.ru: 'Профиль', AppLocale.en: 'Profile'},
+    'profile.login': {AppLocale.ru: 'Логин', AppLocale.en: 'Username'},
+    'profile.status': {AppLocale.ru: 'Статус', AppLocale.en: 'Status'},
+    'profile.statusEmpty': {
+      AppLocale.ru: 'Не указан',
+      AppLocale.en: 'Not set',
+    },
+    'profile.statusHint': {
+      AppLocale.ru: 'Например: занят, на связи…',
+      AppLocale.en: 'e.g. busy, available…',
+    },
+    'profile.editStatus': {
+      AppLocale.ru: 'Изменить статус',
+      AppLocale.en: 'Edit status',
+    },
+    'profile.birthday': {
+      AppLocale.ru: 'Дата рождения',
+      AppLocale.en: 'Birthday',
+    },
+    'profile.birthdayEmpty': {
+      AppLocale.ru: 'Не указана',
+      AppLocale.en: 'Not set',
+    },
+
+    'privacy.title': {
+      AppLocale.ru: 'Приватность и безопасность',
+      AppLocale.en: 'Privacy and security',
+    },
+    'privacy.findByLogin': {
+      AppLocale.ru: 'Кто может найти меня по логину',
+      AppLocale.en: 'Who can find me by username',
+    },
+    'privacy.avatar': {
+      AppLocale.ru: 'Кто может видеть моё фото профиля',
+      AppLocale.en: 'Who can see my profile photo',
+    },
+    'privacy.birthday': {
+      AppLocale.ru: 'Кто может видеть мою дату рождения',
+      AppLocale.en: 'Who can see my birthday',
+    },
+    'privacy.status': {
+      AppLocale.ru: 'Кто видит мой статус',
+      AppLocale.en: 'Who can see my status',
+    },
+    'privacy.everyone': {AppLocale.ru: 'Все пользователи', AppLocale.en: 'Everyone'},
+    'privacy.contactsOnly': {
+      AppLocale.ru: 'Мои контакты',
+      AppLocale.en: 'My contacts',
+    },
+    'privacy.nobody': {AppLocale.ru: 'Никто', AppLocale.en: 'No one'},
+    'privacy.saved': {
+      AppLocale.ru: 'Настройки сохранены',
+      AppLocale.en: 'Settings saved',
+    },
+    'privacy.saving': {
+      AppLocale.ru: 'Сохраняем…',
+      AppLocale.en: 'Saving…',
     },
 
     'about.title': {AppLocale.ru: 'О приложении', AppLocale.en: 'About'},

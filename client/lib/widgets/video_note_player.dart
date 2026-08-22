@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import '../services/debug_log.dart';
 
 /// Проигрыватель видео-сообщения — квадрат со скруглёнными углами (у нас
 /// не кружок, как в Телеге, а именно квадрат). Тап запускает/ставит на
@@ -39,11 +40,21 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
     super.dispose();
   }
 
+  // Временное диагностическое логирование (см. обсуждение с пользователем
+  // — тестировщик прислал жалобу "второй тап не воспроизводит повторно",
+  // а прошлая попытка чинить это вслепую не помогла). Снять, когда баг
+  // будет реально понят и закрыт.
   Future<void> _toggle() async {
     final controller = _controller;
+    DebugLog.log(
+      'VideoNote _toggle() called hasController=${controller != null} '
+      'playing=$_playing loading=$_loading '
+      '${controller != null ? 'pos=${controller.value.position} dur=${controller.value.duration} isPlaying=${controller.value.isPlaying}' : ''}',
+    );
     if (controller != null) {
       if (_playing) {
         await controller.pause();
+        DebugLog.log('VideoNote _toggle() paused, setting playing=false');
         if (mounted) setState(() => _playing = false);
       } else {
         // На случай, если предыдущий _onTick ещё не успел довести до конца
@@ -52,9 +63,14 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
         // домотает до 0 и "перепрыгнет" только что начавшееся воспроизведение.
         if (controller.value.position > Duration.zero &&
             controller.value.position >= controller.value.duration) {
+          DebugLog.log('VideoNote _toggle() re-seeking to 0 before replay');
           await controller.seekTo(Duration.zero);
         }
         await controller.play();
+        DebugLog.log(
+          'VideoNote _toggle() play() called, setting playing=true '
+          'postPlay.isPlaying=${controller.value.isPlaying} postPlay.pos=${controller.value.position}',
+        );
         if (mounted) setState(() => _playing = true);
       }
       return;
@@ -76,8 +92,12 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
         _loading = false;
       });
       await newController.play();
+      DebugLog.log(
+        'VideoNote _toggle() first play, dur=${newController.value.duration}',
+      );
       if (mounted) setState(() => _playing = true);
-    } catch (_) {
+    } catch (e) {
+      DebugLog.log('VideoNote _toggle() first-play FAILED error=$e');
       if (mounted) setState(() => _loading = false);
     }
   }
@@ -87,6 +107,10 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
     if (c == null || !c.value.isInitialized) return;
     if (c.value.duration > Duration.zero &&
         c.value.position >= c.value.duration) {
+      DebugLog.log(
+        'VideoNote _onTick() end-of-video detected pos=${c.value.position} '
+        'dur=${c.value.duration} currentlyPlayingFlag=$_playing',
+      );
       await c.pause();
       // Дожидаемся реального завершения перемотки, прежде чем сообщать UI
       // "готово к повторному воспроизведению" — раньше seekTo не
@@ -94,6 +118,9 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       // закончивший перематываться в начало (видимо застревал на
       // развороте контейнера без реального рестарта видео).
       await c.seekTo(Duration.zero);
+      DebugLog.log(
+        'VideoNote _onTick() seek-to-0 done, actualPos=${c.value.position}, setting playing=false',
+      );
       if (mounted) setState(() => _playing = false);
     }
   }

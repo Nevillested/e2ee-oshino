@@ -82,6 +82,32 @@ func generateDeliveryID() string {
 	return hex.EncodeToString(buf)
 }
 
+// ackSender — подтверждает ОТПРАВИТЕЛЮ, что сервер принял на себя
+// ответственность за его исходящее сообщение (доставил живьём или
+// поставил в надёжную очередь) — симметрично уже существующему
+// ack от клиента за СЕРВЕРНЫЕ отправки (см. "ack" в readLoop ниже).
+// DeliveryId — клиентский, из самого входящего фрейма; если клиент его
+// не прислал (старая версия / control-фрейм, который в очередь не идёт),
+// просто ничего не делаем — это не ошибка, а отсутствие интереса к ack.
+func ackSender(ctx context.Context, conn *websocket.Conn, deliveryID string) {
+	if deliveryID == "" {
+		return
+	}
+	// WSMsgTo не несёт DeliveryId — собираем вручную тем же способом,
+	// что и остальные relay-структуры этого файла.
+	var withID = struct {
+		Type       string `json:"Type"`
+		DeliveryId string `json:"DeliveryId"`
+	}{Type: "ack", DeliveryId: deliveryID}
+	msgBytes, err := json.Marshal(withID)
+	if err != nil {
+		return
+	}
+	if writeErr := conn.Write(ctx, websocket.MessageText, msgBytes); writeErr != nil {
+		log.Printf("ackSender: не удалось подтвердить отправителю: %v", writeErr)
+	}
+}
+
 func respondCallUnavailable(ctx context.Context, ws_object *websocket.Conn) error {
 	var NewWSMsgTo WSMsgTo
 	NewWSMsgTo.Type = "call_unavailable"
@@ -458,13 +484,36 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 			if MessageType == "message" {
 
 				var toDeviceUUIDForBlockCheck pgtype.UUID
-				if err := toDeviceUUIDForBlockCheck.Scan(NewWSMsgFrom.ToDeviceId); err == nil &&
+				ScanErr := toDeviceUUIDForBlockCheck.Scan(NewWSMsgFrom.ToDeviceId)
+				if ScanErr == nil &&
 					isBlockedEitherWay(r.Context(), queries, toDeviceUUIDForBlockCheck, DeviceID) {
 					// Заблокировано в любую сторону — ни доставлять, ни ставить в
 					// очередь: обычный клиент и так не даёт набрать сообщение
 					// (см. композер-заглушку в chat_screen.dart), это подстраховка
 					// на случай изменённого клиента.
 					continue
+				}
+
+				// Первый обмен сообщением между двумя аккаунтами — источник
+				// записи в contacts (см. 018_contacts.sql): сервер раньше вообще
+				// не знал "кто с кем переписывается", это нужно для приватности
+				// профиля (уровень "только контакты") и прицельной доставки
+				// profile_updated. ON CONFLICT DO NOTHING — дёшево звать на
+				// каждое сообщение, не только на первое.
+				if ScanErr == nil {
+					if recipientInfo, err := queries.GetLoginByDeviceID(r.Context(), toDeviceUUIDForBlockCheck); err == nil {
+						var senderDeviceUUID pgtype.UUID
+						if err := senderDeviceUUID.Scan(DeviceID); err == nil {
+							if senderInfo, err := queries.GetLoginByDeviceID(r.Context(), senderDeviceUUID); err == nil {
+								if err := queries.UpsertContactsPair(r.Context(), db.UpsertContactsPairParams{
+									AccountID:     senderInfo.AccountID,
+									PeerAccountID: recipientInfo.AccountID,
+								}); err != nil {
+									log.Printf("ошибка записи в contacts: %v", err)
+								}
+							}
+						}
+					}
 				}
 
 				if Status == true {
@@ -486,6 +535,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						acks.Cancel(deliveryID)
 						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
 						queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, DeviceID, message, NewWSMsgFrom.Silent)
+						ackSender(r.Context(), ws_object, NewWSMsgFrom.DeliveryId)
 						continue
 					}
 
@@ -498,10 +548,17 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
 						queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, DeviceID, message, NewWSMsgFrom.Silent)
 					}
+					// В обоих случаях (доставлено живьём или поставлено в
+					// очередь) сервер принял на себя ответственность за
+					// сообщение — сообщаем ОТПРАВИТЕЛЮ (см. ackSender): это
+					// основа единой клиентской очереди отправки, раньше
+					// подтверждения в эту сторону не было вообще.
+					ackSender(r.Context(), ws_object, NewWSMsgFrom.DeliveryId)
 
 				} else {
 					log.Printf("Сообщение поставлено в очередь до тех пор, пока устройство не будет в сети")
 					queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, DeviceID, message, NewWSMsgFrom.Silent)
+					ackSender(r.Context(), ws_object, NewWSMsgFrom.DeliveryId)
 				}
 
 			} else if MessageType == "call_offer" {

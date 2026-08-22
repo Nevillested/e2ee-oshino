@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/account_actions.dart';
-import '../widgets/avatar_settings_tile.dart';
 import '../widgets/default_reaction_dialog.dart';
 import '../widgets/email_dialog.dart';
 import '../widgets/font_size_dialog.dart';
@@ -10,6 +9,7 @@ import '../widgets/language_dialog.dart';
 import '../widgets/theme_dialog.dart';
 import 'about_screen.dart';
 import 'change_password_screen.dart';
+import 'privacy_settings_screen.dart';
 
 /// Содержимое "обратной стороны" HomePlaceholderScreen (см.
 /// _buildFlippableBody там) — сам список пунктов настроек, без Scaffold и
@@ -22,7 +22,6 @@ class SettingsContent extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        const AvatarSettingsTile(),
         ListTile(
           leading: Icon(Icons.email_outlined, color: AppColors.textMuted),
           title: Text(
@@ -78,6 +77,22 @@ class SettingsContent extends StatelessWidget {
             style: TextStyle(color: AppColors.textPrimary),
           ),
           onTap: () => showFontSizeDialog(context),
+        ),
+        ListTile(
+          leading: Icon(
+            Icons.privacy_tip_outlined,
+            color: AppColors.textMuted,
+          ),
+          title: Text(
+            tr('settings.privacy'),
+            style: TextStyle(color: AppColors.textPrimary),
+          ),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const PrivacySettingsScreen(),
+            ),
+          ),
         ),
         ListTile(
           leading: Icon(Icons.info_outline, color: AppColors.textMuted),

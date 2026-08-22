@@ -9,17 +9,29 @@ import (
 )
 
 type Account struct {
-	ID              pgtype.UUID
-	Login           string
-	PasswordHash    string
-	TotpSecret      string
-	CreatedAt       pgtype.Timestamptz
-	Language        string
-	Email           pgtype.Text
-	AvatarObjectKey pgtype.Text
+	ID                    pgtype.UUID
+	Login                 string
+	PasswordHash          string
+	TotpSecret            string
+	CreatedAt             pgtype.Timestamptz
+	Language              string
+	Email                 pgtype.Text
+	AvatarObjectKey       pgtype.Text
+	StatusText            pgtype.Text
+	Birthday              pgtype.Date
+	FindByLoginVisibility int16
+	AvatarVisibility      int16
+	BirthdayVisibility    int16
+	StatusVisibility      int16
 }
 
 type ChatMute struct {
+	AccountID     pgtype.UUID
+	PeerAccountID pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
+type Contact struct {
 	AccountID     pgtype.UUID
 	PeerAccountID pgtype.UUID
 	CreatedAt     pgtype.Timestamptz

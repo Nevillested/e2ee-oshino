@@ -17,6 +17,7 @@ import '../storage/peer_identity_store.dart';
 import 'active_chat_tracker.dart';
 import 'debug_log.dart';
 import 'send_lock.dart';
+import 'send_queue_processor.dart';
 import 'sound_service.dart';
 import 'websocket_service.dart';
 
@@ -29,6 +30,7 @@ const _silentTypes = {
   'pin',
   'edit',
   'delete',
+  'clear_chat',
   'delete_chat',
   'read_receipt',
 };
@@ -352,6 +354,11 @@ class MessageRouter {
         final targetIds =
             (data['target_ids'] as List<dynamic>?)?.cast<String>() ?? const [];
         await ChatStore.deleteMessages(ownerInfo.login, targetIds);
+      } else if (inner.type == 'clear_chat') {
+        // Собеседник нажал "очистить историю" — безусловная команда стереть
+        // у себя абсолютно всё содержимое чата (см. InnerMessage.clearChat),
+        // без сверки по id. Сам чат в списке остаётся, просто пустым.
+        await ChatStore.clearHistory(ownerInfo.login);
       } else if (inner.type == 'delete_chat') {
         // Собеседник удалил у себя весь диалог с галочкой "у обоих" — у нас
         // тоже убираем сам чат из списка (см. InnerMessage.deleteChat), а не
@@ -504,10 +511,10 @@ class MessageRouter {
       'type': _sessionResetType,
       'sender_device_id': myDeviceId,
     };
-    await WebSocketService.instance.sendEnvelope(
-      toDeviceId,
-      envelope,
-      _uuid.v4(),
+    await SendQueueProcessor.instance.enqueue(
+      toDeviceId: toDeviceId,
+      envelope: envelope,
+      deliveryId: _uuid.v4(),
       silent: true,
     );
   }

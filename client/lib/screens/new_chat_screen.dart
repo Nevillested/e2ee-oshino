@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../services/avatar_cache.dart';
+import '../services/peer_profile_cache.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
 import '../l10n/app_strings.dart';
@@ -86,6 +88,13 @@ class _NewChatScreenState extends State<NewChatScreen> {
         _foundDevices = result.devices;
         _peerAccountId = result.accountId; // Запоминаем accountId
       });
+      // Профиль (статус/дата рождения) — сразу пачкой, пока пользователь
+      // ещё смотрит на результат поиска, чтобы при переходе в чат/профиль
+      // это уже лежало в кэше без лишнего сетевого похода (см. план,
+      // "prefetch при поиске").
+      unawaited(
+        PeerProfileCache.get(result.accountId, _loginController.text.trim()),
+      );
     } catch (e) {
       setState(() {
         _errorText = e.toString();

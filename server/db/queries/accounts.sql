@@ -32,3 +32,17 @@ UPDATE accounts SET totp_secret = $2 WHERE id = $1;
 
 -- name: GetAccountByEmail :one
 SELECT * FROM accounts WHERE email = $1;
+
+-- name: UpdateAccountStatus :exec
+UPDATE accounts SET status_text = $2 WHERE id = $1;
+
+-- name: UpdateAccountBirthday :exec
+UPDATE accounts SET birthday = $2 WHERE id = $1;
+
+-- name: UpdateAccountPrivacy :exec
+UPDATE accounts SET
+    find_by_login_visibility = $2,
+    avatar_visibility = $3,
+    birthday_visibility = $4,
+    status_visibility = $5
+WHERE id = $1;

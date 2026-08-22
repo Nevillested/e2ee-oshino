@@ -15,7 +15,10 @@ import '../services/local_notifications.dart';
 import '../services/message_router.dart';
 import '../services/my_avatar_store.dart';
 import '../services/my_email_store.dart';
+import '../services/my_profile_store.dart';
+import '../services/peer_profile_cache.dart';
 import '../services/pip_service.dart';
+import '../services/send_queue_processor.dart';
 import '../services/push_service.dart';
 import '../services/websocket_service.dart';
 import '../session.dart';
@@ -31,6 +34,7 @@ import '../widgets/swipe_back_page_route.dart';
 import '../widgets/theme_reactive.dart';
 import 'chat_screen.dart';
 import 'incoming_call_screen.dart';
+import 'my_profile_screen.dart';
 import 'new_chat_screen.dart';
 import 'settings_screen.dart';
 import 'welcome_screen.dart';
@@ -58,13 +62,24 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   final _webSocketService = WebSocketService.instance;
   List<ChatSummary> _entries = [];
 
-  // Настройки показываются не отдельным route, а "обратной стороной" этого
-  // же экрана — панель снизу всегда одна и та же (см. build), меняется
-  // только иконка на ней и то, что видно при развороте карточки (см.
-  // _buildFlippableBody).
-  bool _showSettings = false;
+  // Чаты/настройки/профиль — три "стороны" одного и того же экрана, не
+  // отдельные route (панель снизу всегда одна и та же, см. build), между
+  // ними переключает нижний таб-бар (см. _buildFlippableBody).
+  // 0=чаты, 1=настройки, 2=профиль.
+  int _selectedTab = 0;
+  // Направление Shared Axis перехода фиксируется в момент переключения
+  // таба (а не на каждый build — иначе не отличить "снова открыли тот
+  // же таб" от "перешли из другого") — true, если новый таб левее
+  // текущего в панели.
+  bool _transitionReverse = false;
 
-  void _toggleSettings() => setState(() => _showSettings = !_showSettings);
+  void _selectTab(int index) {
+    if (index == _selectedTab) return;
+    setState(() {
+      _transitionReverse = index < _selectedTab;
+      _selectedTab = index;
+    });
+  }
 
   @override
   void initState() {
@@ -97,12 +112,14 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
 
     _webSocketService.connect(token, deviceId);
     MessageRouter.start();
+    SendQueueProcessor.instance.start();
     ChatStore.changes.listen((_) => _refreshChats());
     PushService.init();
     unawaited(_syncMutedChats(token));
     unawaited(_syncBlockedContacts(token));
     unawaited(MyAvatarStore.init());
     unawaited(MyEmailStore.init());
+    unawaited(MyProfileStore.init());
     // Живой сигнал "кто-то поменял блокировку" (см. notifyBlockStatusChanged
     // на сервере) — без него локальный кэш обновлялся бы только при
     // следующем подключении/входе в конкретный чат, а не сразу, пока
@@ -117,6 +134,20 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     // сигнала). Своё же фото сюда не попадает — оно живёт в MyAvatarStore,
     // не в AvatarCache.
     _webSocketService.avatarChangedEvents.listen(AvatarCache.invalidate);
+    // Живой сигнал "у контакта поменялся статус/дата рождения" — в
+    // отличие от avatar_changed это НЕ broadcast, сервер шлёт только
+    // реальным контактам (см. таблицу contacts), поэтому тут просто
+    // сбрасываем кэш соответствующего поля без дополнительных проверок.
+    // avatar тоже может прийти этим же событием (Field == 'avatar') —
+    // тогда используем существующий AvatarCache, отдельный PeerProfileCache
+    // байты фото не хранит.
+    _webSocketService.profileChangedEvents.listen((event) {
+      if (event.field == 'avatar') {
+        AvatarCache.invalidate(event.accountId);
+      } else {
+        PeerProfileCache.invalidate(event.accountId);
+      }
+    });
 
     CallService.instance.startListening();
 
@@ -169,6 +200,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
       await CallRingPlugin.clearCredentials();
       MyAvatarStore.reset();
       MyEmailStore.reset();
+      MyProfileStore.reset();
       if (mounted) {
         Navigator.pushAndRemoveUntil(
           context,
@@ -387,8 +419,6 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     if (result == null || !mounted) return;
 
     if (result.alsoForPeer) {
-      final messages = await ChatStore.getMessages(entry.peerLogin);
-      final ids = messages.map((m) => m.messageId).toList();
       // Закэшированный entry.lastKnownDeviceId мог устареть (например,
       // собеседник переустановил приложение и получил новый device_id) —
       // ControlMessageSender молча проглатывает любую ошибку отправки
@@ -399,22 +429,27 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
       // откатываемся только если сам запрос не удался (например, нет сети).
       final deviceId = await _resolveCurrentDeviceId(entry);
       if (deviceId != null && deviceId.isNotEmpty) {
-        if (ids.isNotEmpty) {
-          await ControlMessageSender.send(
-            peerLogin: entry.peerLogin,
-            peerDeviceId: deviceId,
-            inner: InnerMessage.delete(targetMessageIds: ids),
-          );
-        }
-        // Для "удалить диалог" (в отличие от просто "очистить историю")
-        // собеседник должен не просто остаться с пустым чатом, а увидеть,
-        // что чат целиком пропал из его списка — см. InnerMessage.deleteChat
-        // и обработку 'delete_chat' в message_router.dart на его стороне.
+        // Раньше здесь слался список СВОИХ id (InnerMessage.delete) — но
+        // записи о звонках и подобное могли не совпасть 1:1 с тем, что
+        // реально есть у собеседника, и часть истории у него оставалась
+        // (см. фидбэк по этому багу). Теперь — один безусловный сигнал
+        // "сотри у себя всё", без сверки по id (см. InnerMessage.clearChat/
+        // .deleteChat) — получателю нечего сравнивать, поэтому проблема
+        // рассинхрона id тут в принципе не может возникнуть.
         if (alsoDeleteChat) {
+          // "Удалить диалог" — этого одного сигнала достаточно: он и
+          // стирает всё содержимое, и убирает сам чат из списка
+          // получателя (см. 'delete_chat' в message_router.dart).
           await ControlMessageSender.send(
             peerLogin: entry.peerLogin,
             peerDeviceId: deviceId,
             inner: InnerMessage.deleteChat(),
+          );
+        } else {
+          await ControlMessageSender.send(
+            peerLogin: entry.peerLogin,
+            peerDeviceId: deviceId,
+            inner: InnerMessage.clearChat(),
           );
         }
       }
@@ -458,18 +493,20 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
         MediaQuery.of(context).padding.bottom;
 
     return PopScope(
-      // На "обратной стороне" (настройки) системный back должен сначала
-      // развернуть карточку обратно к чатам, а не сразу закрывать
-      // приложение — это то же самое действие, что и тап по иконке на
-      // нижней панели.
-      canPop: !_showSettings,
+      // На "обратной стороне" (настройки/профиль) системный back должен
+      // сначала развернуть карточку обратно к чатам, а не сразу закрывать
+      // приложение — это то же самое действие, что и тап по табу чатов
+      // на нижней панели.
+      canPop: _selectedTab == 0,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        _toggleSettings();
+        _selectTab(0);
       },
       child: Scaffold(
-        appBar: _showSettings
+        appBar: _selectedTab == 1
             ? AppBar(title: Text(tr('settings.title')))
+            : _selectedTab == 2
+            ? AppBar(title: Text(tr('profile.title')))
             : AppBar(
                 title: const ConnectionStatusIndicator(),
                 centerTitle: false,
@@ -500,14 +537,22 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
               right: 0,
               bottom: 0,
               child: BottomActionBar(
-                // Иконка на панели — это иконка ДРУГОЙ, ещё не открытой
-                // стороны: находясь в чатах, показываем шестерёнку
-                // (открыть настройки), находясь в настройках — иконку
-                // чатов (вернуться).
-                icon: _showSettings
-                    ? Icons.chat_bubble_outline
-                    : Icons.settings,
-                onTap: _toggleSettings,
+                items: [
+                  BottomTabItem(
+                    icon: Icons.chat_bubble_outline,
+                    label: tr('nav.chats'),
+                  ),
+                  BottomTabItem(
+                    icon: Icons.tune,
+                    label: tr('nav.settings'),
+                  ),
+                  BottomTabItem(
+                    icon: Icons.account_circle_outlined,
+                    label: tr('nav.profile'),
+                  ),
+                ],
+                selectedIndex: _selectedTab,
+                onTabSelected: _selectTab,
               ),
             ),
           ],
@@ -518,17 +563,22 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
 
   /// Shared axis (horizontal) — из пакета animations (тот же
   /// PageTransitionSwitcher/SharedAxisTransition, что и в официальном
-  /// демо Material). "Вперёд" (открыть настройки, шестерёнка) — контент
-  /// уходит влево и уменьшается/тускнеет, новый заезжает справа; "назад"
-  /// (кнопка чатов) — ровно то же самое в обратную сторону, как настоящая
-  /// навигация вперёд/назад, а не просто взаимозаменяемый кроссфейд.
-  /// reverse завязан на _showSettings по той же схеме, что и в демо-примере
-  /// (там — на _isLoggedIn): именно В МОМЕНТ переключения этого флага решает
-  /// направление проигрываемого перехода.
+  /// демо Material), теперь на 3 таба вместо 2 — направление берётся из
+  /// _transitionReverse, зафиксированного в момент переключения таба
+  /// (см. _selectTab), а не пересчитывается на каждый build.
   Widget _buildFlippableBody() {
+    final Widget child;
+    switch (_selectedTab) {
+      case 1:
+        child = const SettingsContent();
+      case 2:
+        child = const MyProfileContent();
+      default:
+        child = _buildChatList();
+    }
     return PageTransitionSwitcher(
       duration: const Duration(milliseconds: 400),
-      reverse: !_showSettings,
+      reverse: _transitionReverse,
       transitionBuilder: (child, animation, secondaryAnimation) {
         return SharedAxisTransition(
           animation: animation,
@@ -538,10 +588,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
           child: child,
         );
       },
-      child: KeyedSubtree(
-        key: ValueKey(_showSettings),
-        child: _showSettings ? const SettingsContent() : _buildChatList(),
-      ),
+      child: KeyedSubtree(key: ValueKey(_selectedTab), child: child),
     );
   }
 
