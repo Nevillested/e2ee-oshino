@@ -88,7 +88,10 @@ class _MyProfileContentState extends State<MyProfileContent> {
     }
     final action = await showModalBottomSheet<_AvatarAction>(
       context: context,
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (context) => const _ProfileAvatarActionSheet(),
     );
     if (!mounted) return;
@@ -141,10 +144,7 @@ class _MyProfileContentState extends State<MyProfileContent> {
               ),
               const SizedBox(height: 24),
               ListTile(
-                leading: Icon(
-                  Icons.badge_outlined,
-                  color: AppColors.textMuted,
-                ),
+                leading: Icon(Icons.badge_outlined, color: AppColors.textMuted),
                 title: Text(
                   tr('profile.login'),
                   style: TextStyle(color: AppColors.textPrimary),
@@ -234,15 +234,14 @@ class _MyProfileContentState extends State<MyProfileContent> {
     // retryUntilSuccess — при сбое сети пробует снова, а не молча
     // теряет изменение).
     unawaited(
-      retryUntilSuccess(() => ApiClient().updateStatus(token, newStatus))
-          .then((_) => MyProfileStore.setStatus(newStatus)),
+      retryUntilSuccess(
+        () => ApiClient().updateStatus(token, newStatus),
+      ).then((_) => MyProfileStore.setStatus(newStatus)),
     );
   }
 
   Future<void> _editBirthday(BuildContext context, String? current) async {
-    final initial = current != null
-        ? DateTime.tryParse(current)
-        : null;
+    final initial = current != null ? DateTime.tryParse(current) : null;
     final picked = await showDatePicker(
       context: context,
       initialDate: initial ?? DateTime(2000),
@@ -258,8 +257,9 @@ class _MyProfileContentState extends State<MyProfileContent> {
     final token = await Session.getToken();
     if (token == null) return;
     unawaited(
-      retryUntilSuccess(() => ApiClient().updateBirthday(token, formatted))
-          .then((_) => MyProfileStore.setBirthday(formatted)),
+      retryUntilSuccess(
+        () => ApiClient().updateBirthday(token, formatted),
+      ).then((_) => MyProfileStore.setBirthday(formatted)),
     );
   }
 }
@@ -276,44 +276,47 @@ class _ProfileAvatarActionSheet extends StatelessWidget {
       onVerticalDragEnd: (details) {
         if ((details.primaryVelocity ?? 0) > 200) Navigator.pop(context);
       },
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 8),
-              ListTile(
-                leading: Icon(Icons.visibility_outlined, color: AppColors.primary),
-                title: Text(
-                  tr('settings.avatarView'),
-                  style: TextStyle(color: AppColors.textPrimary),
-                ),
-                onTap: () => Navigator.pop(context, _AvatarAction.view),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            ListTile(
+              leading: Icon(
+                Icons.visibility_outlined,
+                color: AppColors.primary,
               ),
-              ListTile(
-                leading: Icon(Icons.photo_camera_outlined, color: AppColors.primary),
-                title: Text(
-                  tr('settings.avatarChange'),
-                  style: TextStyle(color: AppColors.textPrimary),
-                ),
-                onTap: () => Navigator.pop(context, _AvatarAction.change),
+              title: Text(
+                tr('settings.avatarView'),
+                style: TextStyle(color: AppColors.textPrimary),
               ),
-              ListTile(
-                leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                title: Text(
-                  tr('settings.avatarRemove'),
-                  style: const TextStyle(color: Colors.redAccent),
-                ),
-                onTap: () => Navigator.pop(context, _AvatarAction.remove),
+              onTap: () => Navigator.pop(context, _AvatarAction.view),
+            ),
+            ListTile(
+              leading: Icon(
+                Icons.photo_camera_outlined,
+                color: AppColors.primary,
               ),
-              const SizedBox(height: 4),
-            ],
-          ),
+              title: Text(
+                tr('settings.avatarChange'),
+                style: TextStyle(color: AppColors.textPrimary),
+              ),
+              onTap: () => Navigator.pop(context, _AvatarAction.change),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.delete_outline,
+                color: Colors.redAccent,
+              ),
+              title: Text(
+                tr('settings.avatarRemove'),
+                style: const TextStyle(color: Colors.redAccent),
+              ),
+              onTap: () => Navigator.pop(context, _AvatarAction.remove),
+            ),
+            const SizedBox(height: 4),
+          ],
         ),
       ),
     );

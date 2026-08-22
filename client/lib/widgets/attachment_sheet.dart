@@ -8,7 +8,17 @@ enum AttachmentPickType { gallery, camera, file }
 Future<AttachmentPickType?> showAttachmentSheet(BuildContext context) {
   return showModalBottomSheet<AttachmentPickType>(
     context: context,
-    backgroundColor: Colors.transparent,
+    // backgroundColor/shape — НЕ Colors.transparent + свой Container с
+    // BoxDecoration: тот подход рисует настоящий цветной фон, но не даёт
+    // потомкам (ListTile/InkWell) подходящей Material-поверхности для
+    // подсветки нажатия — framework пишет в консоль "background color or
+    // ink splashes may be invisible". Через собственные параметры
+    // showModalBottomSheet framework сам создаёт непрозрачный Material
+    // нужной формы, и это работает штатно.
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    ),
     builder: (context) {
       return GestureDetector(
         onVerticalDragEnd: (details) {
@@ -16,46 +26,40 @@ Future<AttachmentPickType?> showAttachmentSheet(BuildContext context) {
             Navigator.pop(context);
           }
         },
-        child: Container(
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-          ),
-          child: SafeArea(
-            top: false,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final tileSize = constraints.maxWidth / 3;
-                return SizedBox(
-                  height: tileSize,
-                  child: Row(
-                    children: [
-                      _tile(
-                        context,
-                        tileSize,
-                        Icons.photo_library,
-                        'Галерея',
-                        AttachmentPickType.gallery,
-                      ),
-                      _tile(
-                        context,
-                        tileSize,
-                        Icons.camera_alt,
-                        'Камера',
-                        AttachmentPickType.camera,
-                      ),
-                      _tile(
-                        context,
-                        tileSize,
-                        Icons.insert_drive_file,
-                        'Файл',
-                        AttachmentPickType.file,
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
+        child: SafeArea(
+          top: false,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final tileSize = constraints.maxWidth / 3;
+              return SizedBox(
+                height: tileSize,
+                child: Row(
+                  children: [
+                    _tile(
+                      context,
+                      tileSize,
+                      Icons.photo_library,
+                      'Галерея',
+                      AttachmentPickType.gallery,
+                    ),
+                    _tile(
+                      context,
+                      tileSize,
+                      Icons.camera_alt,
+                      'Камера',
+                      AttachmentPickType.camera,
+                    ),
+                    _tile(
+                      context,
+                      tileSize,
+                      Icons.insert_drive_file,
+                      'Файл',
+                      AttachmentPickType.file,
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
         ),
       );

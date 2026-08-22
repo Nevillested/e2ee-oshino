@@ -67,6 +67,15 @@ class _CachedAvatarImageState extends State<CachedAvatarImage> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      AvatarThumbnail(bytes: _bytes, radius: widget.radius);
+  Widget build(BuildContext context) => ClipOval(
+    // Явное обрезание по кругу поверх и без того круглого CircleAvatar —
+    // защита конкретно для Hero-полёта (см. peer_avatar Hero в
+    // chat_screen.dart/peer_profile_screen.dart): во время анимации между
+    // сильно разными размерами (radius 16 → 64) на долю секунды был виден
+    // прямоугольный "хвост" непроклипованного кадра позади уже видимого
+    // круга. ClipOval гарантирует, что за пределы круга ничего не
+    // просочится вообще, независимо от того, что там происходит внутри
+    // во время перелёта.
+    child: AvatarThumbnail(bytes: _bytes, radius: widget.radius),
+  );
 }

@@ -17,12 +17,34 @@ class HeroZoomPageRoute<T> extends PageRouteBuilder<T> {
         pageBuilder: (context, animation, secondaryAnimation) =>
             builder(context),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return SharedAxisTransition(
-            animation: animation,
-            secondaryAnimation: secondaryAnimation,
-            transitionType: SharedAxisTransitionType.scaled,
-            fillColor: AppColors.background,
-            child: child,
+          // fillColor у SharedAxisTransition сам по себе не спасает —
+          // непрозрачность ВСЕГО контента (включая этот фон) ramp'ится с
+          // той же скоростью, что и остальная анимация (масштаб/fade), то
+          // есть довольно медленно. Всё это время старый экран (шапка
+          // чата) виден СКВОЗЬ ещё полупрозрачный новый — именно это
+          // пользователь видел как мелькающий "прямоугольник" (на самом
+          // деле — старая шапка чата, просвечивающая позади). Отдельный
+          // фон, который сам доходит до непрозрачности практически сразу
+          // (за первые ~15% длительности), перекрывает старый экран рано,
+          // пока Hero и масштабирование продолжают анимироваться уже
+          // поверх сплошного фона.
+          return Stack(
+            children: [
+              FadeTransition(
+                opacity: CurvedAnimation(
+                  parent: animation,
+                  curve: const Interval(0.0, 0.15),
+                ),
+                child: ColoredBox(color: AppColors.background),
+              ),
+              SharedAxisTransition(
+                animation: animation,
+                secondaryAnimation: secondaryAnimation,
+                transitionType: SharedAxisTransitionType.scaled,
+                fillColor: Colors.transparent,
+                child: child,
+              ),
+            ],
           );
         },
         transitionDuration: const Duration(milliseconds: 350),

@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
-import 'avatar_settings_tile.dart';
 
 class BottomTabItem {
   final IconData? icon;
@@ -80,19 +79,26 @@ class BottomActionBar extends StatelessWidget {
     final selected = i == selectedIndex;
     final color = selected ? AppColors.primary : AppColors.textPrimary;
 
+    // И фото, и заглушка — ровно 20px, вплотную к размеру обычных иконок
+    // (Icon(size: 20) у "Чаты"/"Настройки") — раньше кружок был 30px
+    // (radius: 15) при иконке-человечке всего 15px внутри него, из-за
+    // этой рассинхронизации высот именно капсула профиля получалась
+    // выше и потому визуально крупнее остальных (ширина у всех и так
+    // одинаковая, см. buttonSize), а сама заглушка внутри — мельче.
+    const leadingSize = 20.0;
     final Widget leading;
     if (item.avatar != null) {
       leading = ValueListenableBuilder<Uint8List?>(
         valueListenable: item.avatar!,
-        builder: (context, bytes, _) => AvatarThumbnail(
-          bytes: bytes,
-          radius: 15,
-          placeholderColor: color,
-          placeholderBackground: Colors.transparent,
-        ),
+        builder: (context, bytes, _) => bytes != null
+            ? CircleAvatar(
+                radius: leadingSize / 2,
+                backgroundImage: MemoryImage(bytes),
+              )
+            : Icon(Icons.person_outline, size: leadingSize, color: color),
       );
     } else {
-      leading = Icon(item.icon, size: 20, color: color);
+      leading = Icon(item.icon, size: leadingSize, color: color);
     }
 
     return InkWell(

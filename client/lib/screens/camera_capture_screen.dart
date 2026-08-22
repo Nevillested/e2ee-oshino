@@ -92,7 +92,13 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
         // под ней) ложится ПОВЕРХ фото, а не сдвигает/сжимает его: сама
         // картинка остаётся на месте целиком, независимо от того, открыта
         // сейчас клавиатура, эмодзи-панель или ничего.
+        //
+        // bottom: false — CaptionInputBar теперь сама учитывает системный
+        // отступ до жестовой/3-кнопочной зоны (см. её собственный
+        // комментарий про systemBottomInset) — с обычным SafeArea(bottom:
+        // true) этот отступ задвоился бы.
         body: SafeArea(
+          bottom: false,
           child: Stack(
             children: [
               Positioned.fill(

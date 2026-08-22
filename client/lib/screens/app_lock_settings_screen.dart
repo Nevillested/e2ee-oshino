@@ -74,7 +74,10 @@ class _AppLockSettingsScreenState extends State<AppLockSettingsScreen> {
     }
     final action = await showModalBottomSheet<_PinAction>(
       context: context,
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (context) => const _PinActionSheet(),
     );
     if (!mounted || action == null) return;
@@ -94,7 +97,10 @@ class _AppLockSettingsScreenState extends State<AppLockSettingsScreen> {
     final current = AppLockStore.notifier.value.timeoutSeconds;
     final picked = await showModalBottomSheet<int>(
       context: context,
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (context) => _TimeoutSheet(current: current),
     );
     if (picked != null) {
@@ -143,7 +149,10 @@ class _AppLockSettingsScreenState extends State<AppLockSettingsScreen> {
               ),
               const Divider(height: 24),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
                 child: Text(
                   tr('applock.unlockMethod'),
                   style: TextStyle(
@@ -212,36 +221,33 @@ class _PinActionSheet extends StatelessWidget {
       onVerticalDragEnd: (details) {
         if ((details.primaryVelocity ?? 0) > 200) Navigator.pop(context);
       },
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 8),
-              ListTile(
-                leading: Icon(Icons.edit_outlined, color: AppColors.primary),
-                title: Text(
-                  tr('applock.changePin'),
-                  style: TextStyle(color: AppColors.textPrimary),
-                ),
-                onTap: () => Navigator.pop(context, _PinAction.change),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            ListTile(
+              leading: Icon(Icons.edit_outlined, color: AppColors.primary),
+              title: Text(
+                tr('applock.changePin'),
+                style: TextStyle(color: AppColors.textPrimary),
               ),
-              ListTile(
-                leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                title: Text(
-                  tr('applock.removePin'),
-                  style: const TextStyle(color: Colors.redAccent),
-                ),
-                onTap: () => Navigator.pop(context, _PinAction.remove),
+              onTap: () => Navigator.pop(context, _PinAction.change),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.delete_outline,
+                color: Colors.redAccent,
               ),
-              const SizedBox(height: 4),
-            ],
-          ),
+              title: Text(
+                tr('applock.removePin'),
+                style: const TextStyle(color: Colors.redAccent),
+              ),
+              onTap: () => Navigator.pop(context, _PinAction.remove),
+            ),
+            const SizedBox(height: 4),
+          ],
         ),
       ),
     );
@@ -259,21 +265,16 @@ class _TimeoutSheet extends StatelessWidget {
       onVerticalDragEnd: (details) {
         if ((details.primaryVelocity ?? 0) > 200) Navigator.pop(context);
       },
-      child: Container(
-        // 9 вариантов ощутимо выше многих экранов целиком — Column с
-        // mainAxisSize.min тут не спасает (это ограничивает только
-        // МИНИМАЛЬНЫЙ размер, а не максимальный): содержимое просто
-        // вылезало за пределы модалки и рисовало debug-индикатор
-        // переполнения (чёрно-жёлтая полоска на скрине пользователя).
-        // ListView сам умеет прокручиваться внутри ограниченной высоты,
-        // которую даёт showModalBottomSheet, вместо того чтобы вылезать
-        // за неё.
+      // 9 вариантов ощутимо выше многих экранов целиком — Column с
+      // mainAxisSize.min тут не спасает (это ограничивает только
+      // МИНИМАЛЬНЫЙ размер, а не максимальный): содержимое просто вылезало
+      // за пределы модалки и рисовало debug-индикатор переполнения
+      // (чёрно-жёлтая полоска на скрине пользователя). ListView сам умеет
+      // прокручиваться внутри ограниченной высоты — ConstrainedBox её
+      // задаёт вместо того, чтобы дать содержимому вылезти за неё.
+      child: ConstrainedBox(
         constraints: BoxConstraints(
           maxHeight: MediaQuery.of(context).size.height * 0.7,
-        ),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
         ),
         child: SafeArea(
           top: false,
