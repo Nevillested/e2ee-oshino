@@ -9,7 +9,7 @@ import android.os.Bundle
 import android.util.Log
 import android.util.Rational
 import android.view.WindowManager
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
@@ -36,7 +36,14 @@ private const val EXTRA_OPEN_CALL_SCREEN = "oshinobu.OPEN_CALL_SCREEN"
 // ЖИВОЙ движок из кэша и зовёт его напрямую.
 private const val MAIN_ENGINE_ID = "main_engine"
 
-class MainActivity : FlutterActivity() {
+// FlutterFragmentActivity (не обычная FlutterActivity) — обязательное
+// требование local_auth на Android: системный BiometricPrompt (отпечаток/
+// распознавание лица, см. app_lock_store.dart) работает только через
+// androidx.biometric, которому нужна именно FragmentActivity. Все уже
+// переопределённые здесь методы (PiP/кэш движка/звонки) без изменений —
+// FlutterFragmentActivity реализует тот же Flutter-embedding интерфейс,
+// это дроп-ин замена базового класса.
+class MainActivity : FlutterFragmentActivity() {
     // Держим свой канал, чтобы слать pipModeChanged из onPictureInPictureModeChanged
     // без повторного создания MethodChannel на лету.
     private var pipChannel: MethodChannel? = null

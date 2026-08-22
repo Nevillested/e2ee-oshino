@@ -62,6 +62,7 @@ dependencies:
   animations: ^2.0.11
   package_info_plus: ^8.3.0
   share_plus: ^10.1.4
+  local_auth: ^2.3.0
   call_ring_plugin:
     path: packages/call_ring_plugin
 dev_dependencies:

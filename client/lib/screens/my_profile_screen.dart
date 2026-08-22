@@ -1,22 +1,114 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
+import '../services/my_avatar_store.dart';
 import '../services/my_profile_store.dart';
 import '../services/retry_until_success.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_settings_tile.dart';
+import '../widgets/photo_viewer_screen.dart';
 import '../widgets/theme_reactive.dart';
 
 /// Содержимое таба "Профиль" — своё фото/логин/статус/дата рождения.
 /// Как и SettingsContent, рендерится БЕЗ своего Scaffold/AppBar — те
-/// общие с остальными табами, см. HomePlaceholderScreen.
-class MyProfileContent extends StatelessWidget {
+/// общие с остальными табами, см. HomePlaceholderScreen (для этого таба
+/// AppBar вообще не показывается, надпись "Профиль" была бессмысленным
+/// дублированием таба снизу).
+class MyProfileContent extends StatefulWidget {
   const MyProfileContent({super.key});
 
   @override
+  State<MyProfileContent> createState() => _MyProfileContentState();
+}
+
+enum _AvatarAction { view, change, remove }
+
+class _MyProfileContentState extends State<MyProfileContent> {
+  bool _uploading = false;
+
+  Future<void> _pickAndUpload() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 512,
+      maxHeight: 512,
+      imageQuality: 85,
+    );
+    if (picked == null) return;
+
+    final bytes = await picked.readAsBytes();
+    final token = await Session.getToken();
+    if (token == null) return;
+
+    setState(() => _uploading = true);
+    try {
+      await ApiClient().uploadAvatar(token, bytes);
+      MyAvatarStore.setUploaded(bytes);
+      if (!mounted) return;
+      setState(() => _uploading = false);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _uploading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('settings.avatarUploadFailed'))),
+      );
+    }
+  }
+
+  Future<void> _removeAvatar() async {
+    final token = await Session.getToken();
+    if (token == null) return;
+
+    setState(() => _uploading = true);
+    try {
+      await ApiClient().deleteAvatar(token);
+      MyAvatarStore.setRemoved();
+      if (!mounted) return;
+      setState(() => _uploading = false);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _uploading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('settings.avatarUploadFailed'))),
+      );
+    }
+  }
+
+  Future<void> _onAvatarTap() async {
+    final currentBytes = MyAvatarStore.notifier.value;
+    if (currentBytes == null) {
+      // Фото ещё нет — тут показывать нечего и удалять нечего, сразу в
+      // галерею, как и раньше вело себя AvatarSettingsTile.
+      await _pickAndUpload();
+      return;
+    }
+    final action = await showModalBottomSheet<_AvatarAction>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const _ProfileAvatarActionSheet(),
+    );
+    if (!mounted) return;
+    switch (action) {
+      case _AvatarAction.view:
+        showPhotoViewer(context, currentBytes);
+      case _AvatarAction.change:
+        await _pickAndUpload();
+      case _AvatarAction.remove:
+        await _removeAvatar();
+      case null:
+        break;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // 40% ширины экрана — ровно так, как попросили, плюс небольшой отступ
+    // сверху, чтобы кружок не упирался в статус-бар/чёлку.
+    final avatarDiameter = MediaQuery.of(context).size.width * 0.4;
     return ThemeReactive(
       builder: (context) => ValueListenableBuilder<MyProfile?>(
         valueListenable: MyProfileStore.notifier,
@@ -25,8 +117,29 @@ class MyProfileContent extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
           return ListView(
+            padding: EdgeInsets.only(
+              top: MediaQuery.of(context).padding.top + 24,
+            ),
             children: [
-              const AvatarSettingsTile(),
+              Center(
+                child: GestureDetector(
+                  onTap: _uploading ? null : _onAvatarTap,
+                  child: SizedBox(
+                    width: avatarDiameter,
+                    height: avatarDiameter,
+                    child: _uploading
+                        ? const Center(child: CircularProgressIndicator())
+                        : ValueListenableBuilder<Uint8List?>(
+                            valueListenable: MyAvatarStore.notifier,
+                            builder: (context, bytes, _) => AvatarThumbnail(
+                              bytes: bytes,
+                              radius: avatarDiameter / 2,
+                            ),
+                          ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
               ListTile(
                 leading: Icon(
                   Icons.badge_outlined,
@@ -147,6 +260,62 @@ class MyProfileContent extends StatelessWidget {
     unawaited(
       retryUntilSuccess(() => ApiClient().updateBirthday(token, formatted))
           .then((_) => MyProfileStore.setBirthday(formatted)),
+    );
+  }
+}
+
+/// Просмотр / Изменить / Удалить — именно в этом порядке (см. ТЗ
+/// пользователя). Показывается, только если фото уже есть (см.
+/// _onAvatarTap выше — без фото сразу открывается галерея).
+class _ProfileAvatarActionSheet extends StatelessWidget {
+  const _ProfileAvatarActionSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onVerticalDragEnd: (details) {
+        if ((details.primaryVelocity ?? 0) > 200) Navigator.pop(context);
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              ListTile(
+                leading: Icon(Icons.visibility_outlined, color: AppColors.primary),
+                title: Text(
+                  tr('settings.avatarView'),
+                  style: TextStyle(color: AppColors.textPrimary),
+                ),
+                onTap: () => Navigator.pop(context, _AvatarAction.view),
+              ),
+              ListTile(
+                leading: Icon(Icons.photo_camera_outlined, color: AppColors.primary),
+                title: Text(
+                  tr('settings.avatarChange'),
+                  style: TextStyle(color: AppColors.textPrimary),
+                ),
+                onTap: () => Navigator.pop(context, _AvatarAction.change),
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                title: Text(
+                  tr('settings.avatarRemove'),
+                  style: const TextStyle(color: Colors.redAccent),
+                ),
+                onTap: () => Navigator.pop(context, _AvatarAction.remove),
+              ),
+              const SizedBox(height: 4),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

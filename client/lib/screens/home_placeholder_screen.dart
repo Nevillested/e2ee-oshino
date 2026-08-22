@@ -557,10 +557,15 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
         _selectTab(0);
       },
       child: Scaffold(
+        // На табе "Профиль" AppBar намеренно отсутствует — крупный кружок
+        // с фото и так сам по себе явно даёт понять, где мы, а надпись
+        // "Профиль" сверху была лишним дублированием таба снизу (см. ТЗ
+        // пользователя). Отступ сверху за него берёт на себя сам
+        // MyProfileContent (MediaQuery.padding.top + 24).
         appBar: _selectedTab == 1
             ? AppBar(title: Text(tr('settings.title')))
             : _selectedTab == 2
-            ? AppBar(title: Text(tr('profile.title')))
+            ? null
             : AppBar(
                 title: const ConnectionStatusIndicator(),
                 centerTitle: false,

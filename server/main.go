@@ -100,7 +100,7 @@ func main() {
 	mux.HandleFunc("GET /account/avatar/{account_id}", api.NewGetAvatarHandler(queries, minioClient))
 	mux.HandleFunc("PUT /account/status", api.NewUpdateStatusHandler(queries, registry))
 	mux.HandleFunc("PUT /account/birthday", api.NewUpdateBirthdayHandler(queries, registry))
-	mux.HandleFunc("PUT /account/privacy", api.NewUpdatePrivacyHandler(queries))
+	mux.HandleFunc("PUT /account/privacy", api.NewUpdatePrivacyHandler(queries, registry))
 	mux.HandleFunc("GET /account/profile/{login}", api.NewGetAccountProfileHandler(queries))
 	mux.HandleFunc("POST /chats/mute", api.NewMuteChatHandler(queries))
 	mux.HandleFunc("POST /chats/unmute", api.NewUnmuteChatHandler(queries))

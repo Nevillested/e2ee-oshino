@@ -58,7 +58,8 @@ class BottomActionBar extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (var i = 0; i < items.length; i++) _buildItem(i),
+                  for (var i = 0; i < items.length; i++)
+                    _buildItem(i, _maxLabelWidth()),
                 ],
               ),
             ),
@@ -68,7 +69,28 @@ class BottomActionBar extends StatelessWidget {
     );
   }
 
-  Widget _buildItem(int i) {
+  // Одинаковая ширина подсветки под всеми кнопками (см. ТЗ пользователя —
+  // раньше каждая была по ширине своей подписи, "Настройки"/"Profile"
+  // ощутимо шире "Чаты"/"Chats"). Меряем по САМОМУ жирному начертанию
+  // (w600, как у выбранного таба) — оно чуть шире обычного, так подсветка
+  // никогда не окажется теснее текста, когда именно этот таб станет
+  // активным.
+  double _maxLabelWidth() {
+    var max = 0.0;
+    for (final item in items) {
+      final painter = TextPainter(
+        text: TextSpan(
+          text: item.label,
+          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      if (painter.width > max) max = painter.width;
+    }
+    return max;
+  }
+
+  Widget _buildItem(int i, double labelWidth) {
     final item = items[i];
     final selected = i == selectedIndex;
     final color = selected ? AppColors.primary : AppColors.textPrimary;
@@ -102,20 +124,24 @@ class BottomActionBar extends StatelessWidget {
               : Colors.transparent,
           borderRadius: BorderRadius.circular(999),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            leading,
-            const SizedBox(height: 2),
-            Text(
-              item.label,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                color: color,
+        child: SizedBox(
+          width: labelWidth,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              leading,
+              const SizedBox(height: 2),
+              Text(
+                item.label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                  color: color,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

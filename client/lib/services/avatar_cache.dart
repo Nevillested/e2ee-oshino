@@ -119,9 +119,17 @@ class AvatarCache {
   }
 
   static Future<void> _writeToDisk(String accountId, Uint8List? bytes) async {
-    if (bytes == null || bytes.isEmpty) return;
     try {
       final file = await _diskFileFor(accountId);
+      if (bytes == null || bytes.isEmpty) {
+        // Фото легитимно пропало (скрыли приватностью/удалили) — если тут
+        // молча ничего не делать, старый файл на диске переживёт даже
+        // перезапуск процесса: следующий холодный старт get() прочтёт ЕГО
+        // раньше, чем успеет долететь фоновый рефреш, и на секунду покажет
+        // то самое фото, которое как раз скрыли.
+        if (await file.exists()) await file.delete();
+        return;
+      }
       await file.writeAsBytes(bytes);
     } catch (_) {
       // Диск переполнен/недоступен на запись — не критично, просто в

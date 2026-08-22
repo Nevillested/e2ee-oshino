@@ -119,10 +119,16 @@ func validVisibility(v int16, allowContactsOnly bool) bool {
 }
 
 // NewUpdatePrivacyHandler — PUT /account/privacy, все 4 значения одним
-// запросом (одна кнопка "Сохранить" на клиенте) — намеренно не шлём
-// никакого profile_updated по самому факту смены приватности, только
-// когда реально меняются сами данные (status/birthday/avatar).
-func NewUpdatePrivacyHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
+// запросом (одна кнопка "Сохранить" на клиенте). find_by_login — просто
+// пишется в базу, рассылать тут нечего (это влияет только на будущий
+// поиск, у уже существующих контактов ничего не закэшировано). А вот для
+// avatar/birthday/status, если их видимость реально поменялась (в любую
+// сторону — и когда поле стало видно, и когда его наоборот скрыли), уже
+// существующие контакты уведомляются тем же profile_updated, что и при
+// смене самих данных — именно так их клиент узнаёт, что нужно перезапросить
+// (и в случае "скрыли" — вычистить у себя из кэша то, что видеть больше не
+// должен, см. notifyContactsProfileField ниже).
+func NewUpdatePrivacyHandler(queries *db.Queries, registry *ConnectionRegistry) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var Session, err = CheckToken(w, r, queries)
 		if err != nil {
@@ -143,6 +149,12 @@ func NewUpdatePrivacyHandler(queries *db.Queries) func(http.ResponseWriter, *htt
 			return
 		}
 
+		var Old, OldErr = queries.GetAccountByID(r.Context(), Session.AccountID)
+		if OldErr != nil {
+			http.Error(w, "Ошибка чтения текущих настроек", http.StatusInternalServerError)
+			return
+		}
+
 		var SqlErr = queries.UpdateAccountPrivacy(r.Context(), db.UpdateAccountPrivacyParams{
 			ID:                    Session.AccountID,
 			FindByLoginVisibility: Req.FindByLogin,
@@ -153,6 +165,16 @@ func NewUpdatePrivacyHandler(queries *db.Queries) func(http.ResponseWriter, *htt
 		if SqlErr != nil {
 			http.Error(w, "Ошибка сохранения настроек приватности", http.StatusInternalServerError)
 			return
+		}
+
+		if Old.AvatarVisibility != Req.Avatar {
+			notifyContactsProfileField(r.Context(), queries, registry, Session.AccountID, "avatar")
+		}
+		if Old.BirthdayVisibility != Req.Birthday {
+			notifyContactsProfileField(r.Context(), queries, registry, Session.AccountID, "birthday")
+		}
+		if Old.StatusVisibility != Req.Status {
+			notifyContactsProfileField(r.Context(), queries, registry, Session.AccountID, "status")
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -280,9 +302,17 @@ func notifyProfileUpdatedIfVisible(ctx context.Context, queries *db.Queries, reg
 		return
 	}
 
+	notifyContactsProfileField(ctx, queries, registry, accountID, field)
+}
+
+// notifyContactsProfileField — сама рассылка, без проверки видимости (её,
+// если нужно, делает вызывающая сторона: notifyProfileUpdatedIfVisible —
+// перед отправкой новых данных, NewUpdatePrivacyHandler — нет, там сигнал
+// нужен именно ПРИ смене видимости, включая переход в "скрыто").
+func notifyContactsProfileField(ctx context.Context, queries *db.Queries, registry *ConnectionRegistry, accountID pgtype.UUID, field string) {
 	contactIDs, err := queries.GetContactAccountIDs(ctx, accountID)
 	if err != nil {
-		log.Printf("notifyProfileUpdatedIfVisible: не удалось получить контакты: %v", err)
+		log.Printf("notifyContactsProfileField: не удалось получить контакты: %v", err)
 		return
 	}
 
@@ -304,7 +334,7 @@ func notifyProfileUpdatedIfVisible(ctx context.Context, queries *db.Queries, reg
 			conn, online := registry.Get(device.ID.String())
 			if online {
 				if writeErr := conn.Write(ctx, websocket.MessageText, msgBytes); writeErr != nil {
-					log.Printf("notifyProfileUpdatedIfVisible: ошибка отправки устройству, ставим в очередь: %v", writeErr)
+					log.Printf("notifyContactsProfileField: ошибка отправки устройству, ставим в очередь: %v", writeErr)
 					online = false
 				}
 			}
@@ -313,7 +343,7 @@ func notifyProfileUpdatedIfVisible(ctx context.Context, queries *db.Queries, reg
 					ToDeviceID: device.ID,
 					Ciphertext: string(msgBytes),
 				}); saveErr != nil {
-					log.Printf("notifyProfileUpdatedIfVisible: не удалось поставить сигнал в очередь: %v", saveErr)
+					log.Printf("notifyContactsProfileField: не удалось поставить сигнал в очередь: %v", saveErr)
 				}
 			}
 		}

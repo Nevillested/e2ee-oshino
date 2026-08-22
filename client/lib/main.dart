@@ -5,6 +5,7 @@ import 'storage/locale_store.dart';
 import 'storage/text_scale_store.dart';
 import 'storage/theme_store.dart';
 import 'theme/app_theme.dart';
+import 'widgets/app_lock_gate.dart';
 import 'widgets/system_pip_video_view.dart';
 
 void main() {
@@ -58,11 +59,13 @@ class _AppState extends State<_App> {
               data: MediaQuery.of(context).copyWith(
                 textScaler: TextScaler.linear(TextScaleStore.notifier.value),
               ),
-              child: Stack(
-                children: [
-                  if (child != null) child,
-                  const SystemPipVideoView(),
-                ],
+              child: AppLockGate(
+                child: Stack(
+                  children: [
+                    if (child != null) child,
+                    const SystemPipVideoView(),
+                  ],
+                ),
               ),
             );
           },

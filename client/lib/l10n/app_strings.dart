@@ -743,6 +743,10 @@ class AppStrings {
       AppLocale.ru: 'Удалить фото',
       AppLocale.en: 'Remove photo',
     },
+    'settings.avatarView': {
+      AppLocale.ru: 'Просмотр',
+      AppLocale.en: 'View',
+    },
     'settings.email': {
       AppLocale.ru: 'Почта для восстановления',
       AppLocale.en: 'Recovery email',
@@ -822,6 +826,98 @@ class AppStrings {
       AppLocale.ru: 'Сохраняем…',
       AppLocale.en: 'Saving…',
     },
+
+    'settings.appLock': {
+      AppLocale.ru: 'Вход в приложение',
+      AppLocale.en: 'App lock',
+    },
+    'applock.title': {
+      AppLocale.ru: 'Вход в приложение',
+      AppLocale.en: 'App lock',
+    },
+    'applock.status': {AppLocale.ru: 'Статус', AppLocale.en: 'Status'},
+    'applock.on': {AppLocale.ru: 'Включено', AppLocale.en: 'On'},
+    'applock.off': {AppLocale.ru: 'Выключено', AppLocale.en: 'Off'},
+    'applock.timeout': {
+      AppLocale.ru: 'Время срабатывания блокировки',
+      AppLocale.en: 'Lock after',
+    },
+    'applock.unlockMethod': {
+      AppLocale.ru: 'Тип разблокировки',
+      AppLocale.en: 'Unlock method',
+    },
+    'applock.pin': {AppLocale.ru: 'Числовой код', AppLocale.en: 'PIN code'},
+    'applock.pinSet': {AppLocale.ru: 'Задан', AppLocale.en: 'Set'},
+    'applock.pinNotSet': {AppLocale.ru: 'Не задан', AppLocale.en: 'Not set'},
+    'applock.setPin': {
+      AppLocale.ru: 'Задать код',
+      AppLocale.en: 'Set PIN code',
+    },
+    'applock.changePin': {
+      AppLocale.ru: 'Изменить код',
+      AppLocale.en: 'Change PIN code',
+    },
+    'applock.removePin': {
+      AppLocale.ru: 'Убрать код',
+      AppLocale.en: 'Remove PIN code',
+    },
+    'applock.fingerprint': {
+      AppLocale.ru: 'Вход по отпечатку пальца',
+      AppLocale.en: 'Unlock with fingerprint',
+    },
+    'applock.face': {
+      AppLocale.ru: 'Вход по распознаванию лица',
+      AppLocale.en: 'Unlock with face recognition',
+    },
+    'applock.biometric': {
+      AppLocale.ru: 'Биометрический вход',
+      AppLocale.en: 'Biometric unlock',
+    },
+    'applock.needPinFirst': {
+      AppLocale.ru: 'Сначала задайте числовой код',
+      AppLocale.en: 'Set a PIN code first',
+    },
+    'applock.enterPin': {
+      AppLocale.ru: 'Введите код',
+      AppLocale.en: 'Enter your PIN',
+    },
+    'applock.newPin': {
+      AppLocale.ru: 'Придумайте код (4–8 цифр)',
+      AppLocale.en: 'Choose a PIN (4–8 digits)',
+    },
+    'applock.confirmPin': {
+      AppLocale.ru: 'Повторите код',
+      AppLocale.en: 'Confirm your PIN',
+    },
+    'applock.pinMismatch': {
+      AppLocale.ru: 'Коды не совпадают, попробуйте снова',
+      AppLocale.en: "PINs don't match, try again",
+    },
+    'applock.wrongPin': {
+      AppLocale.ru: 'Неверный код',
+      AppLocale.en: 'Wrong PIN',
+    },
+    'applock.unlockWithBiometric': {
+      AppLocale.ru: 'Разблокировать по биометрии',
+      AppLocale.en: 'Unlock with biometrics',
+    },
+    'applock.useBiometricReason': {
+      AppLocale.ru: 'Подтвердите вход в Oshinobu',
+      AppLocale.en: 'Confirm it\'s you to open Oshinobu',
+    },
+    'applock.usePinInstead': {
+      AppLocale.ru: 'Ввести код',
+      AppLocale.en: 'Use PIN instead',
+    },
+    'applock.timeout.30': {AppLocale.ru: '30 секунд', AppLocale.en: '30 seconds'},
+    'applock.timeout.60': {AppLocale.ru: '1 минута', AppLocale.en: '1 minute'},
+    'applock.timeout.120': {AppLocale.ru: '2 минуты', AppLocale.en: '2 minutes'},
+    'applock.timeout.300': {AppLocale.ru: '5 минут', AppLocale.en: '5 minutes'},
+    'applock.timeout.600': {AppLocale.ru: '10 минут', AppLocale.en: '10 minutes'},
+    'applock.timeout.900': {AppLocale.ru: '15 минут', AppLocale.en: '15 minutes'},
+    'applock.timeout.1800': {AppLocale.ru: '30 минут', AppLocale.en: '30 minutes'},
+    'applock.timeout.3600': {AppLocale.ru: '1 час', AppLocale.en: '1 hour'},
+    'applock.timeout.7200': {AppLocale.ru: '2 часа', AppLocale.en: '2 hours'},
 
     'about.title': {AppLocale.ru: 'О приложении', AppLocale.en: 'About'},
     'about.version': {

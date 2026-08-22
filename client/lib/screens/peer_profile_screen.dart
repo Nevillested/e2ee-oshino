@@ -5,6 +5,7 @@ import '../services/avatar_cache.dart';
 import '../services/peer_profile_cache.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_settings_tile.dart';
+import '../widgets/photo_viewer_screen.dart';
 import '../widgets/theme_reactive.dart';
 
 /// Профиль ЧУЖОГО пользователя, read-only — открывается zoom-переходом
@@ -67,67 +68,85 @@ class _PeerProfileScreenState extends State<PeerProfileScreen> {
               ),
             ),
             Expanded(
-              child: !_loaded
-                  ? const Center(child: CircularProgressIndicator())
-                  : ListView(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      children: [
-                        Center(
-                          child: Hero(
-                            tag: 'peer-avatar-${widget.peerAccountId}',
-                            child: FutureBuilder<Uint8List?>(
-                              future: AvatarCache.get(widget.peerAccountId),
-                              builder: (context, snapshot) => AvatarThumbnail(
-                                bytes: snapshot.data,
-                                radius: 64,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Center(
-                          child: Text(
-                            widget.peerLogin,
-                            style: TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 32),
-                        if (_profile?.status?.isNotEmpty == true)
-                          ListTile(
-                            leading: Icon(
-                              Icons.chat_bubble_outline,
-                              color: AppColors.textMuted,
-                            ),
-                            title: Text(
-                              tr('profile.status'),
-                              style: TextStyle(color: AppColors.textPrimary),
-                            ),
-                            subtitle: Text(
-                              _profile!.status!,
-                              style: TextStyle(color: AppColors.textMuted),
-                            ),
-                          ),
-                        if (_profile?.birthday?.isNotEmpty == true)
-                          ListTile(
-                            leading: Icon(
-                              Icons.cake_outlined,
-                              color: AppColors.textMuted,
-                            ),
-                            title: Text(
-                              tr('profile.birthday'),
-                              style: TextStyle(color: AppColors.textPrimary),
-                            ),
-                            subtitle: Text(
-                              _profile!.birthday!,
-                              style: TextStyle(color: AppColors.textMuted),
-                            ),
-                          ),
-                      ],
+              // ВАЖНО: Hero с аватаром (и всё, что не зависит от _loaded)
+              // рендерится безусловно, СРАЗУ на первом кадре — раньше он
+              // был внутри "!_loaded ? спиннер : ListView(...)", и на
+              // самый первый кадр после push(), пока PeerProfileCache.get()
+              // ещё не резолвился, Hero с этим тегом в дереве попросту не
+              // существовал. Flutter же ищет ответный Hero целевого экрана
+              // именно на первом кадре пуша — не найдя его, тихо показывает
+              // экран без анимации (zoom-out при pop работал, потому что к
+              // тому моменту _loaded уже был true). Спиннер теперь только
+              // на месте статуса/даты рождения, которые реально зависят от
+              // сетевого ответа.
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                children: [
+                  Center(
+                    child: Hero(
+                      tag: 'peer-avatar-${widget.peerAccountId}',
+                      child: FutureBuilder<Uint8List?>(
+                        future: AvatarCache.get(widget.peerAccountId),
+                        builder: (context, snapshot) {
+                          final bytes = snapshot.data;
+                          return GestureDetector(
+                            onTap: bytes == null
+                                ? null
+                                : () => showPhotoViewer(context, bytes),
+                            child: AvatarThumbnail(bytes: bytes, radius: 64),
+                          );
+                        },
+                      ),
                     ),
+                  ),
+                  const SizedBox(height: 16),
+                  Center(
+                    child: Text(
+                      widget.peerLogin,
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                  if (!_loaded)
+                    const Center(child: CircularProgressIndicator())
+                  else ...[
+                    if (_profile?.status?.isNotEmpty == true)
+                      ListTile(
+                        leading: Icon(
+                          Icons.chat_bubble_outline,
+                          color: AppColors.textMuted,
+                        ),
+                        title: Text(
+                          tr('profile.status'),
+                          style: TextStyle(color: AppColors.textPrimary),
+                        ),
+                        subtitle: Text(
+                          _profile!.status!,
+                          style: TextStyle(color: AppColors.textMuted),
+                        ),
+                      ),
+                    if (_profile?.birthday?.isNotEmpty == true)
+                      ListTile(
+                        leading: Icon(
+                          Icons.cake_outlined,
+                          color: AppColors.textMuted,
+                        ),
+                        title: Text(
+                          tr('profile.birthday'),
+                          style: TextStyle(color: AppColors.textPrimary),
+                        ),
+                        subtitle: Text(
+                          _profile!.birthday!,
+                          style: TextStyle(color: AppColors.textMuted),
+                        ),
+                      ),
+                  ],
+                ],
+              ),
             ),
           ],
         ),

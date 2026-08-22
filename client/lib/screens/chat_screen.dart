@@ -247,6 +247,17 @@ class _ChatScreenState extends State<ChatScreen> {
   final _bodyStackKey = GlobalKey();
 
   bool _recCameraSelected = false;
+  // Независимое от жеста отслеживание "палец реально ещё на кнопке" (см.
+  // Listener в _buildRecordControlButton) — при первом долгом тапе после
+  // установки приложения система показывает диалог разрешения на
+  // микрофон/камеру ПРЯМО ПОСЕРЕДИНЕ долгого тапа. Диалог перехватывает
+  // палец, и когда пользователь его отпускает, чтобы нажать "Разрешить",
+  // Flutter никогда не получает onLongPressEnd для уже начатого жеста —
+  // без этого флага _beginRecording() после await разрешения молча уходил
+  // бы в _RecPhase.dragging, как будто палец всё ещё держит кнопку, и
+  // единственный выход (свайп влево) тоже не работал, потому что тот же
+  // GestureDetector считает предыдущий жест ещё не завершённым.
+  bool _recPointerDown = false;
   _RecPhase _recPhase = _RecPhase.idle;
   _RecKind? _recActiveKind;
   DateTime? _recStartedAt;
@@ -1553,6 +1564,40 @@ class _ChatScreenState extends State<ChatScreen> {
       _recAudioPath = path;
     }
 
+    if (!mounted || !_recPointerDown) {
+      // Палец отпустился ещё во время системного диалога разрешения (или
+      // просто пока шла инициализация камеры/микрофона) — см.
+      // _recPointerDown. Жест по факту уже закончился, Flutter об этом не
+      // узнал, а мы уже успели что-то начать записывать — аккуратно всё
+      // отменяем и остаёмся в idle: следующий долгий тап сработает штатно,
+      // разрешение уже выдано, диалог второй раз не всплывёт.
+      if (isVideo) {
+        final controller = _recCameraController;
+        _recCameraController = null;
+        try {
+          if (controller != null && controller.value.isRecordingVideo) {
+            final xfile = await controller.stopVideoRecording();
+            final f = File(xfile.path);
+            if (await f.exists()) await f.delete();
+          }
+        } catch (_) {}
+        controller?.dispose();
+      } else {
+        try {
+          await _audioRecorder.cancel();
+        } catch (_) {}
+        final path = _recAudioPath;
+        _recAudioPath = null;
+        if (path != null) {
+          try {
+            final f = File(path);
+            if (await f.exists()) await f.delete();
+          } catch (_) {}
+        }
+      }
+      return;
+    }
+
     _recStartedAt = DateTime.now();
     _recTicker?.cancel();
     _recTicker = Timer.periodic(const Duration(milliseconds: 200), (_) {
@@ -1960,26 +2005,36 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
-    return GestureDetector(
-      key: _recordButtonKey,
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        if (_recPhase == _RecPhase.locked) {
-          _finishRecording(send: true);
-        } else if (_recPhase == _RecPhase.idle) {
-          _toggleRecordKindIcon();
-        }
-      },
-      onLongPressStart: _recPhase == _RecPhase.idle
-          ? (_) => _beginRecording()
-          : null,
-      onLongPressMoveUpdate: _recPhase == _RecPhase.dragging
-          ? (details) => _updateRecordingDrag(details.offsetFromOrigin)
-          : null,
-      onLongPressEnd: _recPhase == _RecPhase.dragging
-          ? (_) => _endRecordingGesture()
-          : null,
-      child: Padding(padding: const EdgeInsets.all(8), child: icon),
+    return Listener(
+      // См. комментарий у _recPointerDown — источник истины "палец реально
+      // ещё на кнопке" независимо от того, что сейчас решил жест-детектор
+      // ниже (тот может застрять, если долгий тап прервал системный диалог
+      // разрешения). onPointerCancel — на случай, если ОС сама отменит
+      // указатель (например, тем же самым системным диалогом).
+      onPointerDown: (_) => _recPointerDown = true,
+      onPointerUp: (_) => _recPointerDown = false,
+      onPointerCancel: (_) => _recPointerDown = false,
+      child: GestureDetector(
+        key: _recordButtonKey,
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          if (_recPhase == _RecPhase.locked) {
+            _finishRecording(send: true);
+          } else if (_recPhase == _RecPhase.idle) {
+            _toggleRecordKindIcon();
+          }
+        },
+        onLongPressStart: _recPhase == _RecPhase.idle
+            ? (_) => _beginRecording()
+            : null,
+        onLongPressMoveUpdate: _recPhase == _RecPhase.dragging
+            ? (details) => _updateRecordingDrag(details.offsetFromOrigin)
+            : null,
+        onLongPressEnd: _recPhase == _RecPhase.dragging
+            ? (_) => _endRecordingGesture()
+            : null,
+        child: Padding(padding: const EdgeInsets.all(8), child: icon),
+      ),
     );
   }
 

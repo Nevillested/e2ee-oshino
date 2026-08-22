@@ -8,6 +8,7 @@ import '../widgets/font_size_dialog.dart';
 import '../widgets/language_dialog.dart';
 import '../widgets/theme_dialog.dart';
 import 'about_screen.dart';
+import 'app_lock_settings_screen.dart';
 import 'change_password_screen.dart';
 import 'privacy_settings_screen.dart';
 
@@ -91,6 +92,22 @@ class SettingsContent extends StatelessWidget {
             context,
             MaterialPageRoute(
               builder: (context) => const PrivacySettingsScreen(),
+            ),
+          ),
+        ),
+        ListTile(
+          leading: Icon(
+            Icons.phonelink_lock_outlined,
+            color: AppColors.textMuted,
+          ),
+          title: Text(
+            tr('settings.appLock'),
+            style: TextStyle(color: AppColors.textPrimary),
+          ),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const AppLockSettingsScreen(),
             ),
           ),
         ),
