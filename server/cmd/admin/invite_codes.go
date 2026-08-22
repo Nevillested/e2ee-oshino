@@ -6,13 +6,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	"math/big"
 	"server/internal/db"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -80,4 +83,51 @@ func runListInviteCodes(ctx context.Context, queries *db.Queries) {
 			fmt.Printf("%s — создан %s — использован %s (аккаунт с тех пор удалён)\n", row.Code, created, usedAt)
 		}
 	}
+}
+
+// runDeleteInviteCode — удаляет конкретный код по его 6-значному значению
+// (см. список, пункт 5). Если код уже был кем-то использован, удаление
+// самой записи НИКАК не откатывает регистрацию — used_by_account_id
+// ссылается ON DELETE SET NULL, аккаунт целиком остаётся как есть, пропадает
+// только историческая запись о самом коде. Отдельно предупреждаем об этом
+// перед подтверждением, чтобы не удалили использованный код по ошибке,
+// думая, что это как-то заблокирует уже зарегистрированный аккаунт.
+func runDeleteInviteCode(ctx context.Context, queries *db.Queries, reader *bufio.Reader) {
+	fmt.Print("Код для удаления (6 цифр): ")
+	raw, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Println("\nВвод прерван, отменено.")
+		return
+	}
+	code := strings.TrimSpace(raw)
+	if code == "" {
+		fmt.Println("Пустой код, отменено.")
+		return
+	}
+
+	row, err := queries.GetInviteCodeByCode(ctx, code)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			fmt.Printf("Код %q не найден.\n", code)
+			return
+		}
+		fmt.Printf("Ошибка чтения кода из базы: %v\n", err)
+		return
+	}
+
+	if row.UsedAt.Valid {
+		fmt.Println("Внимание: этот код уже использован — удаление сотрёт только")
+		fmt.Println("саму запись о коде, аккаунт, который по нему зарегистрировался,")
+		fmt.Println("никуда не денется.")
+	}
+	if !confirm(reader, fmt.Sprintf("Точно удалить код %q?", code)) {
+		fmt.Println("Отменено.")
+		return
+	}
+
+	if _, err := queries.DeleteInviteCode(ctx, code); err != nil {
+		fmt.Printf("Ошибка удаления из базы: %v\n", err)
+		return
+	}
+	fmt.Printf("Готово — код %q удалён.\n", code)
 }
