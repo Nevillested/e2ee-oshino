@@ -81,6 +81,62 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     });
   }
 
+  // Свайп по кругу между вкладками (см. ТЗ пользователя): направление
+  // определяется самим жестом, а не разницей индексов — иначе, например,
+  // свайп-переход с чатов (0) на профиль (2) "в обход" настроек посчитал
+  // бы себя движением вперёд, хотя по кругу это шаг назад.
+  static const _tabCount = 3;
+
+  void _swipeToNextTab() {
+    setState(() {
+      _transitionReverse = false;
+      _selectedTab = (_selectedTab + 1) % _tabCount;
+    });
+  }
+
+  void _swipeToPrevTab() {
+    setState(() {
+      _transitionReverse = true;
+      _selectedTab = (_selectedTab - 1 + _tabCount) % _tabCount;
+    });
+  }
+
+  // Стартовая точка текущего горизонтального жеста — null, если жест
+  // начался слишком близко к краю экрана (там должен сработать системный
+  // свайп-назад, а не переключение таба) либо ещё не набрал порог.
+  double? _swipeStartDx;
+  double _swipeAccumDx = 0;
+
+  static const _swipeEdgeMargin = 24.0;
+  static const _swipeThreshold = 60.0;
+
+  void _onHorizontalDragStart(DragStartDetails details) {
+    final width = MediaQuery.of(context).size.width;
+    final dx = details.globalPosition.dx;
+    if (dx < _swipeEdgeMargin || dx > width - _swipeEdgeMargin) {
+      _swipeStartDx = null;
+      return;
+    }
+    _swipeStartDx = dx;
+    _swipeAccumDx = 0;
+  }
+
+  void _onHorizontalDragUpdate(DragUpdateDetails details) {
+    if (_swipeStartDx == null) return;
+    _swipeAccumDx += details.delta.dx;
+  }
+
+  void _onHorizontalDragEnd(DragEndDetails details) {
+    if (_swipeStartDx == null) return;
+    if (_swipeAccumDx <= -_swipeThreshold) {
+      _swipeToNextTab();
+    } else if (_swipeAccumDx >= _swipeThreshold) {
+      _swipeToPrevTab();
+    }
+    _swipeStartDx = null;
+    _swipeAccumDx = 0;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -484,13 +540,11 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   }
 
   Widget _build(BuildContext context) {
-    // Держим в синхроне с BottomActionBar.build() — та теперь тоже
-    // прибавляет системный нижний инсет к своей высоте (см. её комментарий),
-    // иначе на 3-кнопочной навигации содержимое списка чатов пряталось бы
-    // за подросшей панелью.
-    final barHeight =
-        MediaQuery.of(context).size.height / 15 +
-        MediaQuery.of(context).padding.bottom;
+    // Держим в синхроне с реальной высотой плавающей капсулы
+    // BottomActionBar (иконка+подпись+внутренние отступы ≈ 60, плюс её же
+    // зазор под капсулой = bottomInset + 14, см. её build()) — иначе на
+    // 3-кнопочной навигации содержимое списка чатов пряталось бы за ней.
+    final barHeight = 60.0 + MediaQuery.of(context).padding.bottom + 14;
 
     return PopScope(
       // На "обратной стороне" (настройки/профиль) системный back должен
@@ -527,9 +581,15 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
         body: Stack(
           children: [
             Positioned.fill(
-              child: Padding(
-                padding: EdgeInsets.only(bottom: barHeight),
-                child: _buildFlippableBody(),
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onHorizontalDragStart: _onHorizontalDragStart,
+                onHorizontalDragUpdate: _onHorizontalDragUpdate,
+                onHorizontalDragEnd: _onHorizontalDragEnd,
+                child: Padding(
+                  padding: EdgeInsets.only(bottom: barHeight),
+                  child: _buildFlippableBody(),
+                ),
               ),
             ),
             Positioned(
@@ -547,7 +607,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                     label: tr('nav.settings'),
                   ),
                   BottomTabItem(
-                    icon: Icons.account_circle_outlined,
+                    avatar: MyAvatarStore.notifier,
                     label: tr('nav.profile'),
                   ),
                 ],

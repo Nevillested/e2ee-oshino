@@ -343,6 +343,22 @@ class WebSocketService {
       // valid == true или valid == null (не удалось проверить, например нет
       // сети) — в обоих случаях просто пробуем переподключиться дальше, не
       // разлогиниваем пользователя из-за временного отсутствия интернета.
+      //
+      // Гонка (обнаружена по логам на нестабильной сети — см. лог с
+      // "reconnected from a new connection"): пока мы тут await'или
+      // checkSession, _forceReconnect() (например, от Connectivity().
+      // onConnectivityChanged) мог уже успеть открыть новое соединение —
+      // отмена таймера в _forceReconnect() не может прервать уже
+      // выполняющийся этот коллбэк. Без проверки ниже мы бы открыли ВТОРОЕ
+      // соединение поверх уже живого — сервер это видит как дубликат и
+      // закрывает более старое, обрывая только что установленную связь.
+      if (_channel != null) {
+        DebugLog.log(
+          'WS _scheduleReconnect() timer fired but channel already exists '
+          '(race with _forceReconnect) — skipping duplicate _openConnection()',
+        );
+        return;
+      }
       _openConnection();
     });
   }

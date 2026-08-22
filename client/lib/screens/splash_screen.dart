@@ -37,7 +37,12 @@ class _SplashScreenState extends State<SplashScreen> {
     }
 
     final valid = await ApiClient().checkSession(token);
-    if (!valid!) {
+    // valid == null — сервер не удалось опросить (например, нет сети прямо
+    // сейчас, см. тот же null-случай в websocket_service.dart._scheduleReconnect())
+    // — это не то же самое, что "сервер явно ответил: токен невалиден",
+    // разлогинивать пользователя из-за временного отсутствия интернета
+    // на старте нельзя.
+    if (valid == false) {
       await Session.clearToken();
       await KeyStore.clearAll();
       await CallRingPlugin.clearCredentials();
