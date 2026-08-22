@@ -580,6 +580,14 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
             : AppBar(
                 title: const ConnectionStatusIndicator(),
                 centerTitle: false,
+                // Скруглённые нижние углы (см. ТЗ пользователя) — верхние
+                // сознательно НЕ трогаем, они и так уже прижаты к самому
+                // верху экрана статус-баром, скруглять там нечего видеть.
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(
+                    bottom: Radius.circular(20),
+                  ),
+                ),
                 actions: [
                   IconButton(
                     icon: const Icon(Icons.add),
@@ -618,10 +626,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                     icon: Icons.chat_bubble_outline,
                     label: tr('nav.chats'),
                   ),
-                  BottomTabItem(
-                    icon: Icons.tune,
-                    label: tr('nav.settings'),
-                  ),
+                  BottomTabItem(icon: Icons.tune, label: tr('nav.settings')),
                   BottomTabItem(
                     avatar: MyAvatarStore.notifier,
                     label: tr('nav.profile'),

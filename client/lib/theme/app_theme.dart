@@ -58,6 +58,16 @@ ThemeData buildAppTheme() {
       elevation: 0,
       centerTitle: true,
     ),
+    // Без этого PopupMenuButton (см. меню "⋮" в шапке чата) рисует себя
+    // дефолтной Material-темой — светлая карточка с чёрным текстом,
+    // совсем не вписывается в тёмный/светлый стиль остального приложения
+    // (см. жалобу пользователя). Та же скруглённость (14), что у диалогов.
+    popupMenuTheme: PopupMenuThemeData(
+      color: AppColors.surface,
+      textStyle: TextStyle(color: AppColors.textPrimary),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      elevation: 6,
+    ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: AppColors.surface,

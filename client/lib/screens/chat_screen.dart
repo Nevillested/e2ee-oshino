@@ -4352,9 +4352,12 @@ class _ChatScreenState extends State<ChatScreen> {
                         value: 'search',
                         child: Row(
                           children: [
-                            const Icon(Icons.search),
+                            Icon(Icons.search, color: AppColors.textMuted),
                             const SizedBox(width: 10),
-                            Text(tr('chat.searchAction')),
+                            Text(
+                              tr('chat.searchAction'),
+                              style: TextStyle(color: AppColors.textPrimary),
+                            ),
                           ],
                         ),
                       ),
@@ -4447,6 +4450,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 textAlignVertical: TextAlignVertical.center,
                 style: TextStyle(color: AppColors.textPrimary, fontSize: 15),
                 decoration: InputDecoration(
+                  // filled:false — глобальная тема (см. app_theme.dart)
+                  // по умолчанию заливает ЛЮБОЕ текстовое поле сплошным
+                  // AppColors.surface (это нужно для форм логина/
+                  // регистрации), без явного отключения тут это давало
+                  // непрозрачный прямоугольник ровно по границам текстового
+                  // поля ПОВЕРХ блюра овальной таблетки — заметно на
+                  // контрастном фоне (сообщении) позади, почти незаметно на
+                  // однородном фоне чата (см. жалобу пользователя).
+                  filled: false,
                   isDense: true,
                   contentPadding: const EdgeInsets.symmetric(vertical: 10),
                   border: InputBorder.none,
@@ -4952,7 +4964,12 @@ class _ChatScreenState extends State<ChatScreen> {
                                   16,
                                   16 + MediaQuery.of(context).padding.top + 60,
                                   16,
-                                  16 + 64 + reserved,
+                                  // 64 — высота самой таблетки, но последнее
+                                  // сообщение вплотную к ней смотрелось так,
+                                  // будто панель его слегка перекрывает (см.
+                                  // жалобу пользователя) — 28, а не 16,
+                                  // добавляют настоящий видимый зазор.
+                                  28 + 64 + reserved,
                                 ),
                                 itemCount: groups.length,
                                 itemBuilder: (context, index) {
