@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:proximity_sensor/proximity_sensor.dart';
 import 'package:uuid/uuid.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../crypto/key_store.dart';
 import '../crypto/message_envelope.dart';
 import '../l10n/app_strings.dart';
@@ -87,6 +88,17 @@ class CallService {
   StreamSubscription<int>? _proximitySub;
   bool _proximityScreenOffActive = false;
   bool? _proximitySensorAvailable;
+
+  // На видеозвонке экран гаснет по обычному системному таймауту — на
+  // видео просто смотрят, не касаясь экрана, и ОС (особенно агрессивно —
+  // на Samsung) гасит его как при простое. WakelockPlus держит экран
+  // включённым ровно пока есть смысл на него смотреть — своё видео или
+  // видео собеседника — и отпускает его сразу же, как только оба видео
+  // выключены или разговор закончился, не мешая ни обычному энергосбережению
+  // вне звонков, ни датчику приближения на чисто голосовых звонках (см.
+  // _updateProximityScreenOff — тот работает по своему, не пересекающемуся
+  // условию: только когда видео НЕТ и разговор не на громкой связи).
+  bool _wakelockActive = false;
 
   final _stateController = StreamController<CallState>.broadcast();
   final _incomingCallController =
@@ -390,6 +402,7 @@ class CallService {
     // Затемнение датчиком приближения — та же логика: имеет смысл только
     // пока идёт реальный разговор.
     _updateProximityScreenOff();
+    _updateWakelock();
 
     if (s == CallState.outgoingRinging) {
       SoundService.startRingback();
@@ -448,6 +461,24 @@ class CallService {
       }
     } catch (_) {
       // Датчика нет/платформа не поддерживает — звонок это ломать не должно.
+    }
+  }
+
+  /// Держит экран включённым, пока есть видео (своё или собеседника) в
+  /// активном разговоре — см. комментарий у _wakelockActive.
+  Future<void> _updateWakelock() async {
+    final shouldEnable =
+        _state == CallState.connected && (videoEnabled || remoteVideoEnabled);
+    if (shouldEnable == _wakelockActive) return;
+    _wakelockActive = shouldEnable;
+    try {
+      if (shouldEnable) {
+        await WakelockPlus.enable();
+      } else {
+        await WakelockPlus.disable();
+      }
+    } catch (_) {
+      // Платформа не поддерживает — разговор это ломать не должно.
     }
   }
 
@@ -767,6 +798,7 @@ class CallService {
     }
 
     await _send('call_video_state', {'enabled': videoEnabled});
+    await _updateWakelock();
   }
 
   /// Переключает фронтальную/тыловую камеру на уже открытой видео-дорожке
@@ -869,6 +901,7 @@ class CallService {
         remoteVideoEnabled = payload['enabled'] as bool? ?? false;
         _remoteVideoStateController.add(remoteVideoEnabled);
         PipService.setRemoteVideoActive(remoteVideoEnabled);
+        await _updateWakelock();
 
         // Разово за звонок: как только у собеседника появляется видео,
         // сами переключаем звук на громкую связь (удобно смотреть, не

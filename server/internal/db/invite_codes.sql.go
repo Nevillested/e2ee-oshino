@@ -53,6 +53,40 @@ func (q *Queries) CreateInviteCode(ctx context.Context, code string) (InviteCode
 	return i, err
 }
 
+const deleteInviteCode = `-- name: DeleteInviteCode :one
+DELETE FROM invite_codes WHERE code = $1 RETURNING id, code, created_at, used_at, used_by_account_id
+`
+
+func (q *Queries) DeleteInviteCode(ctx context.Context, code string) (InviteCode, error) {
+	row := q.db.QueryRow(ctx, deleteInviteCode, code)
+	var i InviteCode
+	err := row.Scan(
+		&i.ID,
+		&i.Code,
+		&i.CreatedAt,
+		&i.UsedAt,
+		&i.UsedByAccountID,
+	)
+	return i, err
+}
+
+const getInviteCodeByCode = `-- name: GetInviteCodeByCode :one
+SELECT id, code, created_at, used_at, used_by_account_id FROM invite_codes WHERE code = $1
+`
+
+func (q *Queries) GetInviteCodeByCode(ctx context.Context, code string) (InviteCode, error) {
+	row := q.db.QueryRow(ctx, getInviteCodeByCode, code)
+	var i InviteCode
+	err := row.Scan(
+		&i.ID,
+		&i.Code,
+		&i.CreatedAt,
+		&i.UsedAt,
+		&i.UsedByAccountID,
+	)
+	return i, err
+}
+
 const listInviteCodes = `-- name: ListInviteCodes :many
 SELECT ic.code, ic.created_at, ic.used_at, a.login AS used_by_login
 FROM invite_codes ic
