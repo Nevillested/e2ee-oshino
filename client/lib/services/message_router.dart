@@ -45,6 +45,35 @@ class MessageRouter {
     WebSocketService.instance.messages.listen(_handleIncoming);
   }
 
+  /// Живой сигнал "у собеседника только что появилась НОВАЯ реакция на
+  /// сообщение" — нужен ChatScreen, чтобы проиграть анимацию простановки
+  /// (см. _ReactionChip) именно для СВЕЖЕГО события, а не для реакции,
+  /// которая была в истории уже при открытии чата. Обычный broadcast
+  /// (доставка асинхронная, следующим микротаском) — тут не критично,
+  /// в отличие от incomingDeletes ниже, порядок с ChatStore.setReaction не
+  /// важен для самой анимации (она смотрит только на факт "только что").
+  static final _reactionController =
+      StreamController<({String peerLogin, String messageId})>.broadcast();
+  static Stream<({String peerLogin, String messageId})> get incomingReactions =>
+      _reactionController.stream;
+
+  /// Живой сигнал "собеседник удалил сообщения и у нас тоже" — ChatScreen
+  /// использует его, чтобы (если этот чат открыт) успеть сфотографировать
+  /// ещё живые пузыри (см. _captureShatterImages) и проиграть тот же эффект
+  /// "рассыпания", что и при удалении со своей стороны, а не просто молча
+  /// обнаружить, что сообщения исчезли, при следующей перерисовке. sync:
+  /// true — намеренно: слушатель должен успеть сработать РАНЬШЕ, чем ниже
+  /// по коду выполнится ChatStore.deleteMessages и пузыри реально уйдут из
+  /// локального хранилища (а значит и из дерева виджетов при следующей
+  /// перерисовке) — обычный (асинхронный) broadcast доставляет события
+  /// микрозадачей и не даёт такой гарантии порядка.
+  static final _incomingDeleteController =
+      StreamController<({String peerLogin, List<String> targetIds})>.broadcast(
+        sync: true,
+      );
+  static Stream<({String peerLogin, List<String> targetIds})>
+  get incomingDeletes => _incomingDeleteController.stream;
+
   static Future<void> _handleIncoming(Map<String, dynamic> envelope) async {
     final senderDeviceId = envelope['sender_device_id'] as String?;
     if (senderDeviceId == null) return;
@@ -327,12 +356,21 @@ class MessageRouter {
         final data = jsonDecode(inner.body) as Map<String, dynamic>;
         final targetId = data['target_id'] as String?;
         if (targetId != null) {
+          final newEmoji = data['emoji'] as String?;
           await ChatStore.setReaction(
             ownerInfo.login,
             targetId,
             isMine: false,
-            emoji: data['emoji'] as String?,
+            emoji: newEmoji,
           );
+          // Только реальная простановка (не снятие) заслуживает анимации —
+          // см. incomingReactions выше.
+          if (newEmoji != null) {
+            _reactionController.add((
+              peerLogin: ownerInfo.login,
+              messageId: targetId,
+            ));
+          }
           // Виброотклик на чужую реакцию — только если мы прямо сейчас
           // смотрим именно в этот чат (иначе непонятно, по какому поводу
           // телефон дёрнулся, если мы вообще не видим этот пузырь).
@@ -354,6 +392,14 @@ class MessageRouter {
         final data = jsonDecode(inner.body) as Map<String, dynamic>;
         final targetIds =
             (data['target_ids'] as List<dynamic>?)?.cast<String>() ?? const [];
+        // ДО удаления — пока пузыри ещё реально в хранилище (и, если чат
+        // открыт, ещё смонтированы в дереве виджетов), см. incomingDeletes.
+        if (targetIds.isNotEmpty) {
+          _incomingDeleteController.add((
+            peerLogin: ownerInfo.login,
+            targetIds: targetIds,
+          ));
+        }
         await ChatStore.deleteMessages(ownerInfo.login, targetIds);
       } else if (inner.type == 'clear_chat') {
         // Собеседник нажал "очистить историю" — безусловная команда стереть

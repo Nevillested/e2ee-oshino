@@ -43,6 +43,7 @@ import '../services/chat_scroll_position_store.dart';
 import '../services/debug_log.dart';
 import '../services/keyboard_height_store.dart';
 import '../services/media_asset_cache.dart';
+import '../services/message_router.dart';
 import '../services/my_avatar_store.dart';
 import '../services/send_lock.dart';
 import '../services/send_queue_processor.dart';
@@ -164,6 +165,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   double _lastReserved = 0;
   double? _lastLoggedBottomInset;
 
+  // Растущая пилюля-композер (см. ТЗ пользователя "Enter — перенос строки,
+  // а не закрытие клавиатуры") — считаем число строк по явным '\n' (не
+  // мягкому переносу по ширине: без layout-контекста его точно не измерить
+  // тут же, а грубая оценка регулярно расходилась бы с тем, что реально
+  // отрисовывает TextField). base — высота пилюли в состоянии покоя/записи/
+  // блокировки, lineDelta — эмпирическая высота одной ДОПОЛНИТЕЛЬНОЙ строки
+  // при текущем размере шрифта поля, maxExtraLines — потолок роста (дальше
+  // TextField сам скроллит содержимое внутри последних maxLines строк).
+  static const double _composerBaseHeight = 56;
+  static const double _composerLineDelta = 22;
+  static const int _composerMaxExtraLines = 4;
+  int _composerLineCount = 1;
+
+  double get _composerHeight {
+    if (_composerBlocked || _recPhase != _RecPhase.idle) {
+      return _composerBaseHeight;
+    }
+    return _composerBaseHeight +
+        (_composerLineCount - 1) * _composerLineDelta;
+  }
+
   List<StoredMessage> _messages = [];
 
   // Ответ на сообщение — баннер над полем ввода, сбрасывается после отправки.
@@ -211,6 +233,29 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // поверх, ровно на его месте.
   final Set<String> _dissolvingMessageIds = {};
 
+  // Представительские id сообщений, у которых реакция появилась ТОЛЬКО ЧТО
+  // (своя простановка в _handleReaction ИЛИ живой сигнал от собеседника,
+  // см. MessageRouter.incomingReactions) — единственный способ для
+  // _ReactionChip отличить "проиграть искры" от "реакция была тут уже
+  // давно, просто чат/сообщение только что попали в дерево виджетов"
+  // (initState в обоих случаях выглядит одинаково). Каждый id сам себя
+  // убирает через короткое время — дальше он не нужен, а без очистки
+  // копился бы на весь срок жизни экрана.
+  final Set<String> _justReactedMessageIds = {};
+  final Map<String, Timer> _justReactedTimers = {};
+
+  void _markJustReacted(String messageId) {
+    _justReactedMessageIds.add(messageId);
+    _justReactedTimers[messageId]?.cancel();
+    _justReactedTimers[messageId] = Timer(
+      const Duration(milliseconds: 1200),
+      () {
+        _justReactedMessageIds.remove(messageId);
+        _justReactedTimers.remove(messageId);
+      },
+    );
+  }
+
   // Живой статус собеседника (онлайн/офлайн/печатает), см. _handlePresenceEvent
   // — null, пока сервер ещё не ответил на подписку (presence_subscribe).
   bool? _peerOnline;
@@ -220,6 +265,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? _presenceSub;
   StreamSubscription<ConnectionStatus>? _wsStatusSub;
   StreamSubscription<void>? _blockStatusSub;
+  StreamSubscription<({String peerLogin, String messageId})>?
+  _incomingReactionSub;
+  StreamSubscription<({String peerLogin, List<String> targetIds})>?
+  _incomingDeleteSub;
   Timer? _presenceTickTimer;
   DateTime? _lastTypingSentAt;
 
@@ -433,6 +482,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _blockStatusSub = WebSocketService.instance.blockStatusEvents.listen(
       (_) => unawaited(_refreshBlockStatusFromServer()),
     );
+    // Живая реакция ОТ СОБЕСЕДНИКА — помечаем "только что", чтобы
+    // _ReactionChip проиграл искры, когда следующий _loadHistory() (см.
+    // ChatStore.changes ниже) построит его впервые с этим emoji.
+    _incomingReactionSub = MessageRouter.incomingReactions.listen((event) {
+      if (event.peerLogin == widget.peerLogin) {
+        _markJustReacted(event.messageId);
+      }
+    });
+    // Собеседник удалил сообщения (и у нас тоже) — если этот чат открыт,
+    // хотим тот же эффект "рассыпания", что и при удалении со своей
+    // стороны, а не молчаливое исчезновение при следующей перерисовке
+    // списка (см. _playIncomingDeleteEffect).
+    _incomingDeleteSub = MessageRouter.incomingDeletes.listen((event) {
+      if (event.peerLogin == widget.peerLogin) {
+        unawaited(_playIncomingDeleteEffect(event.targetIds));
+      }
+    });
     ChatStore.changes.listen((_) {
       _loadHistory();
       _loadKnownDeletedStatus();
@@ -523,9 +589,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   void _onTextChanged() {
-    final hasText = _textController.text.trim().isNotEmpty;
-    if (hasText != _hasText) {
-      setState(() => _hasText = hasText);
+    final text = _textController.text;
+    final hasText = text.trim().isNotEmpty;
+    // '\n'.allMatches — TextField сам не сообщает нам, сколько строк он
+    // сейчас реально показывает (это знает только его внутренний
+    // RenderEditable), а нам нужно ЗАРАНЕЕ решить высоту пилюли-контейнера
+    // вокруг него (см. _composerHeight) — считаем по числу явных переносов
+    // (Enter), которые единственно и добавляет наш textInputAction.newline.
+    final lineCount = (('\n'.allMatches(text).length + 1)).clamp(
+      1,
+      1 + _composerMaxExtraLines,
+    );
+    if (hasText != _hasText || lineCount != _composerLineCount) {
+      setState(() {
+        _hasText = hasText;
+        _composerLineCount = lineCount;
+      });
     }
     if (hasText) _maybeSendTyping();
   }
@@ -825,6 +904,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Future<void> _handleReaction(StoredMessage msg, String? emoji) async {
     HapticFeedback.vibrate();
+    // ДО записи в ChatStore — flag должен быть выставлен уже к моменту,
+    // когда следующий _loadHistory() (см. ниже) перестроит список и впервые
+    // смонтирует _ReactionChip с этим emoji (см. justChanged в его классе).
+    if (emoji != null) _markJustReacted(msg.messageId);
     await ChatStore.setReaction(
       widget.peerLogin,
       msg.messageId,
@@ -992,6 +1075,37 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_selectionMode) _exitSelectionMode();
     await _loadHistory();
 
+    if (mounted) {
+      setState(() {
+        _dissolvingMessageIds.removeAll(
+          shatterCaptures.map((c) => c.messageId),
+        );
+      });
+    }
+  }
+
+  /// Тот же эффект "рассыпания", что в _deleteMessages, но для удаления,
+  /// пришедшего ОТ СОБЕСЕДНИКА (см. MessageRouter.incomingDeletes) — сама
+  /// команда ChatStore.deleteMessages тут не нужна (её уже выполняет
+  /// MessageRouter), только снимок+анимация, пока пузыри ещё смонтированы.
+  /// Само удаление из ChatStore и последующий _loadHistory() (см. общий
+  /// ChatStore.changes listener в initState) могут прийти чуть раньше, чем
+  /// долетят частицы — в этом случае строка в списке уже схлопнется сама,
+  /// а искры доиграются поверх как самостоятельный оверлей; не идеально
+  /// синхронно, но заметно лучше, чем полное отсутствие анимации у
+  /// получателя.
+  Future<void> _playIncomingDeleteEffect(List<String> ids) async {
+    if (!mounted) return;
+    final shatterCaptures = await _captureShatterImages(ids);
+    if (shatterCaptures.isEmpty || !mounted) return;
+    setState(() {
+      _dissolvingMessageIds.addAll(shatterCaptures.map((c) => c.messageId));
+    });
+    await Future.wait(
+      shatterCaptures.map(
+        (c) => showShatterEffect(context, image: c.image, rect: c.rect),
+      ),
+    );
     if (mounted) {
       setState(() {
         _dissolvingMessageIds.removeAll(
@@ -3761,12 +3875,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// рамка цветом акцента, у чужой — приглушённая), и каждый чип плавно
   /// появляется/исчезает (см. _ReactionChip), а не выскакивает мгновенно.
   Widget _reactionBadges(
+    String messageId,
     String? myReaction,
     String? peerReaction,
     bool isMine,
   ) {
     if (myReaction == null && peerReaction == null)
       return const SizedBox.shrink();
+    // Флаг "только что" (см. _markJustReacted/_justReactedMessageIds) — без
+    // него _ReactionChip не может отличить "эта реакция только что
+    // появилась, надо проиграть искры" от "чат открыли заново, а реакция
+    // была тут уже давно" (initState вызывается в обоих случаях одинаково).
+    final justChanged = _justReactedMessageIds.contains(messageId);
     return Positioned(
       bottom: -8,
       left: isMine ? 8 : null,
@@ -3774,10 +3894,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _ReactionChip(emoji: myReaction, mine: true),
+          _ReactionChip(emoji: myReaction, mine: true, justChanged: justChanged),
           if (myReaction != null && peerReaction != null)
             const SizedBox(width: 4),
-          _ReactionChip(emoji: peerReaction, mine: false),
+          _ReactionChip(
+            emoji: peerReaction,
+            mine: false,
+            justChanged: justChanged,
+          ),
         ],
       ),
     );
@@ -3823,7 +3947,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             clipBehavior: Clip.none,
             children: [
               bubble,
-              _reactionBadges(myReaction, peerReaction, isMine),
+              _reactionBadges(
+                targetMsg.messageId,
+                myReaction,
+                peerReaction,
+                isMine,
+              ),
             ],
           ),
         ),
@@ -4283,6 +4412,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _presenceSub?.cancel();
     _wsStatusSub?.cancel();
     _blockStatusSub?.cancel();
+    _incomingReactionSub?.cancel();
+    _incomingDeleteSub?.cancel();
+    for (final timer in _justReactedTimers.values) {
+      timer.cancel();
+    }
     _presenceTickTimer?.cancel();
     _peerTypingClearTimer?.cancel();
     super.dispose();
@@ -5128,22 +5262,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   left: 2,
                                   right: 8,
                                 ),
-                                // Высота ЗАФИКСИРОВАНА явно — без этого пилюля-
-                                // контейнер просто shrink-wrap'ился под текущий Row,
-                                // а строка "в покое" (с TextField, ~48px по высоте
-                                // из-за его contentPadding) и строка записи (таймер
-                                // + кнопка, естественно чуть ниже) имели РАЗНУЮ
-                                // натуральную высоту — стоило зажать иконку, и вся
-                                // "овальная" панель мгновенно, без анимации,
-                                // проседала на несколько пикселей: не сама панель
-                                // плавно меняла размер, а буквально новая раскладка
-                                // с другой высотой встала на её место за один кадр.
-                                child: SizedBox(
-                                  // Единая высота для обоих состояний (раньше была
-                                  // 48/56 — но одновременная смена высоты ВМЕСТЕ с
-                                  // 3D-переворотом (см. _FlipSwitcher ниже) выглядит
-                                  // как поломанная анимация, а не монетка).
-                                  height: 56,
+                                // Высота считается явно (см. _composerHeight)
+                                // и анимируется через AnimatedContainer — без
+                                // явного числа пилюля-контейнер просто
+                                // shrink-wrap'ился бы под текущий Row, а
+                                // строка "в покое"/записи/блокировки имели бы
+                                // РАЗНУЮ натуральную высоту и переключение
+                                // между ними давало бы мгновенный скачок без
+                                // анимации. AnimatedContainer нужен ИМЕННО
+                                // для роста/сжатия при печати многострочного
+                                // текста (см. ТЗ пользователя "Enter — перенос
+                                // строки") — переключение blocked/recording
+                                // само по себе всё так же держит одну и ту же
+                                // _composerBaseHeight, 3D-переворот
+                                // (_FlipSwitcher) для НИХ по-прежнему видит
+                                // константную высоту с обеих сторон.
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 140),
+                                  curve: Curves.easeOut,
+                                  height: _composerHeight,
                                   child: _FlipSwitcher(
                                     state: _composerBlocked,
                                     child: _composerBlocked
@@ -5233,83 +5370,81 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                       ),
                                                       const SizedBox(width: 2),
                                                       Expanded(
-                                                        // Пилюля-контейнер имеет
-                                                        // ЗАФИКСИРОВАННУЮ высоту 56
-                                                        // (см. комментарий у
-                                                        // SizedBox(height: 56) выше) —
-                                                        // настоящий растущий
-                                                        // (Telegram-подобный) композер
-                                                        // потребовал бы менять эту
-                                                        // высоту динамически, а вместе
-                                                        // с ней — переигрывать Stack/
-                                                        // _FlipSwitcher, которые сейчас
-                                                        // жёстко на неё полагаются.
-                                                        // Вместо этого поле остаётся
-                                                        // визуально той же высоты, но
-                                                        // становится многострочным
-                                                        // (expands: true заполняет этот
-                                                        // SizedBox целиком) — Enter
-                                                        // вставляет перенос строки, а
-                                                        // не закрывает клавиатуру,
-                                                        // лишний текст прокручивается
-                                                        // ВНУТРИ поля, а не раздувает
-                                                        // саму панель.
-                                                        child: SizedBox(
-                                                          height: 40,
-                                                          child: TextField(
-                                                            controller:
-                                                                _textController,
-                                                            focusNode:
-                                                                _textFocusNode,
-                                                            textCapitalization:
-                                                                TextCapitalization
-                                                                    .sentences,
-                                                            keyboardType:
-                                                                TextInputType
-                                                                    .multiline,
-                                                            textInputAction:
-                                                                TextInputAction
-                                                                    .newline,
-                                                            expands: true,
-                                                            maxLines: null,
-                                                            minLines: null,
-                                                            textAlignVertical:
-                                                                TextAlignVertical
-                                                                    .center,
-                                                            onTap: () {
-                                                              if (_emojiMode) {
-                                                                setState(
-                                                                  () =>
-                                                                      _emojiMode =
-                                                                          false,
-                                                                );
-                                                              }
-                                                            },
-                                                            style: TextStyle(
-                                                              color: AppColors
-                                                                  .textPrimary,
+                                                        // Растущее поле —
+                                                        // высота ВСЕЙ пилюли
+                                                        // (см. AnimatedContainer
+                                                        // вместо прежнего
+                                                        // фиксированного
+                                                        // SizedBox(height: 56)
+                                                        // выше) теперь считается
+                                                        // из _composerHeight и
+                                                        // растёт вместе с
+                                                        // количеством строк —
+                                                        // без этого TextField
+                                                        // с minLines/maxLines
+                                                        // просто обрезался бы
+                                                        // родительским фиксом
+                                                        // высоты, как уже было
+                                                        // с прошлым заходом
+                                                        // (expands внутри
+                                                        // фиксированного бокса
+                                                        // на самом деле не мог
+                                                        // расти и визуально
+                                                        // ломался при переносе
+                                                        // строки).
+                                                        child: TextField(
+                                                          controller:
+                                                              _textController,
+                                                          focusNode:
+                                                              _textFocusNode,
+                                                          textCapitalization:
+                                                              TextCapitalization
+                                                                  .sentences,
+                                                          keyboardType:
+                                                              TextInputType
+                                                                  .multiline,
+                                                          textInputAction:
+                                                              TextInputAction
+                                                                  .newline,
+                                                          minLines: 1,
+                                                          maxLines:
+                                                              1 +
+                                                              _composerMaxExtraLines,
+                                                          textAlignVertical:
+                                                              TextAlignVertical
+                                                                  .center,
+                                                          onTap: () {
+                                                            if (_emojiMode) {
+                                                              setState(
+                                                                () =>
+                                                                    _emojiMode =
+                                                                        false,
+                                                              );
+                                                            }
+                                                          },
+                                                          style: TextStyle(
+                                                            color: AppColors
+                                                                .textPrimary,
+                                                          ),
+                                                          contentInsertionConfiguration:
+                                                              ContentInsertionConfiguration(
+                                                                onContentInserted:
+                                                                    _handleContentInserted,
+                                                              ),
+                                                          decoration: InputDecoration(
+                                                            hintText: tr(
+                                                              'chat.messageHint',
                                                             ),
-                                                            contentInsertionConfiguration:
-                                                                ContentInsertionConfiguration(
-                                                                  onContentInserted:
-                                                                      _handleContentInserted,
+                                                            border: InputBorder
+                                                                .none,
+                                                            isDense: true,
+                                                            contentPadding:
+                                                                const EdgeInsets.symmetric(
+                                                                  vertical: 10,
                                                                 ),
-                                                            decoration: InputDecoration(
-                                                              hintText: tr(
-                                                                'chat.messageHint',
-                                                              ),
-                                                              border:
-                                                                  InputBorder
-                                                                      .none,
-                                                              isDense: true,
-                                                              contentPadding:
-                                                                  const EdgeInsets.symmetric(
-                                                                    vertical: 8,
-                                                                  ),
-                                                              hintStyle: TextStyle(
-                                                                color: AppColors
-                                                                    .textMuted,
-                                                              ),
+                                                            hintStyle: TextStyle(
+                                                              color: AppColors
+                                                                  .textMuted,
                                                             ),
                                                           ),
                                                         ),
@@ -5570,8 +5705,21 @@ class _SelectionCheckmarkState extends State<_SelectionCheckmark>
 class _ReactionChip extends StatefulWidget {
   final String? emoji;
   final bool mine;
+  // true — этот чип получил свой эмодзи ПРЯМО СЕЙЧАС (см.
+  // _justReactedMessageIds/_markJustReacted в _ChatScreenState), а не
+  // просто первый раз строится с уже давно стоящей реакцией (открыли чат,
+  // проскроллили историю). didUpdateWidget один этот случай не ловит —
+  // самая частая ситуация "реакции тут вообще не было" меняет тип виджета
+  // в дереве (SizedBox.shrink → Positioned/_ReactionChip, см.
+  // _reactionBadges), так что для чипа это в любом случае ПЕРВОЕ
+  // построение, initState, а не апдейт уже существующего.
+  final bool justChanged;
 
-  const _ReactionChip({required this.emoji, required this.mine});
+  const _ReactionChip({
+    required this.emoji,
+    required this.mine,
+    this.justChanged = false,
+  });
 
   @override
   State<_ReactionChip> createState() => _ReactionChipState();
@@ -5585,12 +5733,25 @@ class _ReactionChipState extends State<_ReactionChip>
   );
 
   @override
+  void initState() {
+    super.initState();
+    if (widget.emoji != null && widget.justChanged) {
+      // Не сразу в этом же кадре — на initState дерево ещё не факт что
+      // полностью подготовлено (первый build ещё не случился), запуск в
+      // addPostFrameCallback гарантированно ловит уже готовый, отрисованный
+      // виджет.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _burstController.forward(from: 0);
+      });
+    }
+  }
+
+  @override
   void didUpdateWidget(covariant _ReactionChip old) {
     super.didUpdateWidget(old);
-    // Только реальная СМЕНА (в т.ч. с null на что-то) запускает искры — не
-    // первичная отрисовка уже существующей реакции при загрузке истории
-    // (initState клиента к этому моменту виджет ещё не "старый", поэтому
-    // didUpdateWidget тут просто не вызовется).
+    // Реальная СМЕНА уже стоявшей реакции на другую (виджет не пересоздан,
+    // просто обновлён — см. комментарий у justChanged выше про то, когда
+    // это вообще происходит).
     if (widget.emoji != null && widget.emoji != old.emoji) {
       _burstController.forward(from: 0);
     }

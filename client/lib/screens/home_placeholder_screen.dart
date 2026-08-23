@@ -23,10 +23,12 @@ import '../services/push_service.dart';
 import '../services/websocket_service.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
+import '../storage/peer_account_store.dart';
 import '../theme/app_theme.dart';
 import '../utils/time_format.dart';
 import '../widgets/avatar_settings_tile.dart';
 import '../widgets/bottom_action_bar.dart';
+import '../widgets/cached_avatar_image.dart';
 import '../widgets/chat_list_context_menu.dart';
 import '../widgets/connection_status_indicator.dart';
 import '../widgets/delete_message_dialog.dart';
@@ -35,7 +37,6 @@ import '../widgets/theme_reactive.dart';
 import 'chat_screen.dart';
 import 'incoming_call_screen.dart';
 import 'my_profile_screen.dart';
-import 'new_chat_screen.dart';
 import 'settings_screen.dart';
 import 'welcome_screen.dart';
 
@@ -58,7 +59,7 @@ class HomePlaceholderScreen extends StatefulWidget {
 }
 
 class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   final _webSocketService = WebSocketService.instance;
   List<ChatSummary> _entries = [];
 
@@ -147,7 +148,308 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _searchDebounce?.cancel();
+    _searchAnimController.dispose();
+    _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
+  }
+
+  // Поиск пользователя прямо в шапке списка чатов (см. ТЗ пользователя —
+  // отдельный экран NewChatScreen больше не нужен): лупа в actions
+  // разворачивается в поле поиска, растущее СПРАВА НАЛЕВО поверх
+  // ConnectionStatusIndicator (см. _buildAppBarTitle), результат — плашка
+  // под шапкой (см. _buildSearchResultsPanel).
+  bool _searchActive = false;
+  final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
+  late final AnimationController _searchAnimController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+  );
+  Timer? _searchDebounce;
+  bool _searchLoading = false;
+  bool _searchFoundIsSelf = false;
+  String? _searchFoundLogin;
+  String? _searchFoundAccountId;
+  String? _searchFoundDeviceId;
+  String? _searchNotFoundMessage;
+
+  void _openSearch() {
+    setState(() => _searchActive = true);
+    unawaited(_searchAnimController.forward());
+    // На следующий кадр — сам разворот пилюли уже пошёл, поле точно
+    // смонтировано и готово принять фокус (запрос фокуса ДО первого build
+    // с _searchActive=true иногда молча теряется).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _searchActive) _searchFocusNode.requestFocus();
+    });
+  }
+
+  void _closeSearch() {
+    _searchDebounce?.cancel();
+    _searchFocusNode.unfocus();
+    unawaited(_searchAnimController.reverse());
+    setState(() {
+      _searchActive = false;
+      _searchController.clear();
+      _searchLoading = false;
+      _searchFoundIsSelf = false;
+      _searchFoundLogin = null;
+      _searchFoundAccountId = null;
+      _searchFoundDeviceId = null;
+      _searchNotFoundMessage = null;
+    });
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    final query = value.trim();
+    if (query.isEmpty) {
+      setState(() {
+        _searchLoading = false;
+        _searchFoundIsSelf = false;
+        _searchFoundLogin = null;
+        _searchFoundAccountId = null;
+        _searchFoundDeviceId = null;
+        _searchNotFoundMessage = null;
+      });
+      return;
+    }
+    setState(() => _searchLoading = true);
+    // Дебаунс — не бьём в сеть на каждое нажатие клавиши, а только когда
+    // пользователь на миг остановился печатать.
+    _searchDebounce = Timer(
+      const Duration(milliseconds: 400),
+      () => unawaited(_runSearch(query)),
+    );
+  }
+
+  Future<void> _runSearch(String query) async {
+    final myLogin = await Session.getLogin();
+    if (!mounted || _searchController.text.trim() != query) return;
+
+    if (myLogin != null && query == myLogin) {
+      setState(() {
+        _searchLoading = false;
+        _searchFoundIsSelf = true;
+        _searchFoundLogin = myLogin;
+        _searchFoundAccountId = null;
+        _searchFoundDeviceId = null;
+        _searchNotFoundMessage = null;
+      });
+      return;
+    }
+
+    try {
+      final token = await Session.getToken();
+      final result = await ApiClient().getDevicesByLogin(token!, query);
+      if (!mounted || _searchController.text.trim() != query) return;
+      final deviceId = result.devices.isNotEmpty
+          ? (result.devices.first['device_id'] ??
+                    result.devices.first['deviceId'])
+                ?.toString()
+          : null;
+      if (deviceId != null && deviceId.isNotEmpty) {
+        await PeerAccountStore.save(deviceId, result.accountId);
+      }
+      unawaited(PeerProfileCache.get(result.accountId, query));
+      if (!mounted) return;
+      setState(() {
+        _searchLoading = false;
+        _searchFoundIsSelf = false;
+        _searchFoundLogin = query;
+        _searchFoundAccountId = result.accountId;
+        _searchFoundDeviceId = deviceId;
+        _searchNotFoundMessage = null;
+      });
+    } catch (e) {
+      if (!mounted || _searchController.text.trim() != query) return;
+      setState(() {
+        _searchLoading = false;
+        _searchFoundIsSelf = false;
+        _searchFoundLogin = null;
+        _searchFoundAccountId = null;
+        _searchFoundDeviceId = null;
+        _searchNotFoundMessage = e.toString();
+      });
+    }
+  }
+
+  Future<void> _openSearchResult() async {
+    if (_searchFoundIsSelf) {
+      final myAccountId = await Session.getAccountId() ?? '';
+      if (!mounted) return;
+      _closeSearch();
+      Navigator.push(
+        context,
+        SwipeBackPageRoute(
+          builder: (context) => ChatScreen(
+            peerDeviceId: '',
+            peerAccountId: myAccountId,
+            peerLogin: notesPeerLogin,
+          ),
+        ),
+      );
+      return;
+    }
+    final login = _searchFoundLogin;
+    final accountId = _searchFoundAccountId;
+    if (login == null || accountId == null) return;
+    final deviceId = _searchFoundDeviceId ?? '';
+    _closeSearch();
+    Navigator.push(
+      context,
+      SwipeBackPageRoute(
+        builder: (context) => ChatScreen(
+          peerDeviceId: deviceId,
+          peerAccountId: accountId,
+          peerLogin: login,
+        ),
+      ),
+    );
+  }
+
+  /// Заголовок шапки чатов — обычно просто ConnectionStatusIndicator, а во
+  /// время поиска сверху вырастает пилюля поля ввода: растёт она СПРАВА
+  /// (от места, где сидит лупа в actions) НАЛЕВО, поверх статуса — Align с
+  /// анимированным widthFactor и ClipRect режут по живому края фиксированной
+  /// по ширине (= вся доступная ширина заголовка) SizedBox с полем, поэтому
+  /// сам TextField ни разу не меняет собственные constraints/раскладку за
+  /// время анимации, дёргается только видимая "открытая" часть.
+  Widget _buildAppBarTitle() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+        return AnimatedBuilder(
+          animation: _searchAnimController,
+          builder: (context, _) {
+            final t = Curves.easeOut.transform(_searchAnimController.value);
+            return Stack(
+              alignment: Alignment.centerLeft,
+              clipBehavior: Clip.none,
+              children: [
+                if (t < 1)
+                  Opacity(
+                    opacity: (1 - t).clamp(0.0, 1.0),
+                    child: const ConnectionStatusIndicator(),
+                  ),
+                if (t > 0)
+                  ClipRect(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      widthFactor: t,
+                      child: SizedBox(
+                        width: maxWidth > 0 ? maxWidth : null,
+                        child: _buildSearchField(),
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildSearchField() {
+    return Container(
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(19),
+      ),
+      alignment: Alignment.centerLeft,
+      child: TextField(
+        controller: _searchController,
+        focusNode: _searchFocusNode,
+        onChanged: _onSearchChanged,
+        textInputAction: TextInputAction.search,
+        style: TextStyle(color: AppColors.textPrimary, fontSize: 15),
+        decoration: InputDecoration(
+          isCollapsed: true,
+          border: InputBorder.none,
+          hintText: tr('newChat.loginHint'),
+          hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 15),
+        ),
+      ),
+    );
+  }
+
+  /// Плашка результата поиска — сразу под шапкой, поверх списка чатов;
+  /// пусто, пока поле поиска пустое ИЛИ поиск ещё не активен.
+  Widget _buildSearchResultsPanel() {
+    if (!_searchActive) return const SizedBox.shrink();
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return const SizedBox.shrink();
+
+    Widget content;
+    if (_searchLoading) {
+      content = const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    } else if (_searchFoundLogin != null) {
+      content = Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          leading: _searchFoundIsSelf
+              ? ValueListenableBuilder<Uint8List?>(
+                  valueListenable: MyAvatarStore.notifier,
+                  builder: (context, bytes, _) =>
+                      AvatarThumbnail(bytes: bytes, radius: 20),
+                )
+              : CachedAvatarImage(
+                  accountId: _searchFoundAccountId!,
+                  radius: 20,
+                ),
+          title: Text(
+            _searchFoundIsSelf ? tr('home.notes') : _searchFoundLogin!,
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          onTap: () => unawaited(_openSearchResult()),
+        ),
+      );
+    } else if (_searchNotFoundMessage != null) {
+      content = Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+        child: Text(
+          _searchNotFoundMessage!,
+          style: TextStyle(color: AppColors.textMuted),
+        ),
+      );
+    } else {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: content,
+    );
   }
 
   // Раньше пуш "У вас новое сообщение" так и висел в шторке уведомлений
@@ -550,10 +852,20 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
       // На "обратной стороне" (настройки/профиль) системный back должен
       // сначала развернуть карточку обратно к чатам, а не сразу закрывать
       // приложение — это то же самое действие, что и тап по табу чатов
-      // на нижней панели.
-      canPop: _selectedTab == 0,
+      // на нижней панели. Активный поиск перехватывает back ЕЩЁ раньше и
+      // сам, в два шага (см. ТЗ пользователя): первый back только прячет
+      // клавиатуру, второй — сворачивает саму пилюлю поиска обратно в лупу.
+      canPop: _selectedTab == 0 && !_searchActive,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
+        if (_searchActive) {
+          if (_searchFocusNode.hasFocus) {
+            _searchFocusNode.unfocus();
+          } else {
+            _closeSearch();
+          }
+          return;
+        }
         _selectTab(0);
       },
       child: Scaffold(
@@ -578,7 +890,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
             : _selectedTab == 2
             ? AppBar()
             : AppBar(
-                title: const ConnectionStatusIndicator(),
+                title: _buildAppBarTitle(),
                 centerTitle: false,
                 // Скруглённые нижние углы (см. ТЗ пользователя) — верхние
                 // сознательно НЕ трогаем, они и так уже прижаты к самому
@@ -590,15 +902,8 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                 ),
                 actions: [
                   _BouncyIconButton(
-                    icon: Icons.add,
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        SwipeBackPageRoute(
-                          builder: (context) => const NewChatScreen(),
-                        ),
-                      );
-                    },
+                    icon: _searchActive ? Icons.close : Icons.search,
+                    onPressed: _searchActive ? _closeSearch : _openSearch,
                   ),
                 ],
               ),
@@ -635,6 +940,12 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                 selectedIndex: _selectedTab,
                 onTabSelected: _selectTab,
               ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              child: _buildSearchResultsPanel(),
             ),
           ],
         ),
@@ -955,12 +1266,11 @@ class _OtherAvatarLeadingState extends State<_OtherAvatarLeading> {
   }
 }
 
-/// Кнопка "+" в шапке списка чатов (открывает NewChatScreen) — сама иконка
-/// чуть проседает и снова пружинит обратно при нажатии (см. ТЗ пользователя
-/// "добавить анимацию при нажатии +"), вместо мгновенной, никак визуально
-/// не подтверждённой смены экрана. GestureDetector, а не встроенный
-/// InkResponse/splash у IconButton — тот даёт только заливку без движения
-/// самой иконки.
+/// Кнопка-лупа поиска в шапке списка чатов (см. _openSearch/_closeSearch) —
+/// сама иконка чуть проседает и снова пружинит обратно при нажатии, вместо
+/// мгновенной, никак визуально не подтверждённой реакции. GestureDetector,
+/// а не встроенный InkResponse/splash у IconButton — тот даёт только
+/// заливку без движения самой иконки.
 class _BouncyIconButton extends StatefulWidget {
   final IconData icon;
   final VoidCallback onPressed;
