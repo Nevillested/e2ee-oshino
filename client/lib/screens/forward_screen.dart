@@ -1,9 +1,13 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
+import '../services/my_avatar_store.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
 import '../theme/app_theme.dart';
+import '../widgets/avatar_settings_tile.dart';
+import '../widgets/cached_avatar_image.dart';
 import '../widgets/swipe_back_page_route.dart';
 import '../widgets/theme_reactive.dart';
 import 'chat_screen.dart';
@@ -87,10 +91,26 @@ class _ForwardScreenState extends State<ForwardScreen> {
               itemCount: _peers.length,
               itemBuilder: (context, index) {
                 final entry = _peers[index];
+                final isNotes = entry.peerLogin == notesPeerLogin;
                 return ListTile(
-                  leading: const CircleAvatar(child: Icon(Icons.person)),
+                  leading: isNotes
+                      ? ValueListenableBuilder<Uint8List?>(
+                          valueListenable: MyAvatarStore.notifier,
+                          builder: (context, bytes, _) =>
+                              AvatarThumbnail(bytes: bytes, radius: 22),
+                        )
+                      : (entry.lastKnownAccountId == null
+                            ? const CircleAvatar(child: Icon(Icons.person))
+                            : CachedAvatarImage(
+                                accountId: entry.lastKnownAccountId!,
+                                radius: 22,
+                              )),
                   title: Text(
-                    entry.isDeleted ? tr('home.deletedAccount') : entry.peerLogin,
+                    isNotes
+                        ? tr('home.notes')
+                        : (entry.isDeleted
+                              ? tr('home.deletedAccount')
+                              : entry.peerLogin),
                     style: TextStyle(color: AppColors.textPrimary),
                   ),
                   subtitle: Text(

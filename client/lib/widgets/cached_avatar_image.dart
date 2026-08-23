@@ -41,7 +41,13 @@ class _CachedAvatarImageState extends State<CachedAvatarImage> {
   void _listen() {
     _sub = AvatarCache.changes.listen((id) {
       if (id != widget.accountId || !mounted) return;
-      setState(() => _bytes = AvatarCache.peek(id));
+      // peek() сразу после invalidate() всегда вернёт null (запись только
+      // что убрали из памяти) — без явного _fetch этот виджет так и
+      // остался бы висеть с пустым/устаревшим кадром до следующего
+      // пересоздания (Hero-полёт, смена accountId), вместо того чтобы
+      // сразу подтянуть актуальное фото (или убедиться, что его больше
+      // нет — например, скрыли приватностью).
+      _fetch(id);
     });
   }
 

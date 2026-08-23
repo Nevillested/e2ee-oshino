@@ -13,6 +13,7 @@ import '../crypto/session_store.dart';
 import '../crypto/x3dh.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
+import '../storage/peer_account_store.dart';
 import '../storage/peer_identity_store.dart';
 import 'active_chat_tracker.dart';
 import 'debug_log.dart';
@@ -519,11 +520,48 @@ class MessageRouter {
     );
   }
 
+  // device_id → владелец не меняется на протяжении жизни устройства (модель
+  // "1 аккаунт = 1 устройство", см. OSHINOBU_OVERVIEW.md) — раньше каждое
+  // ВХОДЯЩЕЕ событие (текст, реакция, правка, удаление и т.д.) сначала ждало
+  // полный HTTP round-trip на /devices/{id}/owner, прежде чем вообще
+  // применить его локально. При обоих собеседниках онлайн доставка через
+  // WebSocket сама по себе почти мгновенна — именно это ожидание сети было
+  // причиной заметной задержки (особенно бросалось в глаза на удалении,
+  // где пользователь ждёт, что пузырь исчезнет сразу). Кэшируем результат:
+  // сначала в памяти процесса (мгновенно на все последующие события до
+  // перезапуска), затем на диске через PeerAccountStore (device_id →
+  // account_id, уже используется в других местах) + известный логин из
+  // списка чатов — и только если ни то, ни другое не помогло, идём в сеть.
+  static final Map<String, ({String accountId, String login})> _ownerCache =
+      {};
+
   static Future<({String accountId, String login})?> _resolveOwner(
     String deviceId,
   ) async {
+    final cached = _ownerCache[deviceId];
+    if (cached != null) return cached;
+
+    final cachedAccountId = await PeerAccountStore.get(deviceId);
+    if (cachedAccountId != null) {
+      final peers = await ChatStore.getKnownPeers();
+      final match = peers.where((p) => p.lastKnownAccountId == cachedAccountId);
+      if (match.isNotEmpty) {
+        final resolved = (
+          accountId: cachedAccountId,
+          login: match.first.peerLogin,
+        );
+        _ownerCache[deviceId] = resolved;
+        return resolved;
+      }
+    }
+
     final token = await Session.getToken();
     if (token == null) return null;
-    return ApiClient().getDeviceOwnerInfo(token, deviceId);
+    final resolved = await ApiClient().getDeviceOwnerInfo(token, deviceId);
+    if (resolved != null) {
+      _ownerCache[deviceId] = resolved;
+      unawaited(PeerAccountStore.save(deviceId, resolved.accountId));
+    }
+    return resolved;
   }
 }

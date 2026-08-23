@@ -12,6 +12,30 @@ import 'app_lock_settings_screen.dart';
 import 'change_password_screen.dart';
 import 'privacy_settings_screen.dart';
 
+/// Цветная скруглённая плашка под иконкой пункта настроек — как в Telegram
+/// (у каждого пункта свой фирменный цвет, а не одинаковый приглушённый
+/// серый для всех). Белая иконка поверх сплошного цвета читается в обеих
+/// темах одинаково, без завязки на AppColors.
+class _SettingsIcon extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+
+  const _SettingsIcon({required this.icon, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 30,
+      height: 30,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(icon, color: Colors.white, size: 18),
+    );
+  }
+}
+
 /// Содержимое "обратной стороны" HomePlaceholderScreen (см.
 /// _buildFlippableBody там) — сам список пунктов настроек, без Scaffold и
 /// AppBar: они у HomePlaceholderScreen общие с чатами, меняется только
@@ -24,7 +48,10 @@ class SettingsContent extends StatelessWidget {
     return ListView(
       children: [
         ListTile(
-          leading: Icon(Icons.email_outlined, color: AppColors.textMuted),
+          leading: const _SettingsIcon(
+            icon: Icons.email_outlined,
+            color: Color(0xFF2AABEE),
+          ),
           title: Text(
             tr('settings.email'),
             style: TextStyle(color: AppColors.textPrimary),
@@ -32,7 +59,10 @@ class SettingsContent extends StatelessWidget {
           onTap: () => showEmailDialog(context),
         ),
         ListTile(
-          leading: Icon(Icons.lock_outline, color: AppColors.textMuted),
+          leading: const _SettingsIcon(
+            icon: Icons.lock_outline,
+            color: Color(0xFFFF9F0A),
+          ),
           title: Text(
             tr('settings.changePassword'),
             style: TextStyle(color: AppColors.textPrimary),
@@ -45,9 +75,9 @@ class SettingsContent extends StatelessWidget {
           ),
         ),
         ListTile(
-          leading: Icon(
-            Icons.emoji_emotions_outlined,
-            color: AppColors.textMuted,
+          leading: const _SettingsIcon(
+            icon: Icons.emoji_emotions_outlined,
+            color: Color(0xFFFF6482),
           ),
           title: Text(
             tr('settings.defaultReaction'),
@@ -56,7 +86,10 @@ class SettingsContent extends StatelessWidget {
           onTap: () => showDefaultReactionDialog(context),
         ),
         ListTile(
-          leading: Icon(Icons.language, color: AppColors.textMuted),
+          leading: const _SettingsIcon(
+            icon: Icons.language,
+            color: Color(0xFF32C769),
+          ),
           title: Text(
             tr('settings.language'),
             style: TextStyle(color: AppColors.textPrimary),
@@ -64,7 +97,10 @@ class SettingsContent extends StatelessWidget {
           onTap: () => showLanguageDialog(context),
         ),
         ListTile(
-          leading: Icon(Icons.palette_outlined, color: AppColors.textMuted),
+          leading: const _SettingsIcon(
+            icon: Icons.palette_outlined,
+            color: Color(0xFFAF52DE),
+          ),
           title: Text(
             tr('settings.theme'),
             style: TextStyle(color: AppColors.textPrimary),
@@ -72,7 +108,10 @@ class SettingsContent extends StatelessWidget {
           onTap: () => showThemeDialog(context),
         ),
         ListTile(
-          leading: Icon(Icons.text_fields, color: AppColors.textMuted),
+          leading: const _SettingsIcon(
+            icon: Icons.text_fields,
+            color: Color(0xFF5AC8FA),
+          ),
           title: Text(
             tr('settings.fontSize'),
             style: TextStyle(color: AppColors.textPrimary),
@@ -80,9 +119,9 @@ class SettingsContent extends StatelessWidget {
           onTap: () => showFontSizeDialog(context),
         ),
         ListTile(
-          leading: Icon(
-            Icons.privacy_tip_outlined,
-            color: AppColors.textMuted,
+          leading: const _SettingsIcon(
+            icon: Icons.privacy_tip_outlined,
+            color: Color(0xFF34C759),
           ),
           title: Text(
             tr('settings.privacy'),
@@ -96,9 +135,9 @@ class SettingsContent extends StatelessWidget {
           ),
         ),
         ListTile(
-          leading: Icon(
-            Icons.phonelink_lock_outlined,
-            color: AppColors.textMuted,
+          leading: const _SettingsIcon(
+            icon: Icons.phonelink_lock_outlined,
+            color: Color(0xFF5E5CE6),
           ),
           title: Text(
             tr('settings.appLock'),
@@ -112,7 +151,10 @@ class SettingsContent extends StatelessWidget {
           ),
         ),
         ListTile(
-          leading: Icon(Icons.info_outline, color: AppColors.textMuted),
+          leading: const _SettingsIcon(
+            icon: Icons.info_outline,
+            color: Color(0xFF8E8E93),
+          ),
           title: Text(
             tr('settings.about'),
             style: TextStyle(color: AppColors.textPrimary),
@@ -123,7 +165,10 @@ class SettingsContent extends StatelessWidget {
           ),
         ),
         ListTile(
-          leading: const Icon(Icons.logout, color: Colors.red),
+          leading: const _SettingsIcon(
+            icon: Icons.logout,
+            color: Color(0xFFFF3B30),
+          ),
           title: Text(
             tr('settings.logout'),
             style: const TextStyle(color: Colors.red),
@@ -131,7 +176,10 @@ class SettingsContent extends StatelessWidget {
           onTap: () => confirmLogout(context),
         ),
         ListTile(
-          leading: const Icon(Icons.delete_forever, color: Colors.red),
+          leading: const _SettingsIcon(
+            icon: Icons.delete_forever,
+            color: Color(0xFFB00020),
+          ),
           title: Text(
             tr('settings.deleteAccount'),
             style: const TextStyle(color: Colors.red),

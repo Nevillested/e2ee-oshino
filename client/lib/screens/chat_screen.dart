@@ -11,7 +11,12 @@ import 'package:flutter/gestures.dart' show TapGestureRecognizer;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart'
-    show Clipboard, ClipboardData, HapticFeedback, KeyboardInsertedContent;
+    show
+        Clipboard,
+        ClipboardData,
+        HapticFeedback,
+        KeyboardInsertedContent,
+        SystemChannels;
 import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -108,7 +113,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   static const int _autoDownloadLimitBytes = 10 * 1024 * 1024; // 10 МБ
   static const int _streamingThresholdBytes = 20 * 1024 * 1024; // 20 МБ
   static const int _maxAttachmentSizeBytes = 500 * 1024 * 1024; // 500 МБ
@@ -412,6 +417,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     ActiveChatTracker.currentPeerLogin = widget.peerLogin;
     ChatStore.clearUnread(widget.peerLogin);
     _currentPeerDeviceId = widget.peerDeviceId;
@@ -4190,8 +4196,43 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // Android гасит системную клавиатуру сам при уходе приложения в фон, но
+  // НЕ трогает наш _textFocusNode — Flutter-level фокус остаётся висеть
+  // "включённым", хотя реальной клавиатуры уже нет. На части устройств
+  // после возврата в приложение первый же кадр(-ы) при этом ещё отдают
+  // старое (докадровое) значение viewInsets.bottom, из-за системной
+  // resize-анимации самого перехода — из-за этого `reserved` в build()
+  // на миг-другой продолжает резервировать место под клавиатуру, которой
+  // уже нет (пустой зазор), а после ухода с этого экрана то же самое
+  // "залипшее" значение отступа успевает просочиться в соседний экран
+  // (список чатов), где резервируемое место не привязано к фокусу вообще
+  // и потому не сбрасывается само. Снимая фокус ЗАРАНЕЕ, в момент ухода в
+  // фон (а не постфактум, после возврата), просим у Flutter официально
+  // закрыть клавиатуру ЕГО собственным путём — тогда его внутренний учёт
+  // инсетов не расходится с реальностью, и `reserved`/`hasFocus` уже к
+  // моменту возврата в приложение корректно равны нулю.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      if (_textFocusNode.hasFocus) {
+        _textFocusNode.unfocus();
+      }
+      return;
+    }
+    // Подстраховка на случай, если поле всё же ушло в фон уже без фокуса
+    // (например, фокус сняли ДО сворачивания каким-то другим путём), а
+    // системная клавиатура при этом оставалась открытой — явно просим ОС
+    // скрыть её при возврате, не дожидаясь, пока viewInsets сам когда-
+    // нибудь досчитается до правильного значения.
+    if (state == AppLifecycleState.resumed && !_textFocusNode.hasFocus) {
+      unawaited(SystemChannels.textInput.invokeMethod('TextInput.hide'));
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pendingTapTimer?.cancel();
     _scrollSaveDebounce?.cancel();
     _keyboardHeightSettleTimer?.cancel();
@@ -5192,46 +5233,83 @@ class _ChatScreenState extends State<ChatScreen> {
                                                       ),
                                                       const SizedBox(width: 2),
                                                       Expanded(
-                                                        child: TextField(
-                                                          controller:
-                                                              _textController,
-                                                          focusNode:
-                                                              _textFocusNode,
-                                                          textCapitalization:
-                                                              TextCapitalization
-                                                                  .sentences,
-                                                          onTap: () {
-                                                            if (_emojiMode) {
-                                                              setState(
-                                                                () =>
-                                                                    _emojiMode =
-                                                                        false,
-                                                              );
-                                                            }
-                                                          },
-                                                          style: TextStyle(
-                                                            color: AppColors
-                                                                .textPrimary,
-                                                          ),
-                                                          contentInsertionConfiguration:
-                                                              ContentInsertionConfiguration(
-                                                                onContentInserted:
-                                                                    _handleContentInserted,
-                                                              ),
-                                                          decoration: InputDecoration(
-                                                            hintText: tr(
-                                                              'chat.messageHint',
-                                                            ),
-                                                            border: InputBorder
-                                                                .none,
-                                                            isDense: true,
-                                                            contentPadding:
-                                                                const EdgeInsets.symmetric(
-                                                                  vertical: 12,
-                                                                ),
-                                                            hintStyle: TextStyle(
+                                                        // Пилюля-контейнер имеет
+                                                        // ЗАФИКСИРОВАННУЮ высоту 56
+                                                        // (см. комментарий у
+                                                        // SizedBox(height: 56) выше) —
+                                                        // настоящий растущий
+                                                        // (Telegram-подобный) композер
+                                                        // потребовал бы менять эту
+                                                        // высоту динамически, а вместе
+                                                        // с ней — переигрывать Stack/
+                                                        // _FlipSwitcher, которые сейчас
+                                                        // жёстко на неё полагаются.
+                                                        // Вместо этого поле остаётся
+                                                        // визуально той же высоты, но
+                                                        // становится многострочным
+                                                        // (expands: true заполняет этот
+                                                        // SizedBox целиком) — Enter
+                                                        // вставляет перенос строки, а
+                                                        // не закрывает клавиатуру,
+                                                        // лишний текст прокручивается
+                                                        // ВНУТРИ поля, а не раздувает
+                                                        // саму панель.
+                                                        child: SizedBox(
+                                                          height: 40,
+                                                          child: TextField(
+                                                            controller:
+                                                                _textController,
+                                                            focusNode:
+                                                                _textFocusNode,
+                                                            textCapitalization:
+                                                                TextCapitalization
+                                                                    .sentences,
+                                                            keyboardType:
+                                                                TextInputType
+                                                                    .multiline,
+                                                            textInputAction:
+                                                                TextInputAction
+                                                                    .newline,
+                                                            expands: true,
+                                                            maxLines: null,
+                                                            minLines: null,
+                                                            textAlignVertical:
+                                                                TextAlignVertical
+                                                                    .center,
+                                                            onTap: () {
+                                                              if (_emojiMode) {
+                                                                setState(
+                                                                  () =>
+                                                                      _emojiMode =
+                                                                          false,
+                                                                );
+                                                              }
+                                                            },
+                                                            style: TextStyle(
                                                               color: AppColors
-                                                                  .textMuted,
+                                                                  .textPrimary,
+                                                            ),
+                                                            contentInsertionConfiguration:
+                                                                ContentInsertionConfiguration(
+                                                                  onContentInserted:
+                                                                      _handleContentInserted,
+                                                                ),
+                                                            decoration: InputDecoration(
+                                                              hintText: tr(
+                                                                'chat.messageHint',
+                                                              ),
+                                                              border:
+                                                                  InputBorder
+                                                                      .none,
+                                                              isDense: true,
+                                                              contentPadding:
+                                                                  const EdgeInsets.symmetric(
+                                                                    vertical: 8,
+                                                                  ),
+                                                              hintStyle: TextStyle(
+                                                                color: AppColors
+                                                                    .textMuted,
+                                                              ),
                                                             ),
                                                           ),
                                                         ),
@@ -5484,38 +5562,138 @@ class _SelectionCheckmarkState extends State<_SelectionCheckmark>
 }
 
 /// Один "чип" реакции — плавно масштабируется при появлении/исчезновении/
-/// смене эмодзи (см. AnimatedSwitcher внутри), а не появляется рывком.
-/// mine=true — своя реакция (рамка цветом акцента), false — реакция
-/// собеседника (приглушённая рамка).
-class _ReactionChip extends StatelessWidget {
+/// смене эмодзи (см. AnimatedSwitcher внутри), а не появляется рывком, и при
+/// НОВОЙ простановке (не при первой отрисовке уже существующей — см.
+/// didUpdateWidget) обрастает коротким разлётом искр вокруг себя, как
+/// "хлопок" в Telegram, а не просто всплывает молча. mine=true — своя
+/// реакция (акцентная обводка), false — реакция собеседника (приглушённая).
+class _ReactionChip extends StatefulWidget {
   final String? emoji;
   final bool mine;
 
   const _ReactionChip({required this.emoji, required this.mine});
 
   @override
+  State<_ReactionChip> createState() => _ReactionChipState();
+}
+
+class _ReactionChipState extends State<_ReactionChip>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _burstController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 520),
+  );
+
+  @override
+  void didUpdateWidget(covariant _ReactionChip old) {
+    super.didUpdateWidget(old);
+    // Только реальная СМЕНА (в т.ч. с null на что-то) запускает искры — не
+    // первичная отрисовка уже существующей реакции при загрузке истории
+    // (initState клиента к этому моменту виджет ещё не "старый", поэтому
+    // didUpdateWidget тут просто не вызовется).
+    if (widget.emoji != null && widget.emoji != old.emoji) {
+      _burstController.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _burstController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final accent = mine ? AppColors.primary : AppColors.textMuted;
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 220),
-      transitionBuilder: (child, anim) => ScaleTransition(
-        scale: CurvedAnimation(parent: anim, curve: Curves.easeOutBack),
-        child: FadeTransition(opacity: anim, child: child),
-      ),
-      child: emoji == null
-          ? const SizedBox.shrink(key: ValueKey('_empty'))
-          : Container(
-              key: ValueKey('${mine}_$emoji'),
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppColors.background,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: accent, width: 1.4),
+    final accent = widget.mine ? AppColors.primary : AppColors.textMuted;
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.center,
+      children: [
+        Positioned(
+          left: -14,
+          right: -14,
+          top: -14,
+          bottom: -14,
+          child: IgnorePointer(
+            child: AnimatedBuilder(
+              animation: _burstController,
+              builder: (context, _) => CustomPaint(
+                painter: _ReactionBurstPainter(
+                  progress: _burstController.value,
+                  color: accent,
+                ),
               ),
-              child: Text(emoji!, style: const TextStyle(fontSize: 13)),
             ),
+          ),
+        ),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          transitionBuilder: (child, anim) => ScaleTransition(
+            scale: CurvedAnimation(parent: anim, curve: Curves.easeOutBack),
+            child: FadeTransition(opacity: anim, child: child),
+          ),
+          child: widget.emoji == null
+              ? const SizedBox.shrink(key: ValueKey('_empty'))
+              : Container(
+                  key: ValueKey('${widget.mine}_${widget.emoji}'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(30),
+                    border: Border.all(color: accent, width: 1.4),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.18),
+                        blurRadius: 3,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: Text(widget.emoji!, style: const TextStyle(fontSize: 13)),
+                ),
+        ),
+      ],
     );
   }
+}
+
+/// Кольцо мелких искр, разлетающихся от центра чипа и гаснущих по пути —
+/// progress 0 → только что появились, вплотную к центру; progress 1 →
+/// долетели до максимального радиуса и полностью прозрачны. Рисуется поверх
+/// (точнее, под — см. порядок в Stack) самого чипа только на время короткой
+/// анимации, дальше просто холостой пустой холст.
+class _ReactionBurstPainter extends CustomPainter {
+  final double progress;
+  final Color color;
+
+  _ReactionBurstPainter({required this.progress, required this.color});
+
+  static const _sparkCount = 8;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (progress <= 0 || progress >= 1) return;
+    final center = Offset(size.width / 2, size.height / 2);
+    final maxRadius = size.shortestSide / 2;
+    final eased = Curves.easeOut.transform(progress);
+    final distance = eased * maxRadius;
+    final opacity = 1 - progress;
+    final paint = Paint()..color = color.withValues(alpha: opacity);
+    for (var i = 0; i < _sparkCount; i++) {
+      final angle = (i / _sparkCount) * 2 * math.pi;
+      final sparkCenter =
+          center + Offset(math.cos(angle), math.sin(angle)) * distance;
+      final radius = (1 - progress) * 2.2;
+      canvas.drawCircle(sparkCenter, radius, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ReactionBurstPainter old) =>
+      old.progress != progress || old.color != color;
 }
 
 /// Пульсирующая красная точка рядом с таймером записи — простой, но

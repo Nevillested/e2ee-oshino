@@ -803,18 +803,18 @@ class AppStrings {
 
     'profile.title': {AppLocale.ru: 'Профиль', AppLocale.en: 'Profile'},
     'profile.login': {AppLocale.ru: 'Логин', AppLocale.en: 'Username'},
-    'profile.status': {AppLocale.ru: 'Статус', AppLocale.en: 'Status'},
+    'profile.status': {AppLocale.ru: 'Био', AppLocale.en: 'Bio'},
     'profile.statusEmpty': {
-      AppLocale.ru: 'Не указан',
+      AppLocale.ru: 'Не указано',
       AppLocale.en: 'Not set',
     },
     'profile.statusHint': {
-      AppLocale.ru: 'Например: занят, на связи…',
-      AppLocale.en: 'e.g. busy, available…',
+      AppLocale.ru: 'Расскажите о себе',
+      AppLocale.en: 'Tell people about yourself',
     },
     'profile.editStatus': {
-      AppLocale.ru: 'Изменить статус',
-      AppLocale.en: 'Edit status',
+      AppLocale.ru: 'Изменить био',
+      AppLocale.en: 'Edit bio',
     },
     'profile.birthday': {
       AppLocale.ru: 'Дата рождения',
@@ -842,8 +842,8 @@ class AppStrings {
       AppLocale.en: 'Who can see my birthday',
     },
     'privacy.status': {
-      AppLocale.ru: 'Кто видит мой статус',
-      AppLocale.en: 'Who can see my status',
+      AppLocale.ru: 'Кто видит моё био',
+      AppLocale.en: 'Who can see my bio',
     },
     'privacy.everyone': {AppLocale.ru: 'Все пользователи', AppLocale.en: 'Everyone'},
     'privacy.contactsOnly': {

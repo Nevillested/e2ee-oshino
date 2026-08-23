@@ -589,12 +589,12 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                   ),
                 ),
                 actions: [
-                  IconButton(
-                    icon: const Icon(Icons.add),
+                  _BouncyIconButton(
+                    icon: Icons.add,
                     onPressed: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(
+                        SwipeBackPageRoute(
                           builder: (context) => const NewChatScreen(),
                         ),
                       );
@@ -951,6 +951,62 @@ class _OtherAvatarLeadingState extends State<_OtherAvatarLeading> {
       builder: (context, snapshot) {
         return AvatarThumbnail(bytes: snapshot.data, radius: 27);
       },
+    );
+  }
+}
+
+/// Кнопка "+" в шапке списка чатов (открывает NewChatScreen) — сама иконка
+/// чуть проседает и снова пружинит обратно при нажатии (см. ТЗ пользователя
+/// "добавить анимацию при нажатии +"), вместо мгновенной, никак визуально
+/// не подтверждённой смены экрана. GestureDetector, а не встроенный
+/// InkResponse/splash у IconButton — тот даёт только заливку без движения
+/// самой иконки.
+class _BouncyIconButton extends StatefulWidget {
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  const _BouncyIconButton({required this.icon, required this.onPressed});
+
+  @override
+  State<_BouncyIconButton> createState() => _BouncyIconButtonState();
+}
+
+class _BouncyIconButtonState extends State<_BouncyIconButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 120),
+    lowerBound: 0,
+    upperBound: 1,
+  );
+  late final Animation<double> _scale = Tween(
+    begin: 1.0,
+    end: 0.8,
+  ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => _controller.forward(),
+      onTapCancel: () => _controller.reverse(),
+      onTapUp: (_) {
+        _controller.reverse();
+        widget.onPressed();
+      },
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: ScaleTransition(
+          scale: _scale,
+          child: Icon(widget.icon, color: AppColors.textPrimary),
+        ),
+      ),
     );
   }
 }

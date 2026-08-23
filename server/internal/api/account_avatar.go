@@ -153,13 +153,42 @@ func serveAvatar(ctx context.Context, w http.ResponseWriter, queries *db.Queries
 	}
 }
 
-// Отдать аватар любого аккаунта по его ID — доступ проверяем только на
-// уровне "это вообще авторизованный пользователь приложения" (как и
-// остальные запросы), без дополнительных ограничений: фото профиля не
-// секрет, его и так видят все контакты в общем списке чатов.
+// avatarVisibleTo — те же правила видимости, что fieldVisible в
+// account_profile.go (GetAccountProfileHandler), но продублированы тут:
+// этот хендлер отдаёт сырые байты фото напрямую по account_id, а не через
+// /account/profile/{login}, и раньше вообще не проверял AvatarVisibility —
+// из-за этого смена приватности на "никто"/"только контакты" не мешала
+// скачать фото по прямому запросу, а инвалидация клиентского кэша (см.
+// AvatarCache.invalidate) ничего не решала: следующий же рефетч всё равно
+// получал то же самое фото обратно.
+func avatarVisibleTo(ctx context.Context, queries *db.Queries, ownerID, viewerID pgtype.UUID) bool {
+	if ownerID == viewerID {
+		return true
+	}
+	owner, err := queries.GetAccountByID(ctx, ownerID)
+	if err != nil {
+		return false
+	}
+	switch owner.AvatarVisibility {
+	case 1:
+		return true
+	case 2:
+		isContact, contactErr := queries.IsContact(ctx, db.IsContactParams{
+			AccountID:     ownerID,
+			PeerAccountID: viewerID,
+		})
+		return contactErr == nil && isContact
+	default:
+		return false
+	}
+}
+
+// Отдать аватар любого аккаунта по его ID — сперва проверяем настройки
+// приватности владельца (см. avatarVisibleTo), затем доступ на уровне
+// "это вообще авторизованный пользователь приложения".
 func NewGetAvatarHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var _, err = CheckToken(w, r, queries)
+		var Session, err = CheckToken(w, r, queries)
 		if err != nil {
 			return
 		}
@@ -168,6 +197,11 @@ func NewGetAvatarHandler(queries *db.Queries, minioClient *minio.Client) func(ht
 		var accountID pgtype.UUID
 		if ScanErr := accountID.Scan(accountIDStr); ScanErr != nil {
 			http.Error(w, "Ошибка конвертации account_id", http.StatusBadRequest)
+			return
+		}
+
+		if !avatarVisibleTo(r.Context(), queries, accountID, Session.AccountID) {
+			http.Error(w, "У аккаунта нет фото профиля", http.StatusNotFound)
 			return
 		}
 
