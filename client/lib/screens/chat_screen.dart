@@ -3880,12 +3880,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     String? peerReaction,
     bool isMine,
   ) {
-    if (myReaction == null && peerReaction == null)
-      return const SizedBox.shrink();
-    // Флаг "только что" (см. _markJustReacted/_justReactedMessageIds) — без
-    // него _ReactionChip не может отличить "эта реакция только что
-    // появилась, надо проиграть искры" от "чат открыли заново, а реакция
-    // была тут уже давно" (initState вызывается в обоих случаях одинаково).
+    // ВАЖНО: раньше тут было "if (myReaction == null && peerReaction ==
+    // null) return SizedBox.shrink()" — короткий путь для самого частого
+    // случая "реакций тут вообще нет". Но из-за этого при ПЕРВОЙ на
+    // сообщение реакции виджет в этом месте дерева менял ТИП (SizedBox →
+    // Positioned) — Flutter не может обновить widget другого типа на
+    // месте, только пересоздать заново, а значит для самого частого
+    // сценария ("реакции тут не было, только что поставили") ни
+    // AnimatedSwitcher внутри _ReactionChip (у него встроенное правило —
+    // самый первый child при монтировании НЕ анимируется), ни
+    // didUpdateWidget там же попросту не успевали сработать: виджет
+    // монтировался уже готовым, без единого кадра перехода. Теперь чипы
+    // существуют всегда (просто пустые — SizedBox.shrink ВНУТРИ
+    // _ReactionChip, а не вместо него), поэтому именно ЭТОТ, самый частый
+    // случай тоже проигрывает анимацию, а не только смена уже существующей
+    // реакции на другую.
     final justChanged = _justReactedMessageIds.contains(messageId);
     return Positioned(
       bottom: -8,
@@ -5727,10 +5736,38 @@ class _ReactionChip extends StatefulWidget {
 
 class _ReactionChipState extends State<_ReactionChip>
     with SingleTickerProviderStateMixin {
+  // 650ms и заметный овершут — первая версия (2.2px искры в радиусе 14px,
+  // почти незаметный easeOutBack) оказалась настолько субтильной, что
+  // пользователь на реальном устройстве её попросту не замечал. Тут явная,
+  // безошибочно видимая "поп"-анимация — крупные искры ДАЛЕКО от чипа и
+  // сам чип ощутимо раздувается (до 1.55×) перед тем, как осесть на
+  // место — не полагаемся на то, что AnimatedSwitcher САМ создаст
+  // впечатление "хлопка".
   late final AnimationController _burstController = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 520),
+    duration: const Duration(milliseconds: 650),
   );
+
+  static final Animatable<double> _popTween = TweenSequence<double>([
+    TweenSequenceItem(
+      tween: Tween(
+        begin: 1.0,
+        end: 1.55,
+      ).chain(CurveTween(curve: Curves.easeOut)),
+      weight: 30,
+    ),
+    TweenSequenceItem(
+      tween: Tween(
+        begin: 1.55,
+        end: 1.0,
+      ).chain(CurveTween(curve: Curves.elasticOut)),
+      weight: 70,
+    ),
+  ]);
+
+  void _playPop() {
+    if (mounted) _burstController.forward(from: 0);
+  }
 
   @override
   void initState() {
@@ -5740,20 +5777,20 @@ class _ReactionChipState extends State<_ReactionChip>
       // полностью подготовлено (первый build ещё не случился), запуск в
       // addPostFrameCallback гарантированно ловит уже готовый, отрисованный
       // виджет.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _burstController.forward(from: 0);
-      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => _playPop());
     }
   }
 
   @override
   void didUpdateWidget(covariant _ReactionChip old) {
     super.didUpdateWidget(old);
-    // Реальная СМЕНА уже стоявшей реакции на другую (виджет не пересоздан,
-    // просто обновлён — см. комментарий у justChanged выше про то, когда
-    // это вообще происходит).
+    // Реальная простановка/смена (в т.ч. с null на что-то) — основной путь
+    // теперь именно этот: _reactionBadges больше не подменяет тип виджета
+    // на "нет реакций" (см. комментарий там), так что даже самая первая
+    // реакция на сообщение — это ОБНОВЛЕНИЕ уже существующего чипа, а не
+    // его пересоздание с нуля.
     if (widget.emoji != null && widget.emoji != old.emoji) {
-      _burstController.forward(from: 0);
+      _playPop();
     }
   }
 
@@ -5766,73 +5803,77 @@ class _ReactionChipState extends State<_ReactionChip>
   @override
   Widget build(BuildContext context) {
     final accent = widget.mine ? AppColors.primary : AppColors.textMuted;
-    return Stack(
-      clipBehavior: Clip.none,
-      alignment: Alignment.center,
-      children: [
-        Positioned(
-          left: -14,
-          right: -14,
-          top: -14,
-          bottom: -14,
-          child: IgnorePointer(
-            child: AnimatedBuilder(
-              animation: _burstController,
-              builder: (context, _) => CustomPaint(
-                painter: _ReactionBurstPainter(
-                  progress: _burstController.value,
-                  color: accent,
+    return AnimatedBuilder(
+      animation: _burstController,
+      builder: (context, child) {
+        final popScale = _popTween.evaluate(_burstController);
+        return Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.center,
+          children: [
+            Positioned(
+              left: -26,
+              right: -26,
+              top: -26,
+              bottom: -26,
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: _ReactionBurstPainter(
+                    progress: _burstController.value,
+                    color: accent,
+                  ),
                 ),
               ),
             ),
-          ),
+            Transform.scale(scale: popScale, child: child),
+          ],
+        );
+      },
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        transitionBuilder: (child, anim) => ScaleTransition(
+          scale: CurvedAnimation(parent: anim, curve: Curves.easeOutBack),
+          child: FadeTransition(opacity: anim, child: child),
         ),
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 220),
-          transitionBuilder: (child, anim) => ScaleTransition(
-            scale: CurvedAnimation(parent: anim, curve: Curves.easeOutBack),
-            child: FadeTransition(opacity: anim, child: child),
-          ),
-          child: widget.emoji == null
-              ? const SizedBox.shrink(key: ValueKey('_empty'))
-              : Container(
-                  key: ValueKey('${widget.mine}_${widget.emoji}'),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(color: accent, width: 1.4),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.18),
-                        blurRadius: 3,
-                        offset: const Offset(0, 1),
-                      ),
-                    ],
-                  ),
-                  child: Text(widget.emoji!, style: const TextStyle(fontSize: 13)),
+        child: widget.emoji == null
+            ? const SizedBox.shrink(key: ValueKey('_empty'))
+            : Container(
+                key: ValueKey('${widget.mine}_${widget.emoji}'),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 6,
+                  vertical: 3,
                 ),
-        ),
-      ],
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(30),
+                  border: Border.all(color: accent, width: 1.4),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      blurRadius: 3,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: Text(widget.emoji!, style: const TextStyle(fontSize: 13)),
+              ),
+      ),
     );
   }
 }
 
-/// Кольцо мелких искр, разлетающихся от центра чипа и гаснущих по пути —
-/// progress 0 → только что появились, вплотную к центру; progress 1 →
-/// долетели до максимального радиуса и полностью прозрачны. Рисуется поверх
-/// (точнее, под — см. порядок в Stack) самого чипа только на время короткой
-/// анимации, дальше просто холостой пустой холст.
+/// Кольцо искр, разлетающихся от центра чипа и гаснущих по пути — progress
+/// 0 → только что появились, вплотную к центру; 1 → долетели до
+/// максимального радиуса и полностью прозрачны. Крупные и далеко летящие
+/// специально — версия с искрами 2px в радиусе 14px оказалась незаметна на
+/// реальном устройстве (см. ТЗ пользователя).
 class _ReactionBurstPainter extends CustomPainter {
   final double progress;
   final Color color;
 
   _ReactionBurstPainter({required this.progress, required this.color});
 
-  static const _sparkCount = 8;
+  static const _sparkCount = 10;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -5841,13 +5882,15 @@ class _ReactionBurstPainter extends CustomPainter {
     final maxRadius = size.shortestSide / 2;
     final eased = Curves.easeOut.transform(progress);
     final distance = eased * maxRadius;
-    final opacity = 1 - progress;
+    // Быстрая вспышка в первой трети, растянутое угасание — иначе искры
+    // гаснут раньше, чем успевают долететь до заметного расстояния от чипа.
+    final opacity = (1 - progress * progress).clamp(0.0, 1.0);
     final paint = Paint()..color = color.withValues(alpha: opacity);
     for (var i = 0; i < _sparkCount; i++) {
       final angle = (i / _sparkCount) * 2 * math.pi;
       final sparkCenter =
           center + Offset(math.cos(angle), math.sin(angle)) * distance;
-      final radius = (1 - progress) * 2.2;
+      final radius = (1 - progress) * 4.5;
       canvas.drawCircle(sparkCenter, radius, paint);
     }
   }

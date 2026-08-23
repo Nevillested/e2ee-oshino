@@ -76,6 +76,10 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
 
   void _selectTab(int index) {
     if (index == _selectedTab) return;
+    // Ушли с вкладки чатов (единственной, где вообще виден поиск) — форма
+    // поиска должна закрыться сама, а не остаться висеть развёрнутой до
+    // следующего возврата на чаты (см. ТЗ пользователя).
+    if (_searchActive) _closeSearch();
     setState(() {
       _transitionReverse = index < _selectedTab;
       _selectedTab = index;
@@ -89,6 +93,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   static const _tabCount = 3;
 
   void _swipeToNextTab() {
+    if (_searchActive) _closeSearch();
     setState(() {
       _transitionReverse = false;
       _selectedTab = (_selectedTab + 1) % _tabCount;
@@ -96,6 +101,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   }
 
   void _swipeToPrevTab() {
+    if (_searchActive) _closeSearch();
     setState(() {
       _transitionReverse = true;
       _selectedTab = (_selectedTab - 1 + _tabCount) % _tabCount;
@@ -367,6 +373,12 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
         focusNode: _searchFocusNode,
         onChanged: _onSearchChanged,
         textInputAction: TextInputAction.search,
+        // isCollapsed убирает встроенные внутренние отступы InputDecorator
+        // (нужно — своя фиксированная высота 38 у пилюли), но вместе с ним
+        // ПРОПАДАЕТ и автоматическое вертикальное центрирование текста —
+        // без явного textAlignVertical курсор/текст/хинт садятся к верху
+        // поля, а не по центру (см. скриншот пользователя).
+        textAlignVertical: TextAlignVertical.center,
         style: TextStyle(color: AppColors.textPrimary, fontSize: 15),
         decoration: InputDecoration(
           isCollapsed: true,
