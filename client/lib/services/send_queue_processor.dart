@@ -28,6 +28,26 @@ class SendQueueProcessor {
 
   bool _started = false;
   Future<void> _heavyChain = Future.value();
+  // deliveryId'ы, для которых прямо сейчас уже идёт отправка+ожидание ack —
+  // без этого набора _sweep(), вызванный дважды почти одновременно (что
+  // регулярно случается: WS.connect() уже видит частично собранную
+  // локальную очередь ДО того, как соединение реально готово, а следом
+  // статус переключается в connected и слушатель триггерит ещё один sweep
+  // на ту же самую, ещё не опустевшую очередь — см. debug_log с
+  // пользователя, где оба sweep идут буквально в одном и том же цикле
+  // реконнекта), запускал бы ВТОРОЙ параллельный _attempt на тот же id.
+  // SendAckRegistry.wait(id) во втором вызове тогда просто затирал бы
+  // Completer первого — тот навсегда терял способ узнать про реальный ack
+  // (который сервер, получив дублирующее сообщение дважды, тоже пришлёт
+  // дважды, но fulfill() при повторном вызове для уже разрешённого id —
+  // молчаливый no-op) и стабильно "таймаутил" через 8с, даже когда
+  // сообщение было реально доставлено. Итог именно то, на что жаловался
+  // пользователь: сообщение "висит" — its onAcked/markMessageStatus('sent')
+  // никогда не срабатывали для проигравшей попытки, а read-receipt'ы
+  // из-за этого же самого бага так и не помечались отправленными и заново
+  // накапливались на каждом следующем реконнекте (см. лавинообразный рост
+  // очереди в логе — 27, 30, 32 "зависших" элемента подряд).
+  final Set<String> _inFlight = {};
 
   void start() {
     if (_started) return;
@@ -114,34 +134,47 @@ class SendQueueProcessor {
     String? peerLogin, [
     Future<void> Function()? onAcked,
   ]) async {
-    final ackFuture = SendAckRegistry.wait(id);
-    try {
-      await WebSocketService.instance.sendEnvelope(
-        toDeviceId,
-        envelope,
-        id,
-        silent: silent,
-      );
-    } catch (e) {
-      // Не подключены прямо сейчас — не ошибка в смысле "не удалось
-      // навсегда", просто ждём следующего sweep() по реконнекту. Элемент
-      // остаётся в SendQueueStore как есть.
-      SendAckRegistry.cancel(id);
-      DebugLog.log('SendQueueProcessor id=$id not sent (offline): $e');
+    // См. комментарий у _inFlight — не даём двум конкурентным sweep'ам (или
+    // sweep'у, наложившемуся на enqueue() того же id) запустить вторую
+    // параллельную попытку поверх уже идущей: она бы просто затёрла ack-
+    // ожидание первой, и та навсегда "зависла" бы, даже реально получив ack.
+    if (_inFlight.contains(id)) {
+      DebugLog.log('SendQueueProcessor id=$id already in flight, skipping duplicate attempt');
       return;
     }
+    _inFlight.add(id);
     try {
-      await ackFuture.timeout(const Duration(seconds: 8));
-    } catch (e) {
-      SendAckRegistry.cancel(id);
-      DebugLog.log('SendQueueProcessor id=$id no ack within timeout: $e');
-      return;
+      final ackFuture = SendAckRegistry.wait(id);
+      try {
+        await WebSocketService.instance.sendEnvelope(
+          toDeviceId,
+          envelope,
+          id,
+          silent: silent,
+        );
+      } catch (e) {
+        // Не подключены прямо сейчас — не ошибка в смысле "не удалось
+        // навсегда", просто ждём следующего sweep() по реконнекту. Элемент
+        // остаётся в SendQueueStore как есть.
+        SendAckRegistry.cancel(id);
+        DebugLog.log('SendQueueProcessor id=$id not sent (offline): $e');
+        return;
+      }
+      try {
+        await ackFuture.timeout(const Duration(seconds: 8));
+      } catch (e) {
+        SendAckRegistry.cancel(id);
+        DebugLog.log('SendQueueProcessor id=$id no ack within timeout: $e');
+        return;
+      }
+      await SendQueueStore.remove(id);
+      DebugLog.log('SendQueueProcessor id=$id acked, removed from queue');
+      if (messageId != null && peerLogin != null) {
+        await ChatStore.updateMessageStatus(peerLogin, messageId, 'sent');
+      }
+      await onAcked?.call();
+    } finally {
+      _inFlight.remove(id);
     }
-    await SendQueueStore.remove(id);
-    DebugLog.log('SendQueueProcessor id=$id acked, removed from queue');
-    if (messageId != null && peerLogin != null) {
-      await ChatStore.updateMessageStatus(peerLogin, messageId, 'sent');
-    }
-    await onAcked?.call();
   }
 }

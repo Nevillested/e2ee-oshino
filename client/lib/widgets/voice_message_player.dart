@@ -2,12 +2,17 @@ import 'dart:async';
 import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import '../services/media_playback_coordinator.dart';
 import '../theme/app_theme.dart';
 
 /// Плеер голосового сообщения — play/pause + полоска прогресса + время.
 /// Файл расшифровывается лениво, только при первом нажатии play (см.
 /// resolveFile — та же логика "скачать/расшифровать по требованию", что
 /// уже используется для фото в чате).
+///
+/// coordinator/messageId — регистрация в верхней панели управления (см.
+/// MediaPlaybackCoordinator и _buildMediaControlBar в chat_screen.dart) —
+/// та же схема, что у VideoNotePlayer.
 class VoiceMessagePlayer extends StatefulWidget {
   final bool isMine;
   final int? durationMs;
@@ -18,6 +23,8 @@ class VoiceMessagePlayer extends StatefulWidget {
   // — просто заменяем строку с длительностью на текущий статус.
   final String? processingStep;
   final Future<File> Function() resolveFile;
+  final MediaPlaybackCoordinator? coordinator;
+  final String? messageId;
 
   const VoiceMessagePlayer({
     super.key,
@@ -25,6 +32,8 @@ class VoiceMessagePlayer extends StatefulWidget {
     required this.durationMs,
     this.processingStep,
     required this.resolveFile,
+    this.coordinator,
+    this.messageId,
   });
 
   @override
@@ -61,6 +70,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
           _position = Duration.zero;
         });
       }
+      _reportPlayingState(false);
     });
   }
 
@@ -70,15 +80,39 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
     _durSub?.cancel();
     _completeSub?.cancel();
     _player.dispose();
+    final id = widget.messageId;
+    if (widget.coordinator != null &&
+        id != null &&
+        widget.coordinator!.activeMessageId == id) {
+      widget.coordinator!.deactivate(id);
+    }
     super.dispose();
   }
 
-  Future<void> _toggle() async {
-    if (_playing) {
-      await _player.pause();
-      if (mounted) setState(() => _playing = false);
-      return;
-    }
+  void _registerWithCoordinator() {
+    final id = widget.messageId;
+    if (widget.coordinator == null || id == null) return;
+    widget.coordinator!.activate(
+      id,
+      pause: () => unawaited(_doPause()),
+      resume: () => unawaited(_doResume()),
+      stop: () => unawaited(_doStop()),
+    );
+  }
+
+  void _reportPlayingState(bool playing) {
+    final id = widget.messageId;
+    if (widget.coordinator == null || id == null) return;
+    widget.coordinator!.reportPlaying(id, playing);
+  }
+
+  Future<void> _doPause() async {
+    await _player.pause();
+    if (mounted) setState(() => _playing = false);
+    _reportPlayingState(false);
+  }
+
+  Future<void> _doResume() async {
     if (_file == null) {
       setState(() => _loading = true);
       try {
@@ -92,6 +126,32 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
     }
     await _player.play(DeviceFileSource(_file!.path));
     if (mounted) setState(() => _playing = true);
+    _registerWithCoordinator();
+  }
+
+  /// Явная остановка (крестик на верхней панели) — полная остановка (не
+  /// просто пауза) + сброс позиции, плюс сообщаем панели, что сообщение
+  /// больше не активно.
+  Future<void> _doStop() async {
+    await _player.stop();
+    if (mounted) {
+      setState(() {
+        _playing = false;
+        _position = Duration.zero;
+      });
+    }
+    final id = widget.messageId;
+    if (widget.coordinator != null && id != null) {
+      widget.coordinator!.deactivate(id);
+    }
+  }
+
+  Future<void> _toggle() async {
+    if (_playing) {
+      await _doPause();
+    } else {
+      await _doResume();
+    }
   }
 
   String _fmt(Duration d) {

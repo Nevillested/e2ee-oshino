@@ -43,6 +43,7 @@ import '../services/chat_scroll_position_store.dart';
 import '../services/debug_log.dart';
 import '../services/keyboard_height_store.dart';
 import '../services/media_asset_cache.dart';
+import '../services/media_playback_coordinator.dart';
 import '../services/message_router.dart';
 import '../services/my_avatar_store.dart';
 import '../services/send_lock.dart';
@@ -232,6 +233,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // рисуется невидимым (Opacity 0, см. _wrapInteractive): сам эффект летит
   // поверх, ровно на его месте.
   final Set<String> _dissolvingMessageIds = {};
+
+  // Единая точка координации проигрывания голосовых/видео-сообщений — см.
+  // MediaPlaybackCoordinator и _buildMediaControlBar ниже (ТЗ пользователя:
+  // верхняя панель с play/pause+крестиком, общая для обоих типов).
+  final _mediaCoordinator = MediaPlaybackCoordinator();
+
+  // Свайп-реплай (как в Телеге) — см. _wrapInteractive: жест стартует на
+  // КОНКРЕТНОЙ строке сообщения (тем же GestureDetector, что уже ловит тап/
+  // долгий тап), поэтому достаточно одного набора полей на весь экран —
+  // одновременно тянуть можно только одно сообщение. _swipeReplyTargetId —
+  // представительский id (messageId) строки, которая СЕЙЧАС тянется;
+  // _swipeReplyDx — текущий визуальный сдвиг (всегда ≤ 0, влево), капается
+  // на -10% ширины экрана и одновременно на ней же и стреляет реплай.
+  String? _swipeReplyTargetId;
+  double _swipeReplyDx = 0;
+  bool _swipeReplyFired = false;
 
   // Представительские id сообщений, у которых реакция появилась ТОЛЬКО ЧТО
   // (своя простановка в _handleReaction ИЛИ живой сигнал от собеседника,
@@ -4047,6 +4064,45 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _dragSelectLastHoverId = null;
     }
 
+    // Свайп-реплай — см. _swipeReplyTargetId/_swipeReplyDx у State. Не
+    // мешает тапу/долгому тапу/скроллу списка: GestureDetector сам
+    // разруливает конкурирующие распознаватели (тап требует отсутствия
+    // движения, вертикальный скролл списка — вертикального движения,
+    // этот — горизонтального), это штатная композиция для Flutter.
+    // Недоступен в режиме выбора и когда переписка заблокирована (реплай
+    // всё равно нечем отправить).
+    void handleSwipeReplyStart(DragStartDetails details) {
+      if (_selectionMode || _composerBlocked) return;
+      _swipeReplyTargetId = targetMsg.messageId;
+      _swipeReplyDx = 0;
+      _swipeReplyFired = false;
+    }
+
+    void handleSwipeReplyUpdate(DragUpdateDetails details) {
+      if (_swipeReplyTargetId != targetMsg.messageId) return;
+      final width = MediaQuery.of(context).size.width;
+      final maxOffset = -width * 0.10;
+      final next = (_swipeReplyDx + details.delta.dx).clamp(maxOffset, 0.0);
+      if (next == _swipeReplyDx) return;
+      setState(() => _swipeReplyDx = next);
+      // Порог и визуальный максимум — одно и то же значение (см. ТЗ
+      // пользователя): сообщение просто не может сдвинуться ДАЛЬШЕ точки,
+      // в которой уже сработал реплай.
+      if (!_swipeReplyFired && _swipeReplyDx <= maxOffset) {
+        _swipeReplyFired = true;
+        HapticFeedback.vibrate();
+        _setReplyTarget(targetMsg);
+      }
+    }
+
+    void resetSwipeReply() {
+      if (_swipeReplyTargetId != targetMsg.messageId) return;
+      setState(() {
+        _swipeReplyDx = 0;
+        _swipeReplyTargetId = null;
+      });
+    }
+
     // Пустой распорщик, забирающий всё оставшееся место по горизонтали —
     // ЗАФИКСИРОВАННОЙ (нулевой) собственной высоты, а не "растянутый на всю
     // высоту": внутри ListView высота элемента ничем не ограничена сверху,
@@ -4070,6 +4126,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           : const SizedBox.shrink(),
     );
 
+    // Визуальный сдвиг во время свайп-реплая — только у ТОЙ строки, где он
+    // сейчас реально идёт (см. handleSwipeReplyUpdate); у всех остальных —
+    // 0, никакого лишнего Transform не появляется. И свои, и чужие
+    // сообщения одинаково двигаются влево (навстречу направлению свайпа).
+    final isSwipingThis = _swipeReplyTargetId == targetMsg.messageId;
+    final swipedContent = Transform.translate(
+      offset: Offset(isSwipingThis ? _swipeReplyDx : 0, 0),
+      child: content,
+    );
+
     final row = Row(
       // .center — не .end: галочка выбора должна стоять по вертикальному
       // центру сообщения, а не липнуть к его нижнему краю (у content
@@ -4077,8 +4143,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       // пузырь, потому что высота строки и так равна его высоте).
       crossAxisAlignment: CrossAxisAlignment.center,
       children: isMine
-          ? [filler, content, selectionSlot]
-          : [selectionSlot, content, filler],
+          ? [filler, swipedContent, selectionSlot]
+          : [selectionSlot, swipedContent, filler],
     );
 
     return Padding(
@@ -4091,6 +4157,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         onLongPressStart: handleLongPressStart,
         onLongPressMoveUpdate: handleLongPressMoveUpdate,
         onLongPressEnd: handleLongPressEnd,
+        onHorizontalDragStart: handleSwipeReplyStart,
+        onHorizontalDragUpdate: handleSwipeReplyUpdate,
+        onHorizontalDragEnd: (_) => resetSwipeReply(),
+        onHorizontalDragCancel: resetSwipeReply,
         child: row,
       ),
     );
@@ -4228,6 +4298,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           durationMs: msg.durationMs,
           expandedSize: expandedSize,
           processingStep: msg.processingStep,
+          coordinator: _mediaCoordinator,
+          messageId: msg.messageId,
         ),
         const SizedBox(height: 4),
         Padding(
@@ -4265,7 +4337,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final isHighlighted = msg.messageId == _highlightedMessageId;
 
     final content = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      // Было жёстко .start вне зависимости от isMine — если баннер реплая
+      // (см. _buildReplyPreview, растягивается по ширине цитаты) шире
+      // самого текста, вложенная колонка текст+время (у неё своё .end
+      // ВНУТРИ себя, см. _buildTextWithMeta) прижималась к ЛЕВОМУ краю ЭТОЙ
+      // внешней колонки — а не к истинному правому краю пузыря, который
+      // как раз и определяется более широким баннером реплая. Время
+      // визуально "уезжало" к концу короткого текста, а не к краю пузыря
+      // (см. скриншот пользователя). Выравнивание по стороне пузыря
+      // (как и везде в остальных типах сообщений) чинит это.
+      crossAxisAlignment: msg.isMine
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         _buildReplyPreview(msg),
@@ -4279,6 +4362,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     durationMs: msg.durationMs,
                     processingStep: msg.processingStep,
                     resolveFile: () => _resolveRecordedMediaFile(msg),
+                    coordinator: _mediaCoordinator,
+                    messageId: msg.messageId,
                   ),
                   const SizedBox(height: 4),
                   _buildMetaRow(msg),
@@ -4371,6 +4456,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _mediaCoordinator.dispose();
     _pendingTapTimer?.cancel();
     _scrollSaveDebounce?.cancel();
     _keyboardHeightSettleTimer?.cancel();
@@ -4788,33 +4874,123 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     required String text,
     required VoidCallback onClose,
   }) {
+    // Была высокая (vertical: 8 паддинга + дефолтный тап-квадрат IconButton)
+    // — по ТЗ пользователя сделал заметно компактнее: меньше паддинг,
+    // фиксированная невысокая строка, у крестика visualDensity.compact
+    // (constraints/padding у него и так уже были обнулены, но сам
+    // IconButton по умолчанию всё равно резервирует место под стандартный
+    // 48×48 тач-таргет темы — compact снимает именно это).
     return Container(
       margin: const EdgeInsets.fromLTRB(10, 4, 10, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(
-        children: [
-          Icon(icon, size: 16, color: AppColors.primary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: AppColors.textPrimary, fontSize: 13),
+      child: SizedBox(
+        height: 26,
+        child: Row(
+          children: [
+            Icon(icon, size: 15, color: AppColors.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: AppColors.textPrimary, fontSize: 12.5),
+              ),
             ),
-          ),
-          IconButton(
-            icon: Icon(Icons.close, size: 18, color: AppColors.textMuted),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-            onPressed: onClose,
-          ),
-        ],
+            IconButton(
+              icon: Icon(Icons.close, size: 16, color: AppColors.textMuted),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              visualDensity: VisualDensity.compact,
+              onPressed: onClose,
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  /// Панель управления голосовым/видео-сообщением — см. ТЗ пользователя:
+  /// появляется ПОД обычной шапкой чата (не должна перекрывать кнопку
+  /// "назад", логин/статус/фото собеседника и кнопку звонка), пока играет
+  /// (или на паузе) одно из голосовых/видео-сообщений; play/pause слева
+  /// переключает состояние
+  /// БЕЗ схлопывания панели, крестик справа — полная остановка со
+  /// схлопыванием (и панели, и самого видео-кружка обратно до compactSize
+  /// — см. MediaPlaybackCoordinator.close()). AnimatedSize вместо
+  /// AnimatedSwitcher — плавно "выезжает"/"уезжает" по высоте, а не просто
+  /// исчезает, отталкивая шапку чата ниже себя (см. Column-обёртку выше).
+  Widget _buildMediaControlBar() {
+    return AnimatedBuilder(
+      animation: _mediaCoordinator,
+      builder: (context, _) {
+        final active = _mediaCoordinator.activeMessageId != null;
+        return AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          alignment: Alignment.topCenter,
+          child: !active
+              ? const SizedBox(width: double.infinity)
+              : SafeArea(
+                  // top тоже false — панель теперь стоит ПОД шапкой чата
+                  // (см. ТЗ пользователя), а не у самого верха экрана, шапка
+                  // уже сама учла отступ под статус-бар — второй раз его
+                  // резервировать не нужно, иначе между шапкой и панелью
+                  // появился бы лишний зазор высотой со статус-бар.
+                  top: false,
+                  bottom: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                    child: Container(
+                      height: 44,
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(22),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.18),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            icon: Icon(
+                              _mediaCoordinator.isPlaying
+                                  ? Icons.pause
+                                  : Icons.play_arrow,
+                              color: AppColors.primary,
+                            ),
+                            onPressed: _mediaCoordinator.togglePlayPause,
+                          ),
+                          Expanded(
+                            child: Text(
+                              tr('chat.mediaBarPlaying'),
+                              style: TextStyle(
+                                color: AppColors.textMuted,
+                                fontSize: 13,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.close, color: AppColors.textMuted),
+                            onPressed: _mediaCoordinator.close,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+        );
+      },
     );
   }
 
@@ -5153,7 +5329,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   // будто панель его слегка перекрывает (см.
                                   // жалобу пользователя) — 28, а не 16,
                                   // добавляют настоящий видимый зазор.
-                                  28 + 64 + reserved,
+                                  //
+                                  // "- (anyPanelOpen ? 5+systemBottomInset : 0)"
+                                  // — без этого вычета зазор между последним
+                                  // сообщением и таблеткой был РАЗНЫЙ в двух
+                                  // состояниях (жалоба пользователя): сама
+                                  // таблетка (см. Column ниже, SizedBox(height:
+                                  // anyPanelOpen ? 0 : 5 + systemBottomInset)
+                                  // перед резервом клавиатуры) в состоянии
+                                  // покоя стоит ВЫШЕ на эти же 5+systemBottomInset
+                                  // (у неё есть свой маленький зазор до низа
+                                  // экрана), а при открытой клавиатуре/эмодзи —
+                                  // вплотную к ним, без этого зазора — то есть
+                                  // НИЖЕ на ту же величину. Паддинг списка
+                                  // раньше резервировал одно и то же место
+                                  // независимо от этого — при открытой
+                                  // клавиатуре получался лишний зазор ровно
+                                  // такого же размера (первая попытка чинить
+                                  // это вычитала не из той ветки — только
+                                  // портила состояние покоя, см. жалобу
+                                  // пользователя со скриншотами). Вычитаем
+                                  // именно из ветки anyPanelOpen, покой не
+                                  // трогаем вовсе — он и так уже был верным.
+                                  28 +
+                                      64 +
+                                      reserved -
+                                      (anyPanelOpen ? 5 + systemBottomInset : 0),
                                 ),
                                 itemCount: groups.length,
                                 itemBuilder: (context, index) {
@@ -5183,30 +5384,41 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 top: 0,
                 left: 0,
                 right: 0,
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 280),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  transitionBuilder: (child, animation) {
-                    if (child.key == const ValueKey('search_header')) {
-                      return ClipRect(
-                        child: FractionallySizedBox(
-                          alignment: Alignment.centerRight,
-                          widthFactor: animation.value.clamp(0.0, 1.0),
-                          child: FadeTransition(
-                            opacity: animation,
-                            child: child,
-                          ),
-                        ),
-                      );
-                    }
-                    return FadeTransition(opacity: animation, child: child);
-                  },
-                  child: _selectionMode
-                      ? _buildSelectionHeader()
-                      : _searchMode
-                      ? _buildSearchHeader()
-                      : _buildFloatingChatHeader(),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 280),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) {
+                        if (child.key == const ValueKey('search_header')) {
+                          return ClipRect(
+                            child: FractionallySizedBox(
+                              alignment: Alignment.centerRight,
+                              widthFactor: animation.value.clamp(0.0, 1.0),
+                              child: FadeTransition(
+                                opacity: animation,
+                                child: child,
+                              ),
+                            ),
+                          );
+                        }
+                        return FadeTransition(opacity: animation, child: child);
+                      },
+                      child: _selectionMode
+                          ? _buildSelectionHeader()
+                          : _searchMode
+                          ? _buildSearchHeader()
+                          : _buildFloatingChatHeader(),
+                    ),
+                    // Панель управления голосовым/видео-сообщением — ПОД
+                    // обычной шапкой чата (см. ТЗ пользователя: не должна
+                    // перекрывать кнопку "назад", логин/статус/фото
+                    // собеседника и кнопку звонка) — растёт/схлопывается
+                    // здесь, шапка при этом остаётся на своём обычном месте.
+                    _buildMediaControlBar(),
+                  ],
                 ),
               ),
               // Баннер звонка/закреплённого сообщения — раньше был частью

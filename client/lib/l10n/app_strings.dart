@@ -119,6 +119,10 @@ class AppStrings {
       AppLocale.ru: 'Количество пересылаемых сообщений',
       AppLocale.en: 'Number of messages to forward',
     },
+    'chat.mediaBarPlaying': {
+      AppLocale.ru: 'Воспроизведение',
+      AppLocale.en: 'Playing',
+    },
     'chat.selectedCount': {
       AppLocale.ru: 'Выбрано',
       AppLocale.en: 'Selected',

@@ -1,12 +1,19 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../services/debug_log.dart';
+import '../services/media_playback_coordinator.dart';
 
 /// Проигрыватель видео-сообщения — квадрат со скруглёнными углами (у нас
 /// не кружок, как в Телеге, а именно квадрат). Тап запускает/ставит на
 /// паузу; во время проигрывания разворачивается до expandedSize, на паузе
 /// снова сжимается до compactSize — ровно то поведение, которое просили.
+///
+/// coordinator/messageId — регистрация в верхней панели управления (см.
+/// MediaPlaybackCoordinator и _buildMediaControlBar в chat_screen.dart):
+/// оба опциональны, чтобы не ломать использование плеера где-то ещё без
+/// панели, но ChatScreen их всегда передаёт.
 class VideoNotePlayer extends StatefulWidget {
   final Future<File> Function() resolveFile;
   final int? durationMs;
@@ -14,6 +21,8 @@ class VideoNotePlayer extends StatefulWidget {
   final double expandedSize;
   // См. VoiceMessagePlayer.processingStep — тот же смысл, для видео-кружка.
   final String? processingStep;
+  final MediaPlaybackCoordinator? coordinator;
+  final String? messageId;
 
   const VideoNotePlayer({
     super.key,
@@ -22,6 +31,8 @@ class VideoNotePlayer extends StatefulWidget {
     this.compactSize = 200,
     required this.expandedSize,
     this.processingStep,
+    this.coordinator,
+    this.messageId,
   });
 
   @override
@@ -37,7 +48,74 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
   void dispose() {
     _controller?.removeListener(_onTick);
     _controller?.dispose();
+    // Если это сообщение было "активным" в верхней панели, а сам виджет
+    // уходит из дерева (проскроллили, ушли из чата) — панель не должна
+    // остаться висеть, указывая на уже уничтоженный контроллер.
+    final id = widget.messageId;
+    if (widget.coordinator != null &&
+        id != null &&
+        widget.coordinator!.activeMessageId == id) {
+      widget.coordinator!.deactivate(id);
+    }
     super.dispose();
+  }
+
+  void _registerWithCoordinator() {
+    final id = widget.messageId;
+    if (widget.coordinator == null || id == null) return;
+    widget.coordinator!.activate(
+      id,
+      pause: () => unawaited(_doPause()),
+      resume: () => unawaited(_doResume()),
+      stop: () => unawaited(_doStop()),
+    );
+  }
+
+  void _reportPlayingState(bool playing) {
+    final id = widget.messageId;
+    if (widget.coordinator == null || id == null) return;
+    widget.coordinator!.reportPlaying(id, playing);
+  }
+
+  Future<void> _doPause() async {
+    final controller = _controller;
+    if (controller == null) return;
+    await controller.pause();
+    if (mounted) setState(() => _playing = false);
+    _reportPlayingState(false);
+  }
+
+  Future<void> _doResume() async {
+    final controller = _controller;
+    if (controller == null) return;
+    // На случай, если предыдущий _onTick ещё не успел довести до конца
+    // свою перемотку в начало — досрочно дожидаемся её здесь тоже, иначе
+    // play() может уйти на контроллер, который вот-вот сам домотает до 0 и
+    // "перепрыгнет" только что начавшееся воспроизведение.
+    if (controller.value.position > Duration.zero &&
+        controller.value.position >= controller.value.duration) {
+      await controller.seekTo(Duration.zero);
+    }
+    await controller.play();
+    if (mounted) setState(() => _playing = true);
+    _registerWithCoordinator();
+  }
+
+  /// Явная остановка (крестик на верхней панели) — пауза + перемотка в
+  /// начало + схлопывание обратно до compactSize (см. build(): size
+  /// зависит от _playing), плюс сообщаем панели, что сообщение больше не
+  /// активно, чтобы она сама анимированно скрылась.
+  Future<void> _doStop() async {
+    final controller = _controller;
+    if (controller != null) {
+      await controller.pause();
+      await controller.seekTo(Duration.zero);
+    }
+    if (mounted) setState(() => _playing = false);
+    final id = widget.messageId;
+    if (widget.coordinator != null && id != null) {
+      widget.coordinator!.deactivate(id);
+    }
   }
 
   // Временное диагностическое логирование (см. обсуждение с пользователем
@@ -53,25 +131,14 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
     );
     if (controller != null) {
       if (_playing) {
-        await controller.pause();
+        await _doPause();
         DebugLog.log('VideoNote _toggle() paused, setting playing=false');
-        if (mounted) setState(() => _playing = false);
       } else {
-        // На случай, если предыдущий _onTick ещё не успел довести до конца
-        // свою перемотку в начало — досрочно дожидаемся её здесь тоже,
-        // иначе play() может уйти на контроллер, который вот-вот сам
-        // домотает до 0 и "перепрыгнет" только что начавшееся воспроизведение.
-        if (controller.value.position > Duration.zero &&
-            controller.value.position >= controller.value.duration) {
-          DebugLog.log('VideoNote _toggle() re-seeking to 0 before replay');
-          await controller.seekTo(Duration.zero);
-        }
-        await controller.play();
+        await _doResume();
         DebugLog.log(
           'VideoNote _toggle() play() called, setting playing=true '
           'postPlay.isPlaying=${controller.value.isPlaying} postPlay.pos=${controller.value.position}',
         );
-        if (mounted) setState(() => _playing = true);
       }
       return;
     }
@@ -96,6 +163,7 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
         'VideoNote _toggle() first play, dur=${newController.value.duration}',
       );
       if (mounted) setState(() => _playing = true);
+      _registerWithCoordinator();
     } catch (e) {
       DebugLog.log('VideoNote _toggle() first-play FAILED error=$e');
       if (mounted) setState(() => _loading = false);
@@ -122,6 +190,7 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
         'VideoNote _onTick() seek-to-0 done, actualPos=${c.value.position}, setting playing=false',
       );
       if (mounted) setState(() => _playing = false);
+      _reportPlayingState(false);
     }
   }
 

@@ -9,7 +9,16 @@ import 'dart:async';
 class SendAckRegistry {
   static final Map<String, Completer<void>> _waiters = {};
 
+  /// Второй вызов wait() для ТОГО ЖЕ deliveryId (в норме не должно
+  /// случаться — см. _inFlight в SendQueueProcessor — но это дешёвая
+  /// подстраховка) отдаёт ТУ ЖЕ future, а не заводит новый Completer поверх
+  /// старого: раньше именно эта перезапись оставляла первого ожидающего
+  /// без единственного способа узнать о реальном fulfill() — тот срабатывал
+  /// уже для нового (второго) Completer'а, а первый вызывающий просто
+  /// молча "висел" до собственного локального таймаута.
   static Future<void> wait(String deliveryId) {
+    final existing = _waiters[deliveryId];
+    if (existing != null) return existing.future;
     final completer = Completer<void>();
     _waiters[deliveryId] = completer;
     return completer.future;
