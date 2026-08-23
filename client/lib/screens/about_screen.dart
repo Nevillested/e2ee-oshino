@@ -8,6 +8,7 @@ import '../l10n/app_strings.dart';
 import '../services/debug_log.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
+import '../widgets/frosted_dialog.dart';
 import '../widgets/theme_reactive.dart';
 
 // /en/ или /ru/ в зависимости от текущего языка интерфейса (см.
@@ -16,6 +17,24 @@ String get _termsUrl =>
     'https://ee2e.oshino.space/terms/${AppStrings.locale == AppLocale.ru ? 'ru' : 'en'}/';
 String get _privacyUrl =>
     'https://ee2e.oshino.space/privacy/${AppStrings.locale == AppLocale.ru ? 'ru' : 'en'}/';
+
+/// Точка входа из настроек — окно поверх текущего экрана (см. ТЗ
+/// пользователя: пункты меню настроек должны открываться "окном", а не
+/// отдельным экраном, как раньше через Navigator.push), с тем же
+/// полупрозрачным заблюренным стилем, что и у остальных окон настроек (см.
+/// FrostedDialog).
+Future<void> showAboutWindow(BuildContext context) {
+  return showDialog<void>(
+    context: context,
+    builder: (context) => FrostedDialog(
+      title: Text(
+        tr('about.title'),
+        style: TextStyle(color: AppColors.textPrimary),
+      ),
+      content: const AboutScreen(),
+    ),
+  );
+}
 
 class AboutScreen extends StatefulWidget {
   const AboutScreen({super.key});
@@ -72,67 +91,56 @@ class _AboutScreenState extends State<AboutScreen> {
   }
 
   Widget _build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(tr('about.title'))),
-      body: ListView(
-        children: [
-          ListTile(
-            leading: Icon(Icons.info_outline, color: AppColors.textMuted),
-            title: Text(
-              tr('about.version'),
-              style: TextStyle(color: AppColors.textPrimary),
-            ),
-            subtitle: Text(
-              _version ?? '…',
-              style: TextStyle(color: AppColors.textMuted),
-            ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ListTile(
+          leading: Icon(Icons.info_outline, color: AppColors.textMuted),
+          title: Text(
+            tr('about.version'),
+            style: TextStyle(color: AppColors.textPrimary),
           ),
-          ListTile(
-            leading: Icon(
-              Icons.description_outlined,
-              color: AppColors.textMuted,
-            ),
-            title: Text(
-              tr('about.terms'),
-              style: TextStyle(color: AppColors.textPrimary),
-            ),
-            onTap: () => _openUrl(_termsUrl),
+          subtitle: Text(
+            _version ?? '…',
+            style: TextStyle(color: AppColors.textMuted),
           ),
-          ListTile(
-            leading: Icon(
-              Icons.privacy_tip_outlined,
-              color: AppColors.textMuted,
-            ),
-            title: Text(
-              tr('about.privacy'),
-              style: TextStyle(color: AppColors.textPrimary),
-            ),
-            onTap: () => _openUrl(_privacyUrl),
+        ),
+        ListTile(
+          leading: Icon(Icons.description_outlined, color: AppColors.textMuted),
+          title: Text(
+            tr('about.terms'),
+            style: TextStyle(color: AppColors.textPrimary),
           ),
-          ListTile(
-            leading: Icon(Icons.feedback_outlined, color: AppColors.textMuted),
-            title: Text(
-              tr('about.feedback'),
-              style: TextStyle(color: AppColors.textPrimary),
-            ),
-            onTap: () => showDialog<void>(
-              context: context,
-              builder: (context) => const _FeedbackDialog(),
-            ),
+          onTap: () => _openUrl(_termsUrl),
+        ),
+        ListTile(
+          leading: Icon(Icons.privacy_tip_outlined, color: AppColors.textMuted),
+          title: Text(
+            tr('about.privacy'),
+            style: TextStyle(color: AppColors.textPrimary),
           ),
-          ListTile(
-            leading: Icon(
-              Icons.bug_report_outlined,
-              color: AppColors.textMuted,
-            ),
-            title: Text(
-              tr('about.shareLog'),
-              style: TextStyle(color: AppColors.textPrimary),
-            ),
-            onTap: _shareDebugLog,
+          onTap: () => _openUrl(_privacyUrl),
+        ),
+        ListTile(
+          leading: Icon(Icons.feedback_outlined, color: AppColors.textMuted),
+          title: Text(
+            tr('about.feedback'),
+            style: TextStyle(color: AppColors.textPrimary),
           ),
-        ],
-      ),
+          onTap: () => showDialog<void>(
+            context: context,
+            builder: (context) => const _FeedbackDialog(),
+          ),
+        ),
+        ListTile(
+          leading: Icon(Icons.bug_report_outlined, color: AppColors.textMuted),
+          title: Text(
+            tr('about.shareLog'),
+            style: TextStyle(color: AppColors.textPrimary),
+          ),
+          onTap: _shareDebugLog,
+        ),
+      ],
     );
   }
 }
@@ -184,9 +192,7 @@ class _FeedbackDialogState extends State<_FeedbackDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: AppColors.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    return FrostedDialog(
       title: Text(
         tr('about.feedback'),
         style: TextStyle(color: AppColors.textPrimary),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
 import '../storage/text_scale_store.dart';
 import '../theme/app_theme.dart';
+import 'frosted_dialog.dart';
 
 Future<void> showFontSizeDialog(BuildContext context) async {
   await showDialog<void>(
@@ -34,9 +35,7 @@ class _FontSizeDialogState extends State<_FontSizeDialog> {
   Widget build(BuildContext context) {
     final steps = TextScaleStore.steps;
     final index = steps.indexOf(_scale).clamp(0, steps.length - 1);
-    return AlertDialog(
-      backgroundColor: AppColors.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    return FrostedDialog(
       title: Text(
         tr('fontSize.title'),
         style: TextStyle(color: AppColors.textPrimary),

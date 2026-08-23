@@ -5,6 +5,7 @@ import '../l10n/app_strings.dart';
 import '../session.dart';
 import '../storage/locale_store.dart';
 import '../theme/app_theme.dart';
+import 'frosted_dialog.dart';
 
 /// Названия языков в списке — намеренно ВСЕГДА латиницей ("Russian" /
 /// "English"), независимо от того, какой язык сейчас выбран в
@@ -13,14 +14,11 @@ import '../theme/app_theme.dart';
 Future<void> showLanguageDialog(BuildContext context) async {
   final selected = await showDialog<AppLocale>(
     context: context,
-    builder: (context) => AlertDialog(
-      backgroundColor: AppColors.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    builder: (context) => FrostedDialog(
       title: Text(
         tr('language.title'),
         style: TextStyle(color: AppColors.textPrimary),
       ),
-      contentPadding: const EdgeInsets.symmetric(vertical: 12),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -60,9 +58,9 @@ Future<void> showLanguageDialog(BuildContext context) async {
   // Часть экранов/виджетов не переподписана на смену языка "на лету" (см.
   // обсуждение в чате) — честно предупреждаем, а не делаем вид, что везде
   // обновилось само.
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(tr('language.restartNotice'))),
-  );
+  ScaffoldMessenger.of(
+    context,
+  ).showSnackBar(SnackBar(content: Text(tr('language.restartNotice'))));
 }
 
 class _LanguageOption extends StatelessWidget {

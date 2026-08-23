@@ -12,6 +12,12 @@ import 'app_lock_settings_screen.dart';
 import 'change_password_screen.dart';
 import 'privacy_settings_screen.dart';
 
+// Каждый пункт меню — окно ПОВЕРХ текущего экрана (см. ТЗ пользователя),
+// а не отдельный экран через Navigator.push: единообразно для всех
+// пунктов, включая те, что раньше были полноэкранными (Privacy and
+// security/App lock/About the app/Change password — см. showXWindow в
+// соответствующих файлах).
+
 /// Цветная скруглённая плашка под иконкой пункта настроек — как в Telegram
 /// (у каждого пункта свой фирменный цвет, а не одинаковый приглушённый
 /// серый для всех). Белая иконка поверх сплошного цвета читается в обеих
@@ -67,12 +73,7 @@ class SettingsContent extends StatelessWidget {
             tr('settings.changePassword'),
             style: TextStyle(color: AppColors.textPrimary),
           ),
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const ChangePasswordScreen(),
-            ),
-          ),
+          onTap: () => showChangePasswordWindow(context),
         ),
         ListTile(
           leading: const _SettingsIcon(
@@ -127,12 +128,7 @@ class SettingsContent extends StatelessWidget {
             tr('settings.privacy'),
             style: TextStyle(color: AppColors.textPrimary),
           ),
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const PrivacySettingsScreen(),
-            ),
-          ),
+          onTap: () => showPrivacySettingsWindow(context),
         ),
         ListTile(
           leading: const _SettingsIcon(
@@ -143,12 +139,7 @@ class SettingsContent extends StatelessWidget {
             tr('settings.appLock'),
             style: TextStyle(color: AppColors.textPrimary),
           ),
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const AppLockSettingsScreen(),
-            ),
-          ),
+          onTap: () => showAppLockSettingsWindow(context),
         ),
         ListTile(
           leading: const _SettingsIcon(
@@ -159,10 +150,7 @@ class SettingsContent extends StatelessWidget {
             tr('settings.about'),
             style: TextStyle(color: AppColors.textPrimary),
           ),
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const AboutScreen()),
-          ),
+          onTap: () => showAboutWindow(context),
         ),
         ListTile(
           leading: const _SettingsIcon(

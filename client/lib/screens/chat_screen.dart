@@ -187,6 +187,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         (_composerLineCount - 1) * _composerLineDelta;
   }
 
+  // Баннер реплая/редактирования/пересылки (см. _bannerRow) занимает
+  // собственное место НАД пилюлей поля ввода, но список сообщений это не
+  // учитывал: жалоба пользователя, что при активном реплае баннер
+  // перекрывает последнее сообщение — паддинг снизу резервировал место
+  // только под саму пилюлю. Высота — фиксированная сумма всех отступов
+  // _bannerRow (margin 4 сверху + padding 4+4 сверху/снизу + содержимое 26).
+  static const double _composerBannerHeight = 38;
+
+  bool get _composerBannerVisible =>
+      !_composerBlocked &&
+      !_searchMode &&
+      (_editingMessage != null ||
+          _replyTarget != null ||
+          (_forwardingTexts?.isNotEmpty ?? false));
+
   List<StoredMessage> _messages = [];
 
   // Ответ на сообщение — баннер над полем ввода, сбрасывается после отправки.
@@ -249,6 +264,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String? _swipeReplyTargetId;
   double _swipeReplyDx = 0;
   bool _swipeReplyFired = false;
+
+  // Свайп-НАЗАД (см. SwipeBackDetector/SwipeBackPageRoute), теперь дублируемый
+  // и на уровне строки сообщения: сам список сообщений — это ГЛУБЖЕ
+  // вложенный GestureDetector, чем SwipeBackDetector, поэтому в арене
+  // жестов Flutter он всегда побеждает его, если стартовать жест прямо на
+  // строке сообщения — раньше это полностью блокировало свайп-назад внутри
+  // чата. Решение — не делить экран на конкурирующие зоны, а решать
+  // направление ОДНИМ распознавателем на строке и, если оно оказалось
+  // "вправо", вручную доигрывать ту же публичную последовательность
+  // handleDragStart/Update/End, которой обычно управляет SwipeBackDetector
+  // (см. ниже). Направление фиксируется один раз в начале жеста (после
+  // небольшого порога — защита от дрожания пальца) и не меняется до конца,
+  // чтобы жест не дёргался между реплаем и свайпом-назад.
+  String? _swipeTargetId;
+  double _swipeCumulativeDx = 0;
+  bool? _swipeIsBackNavigation;
+  SwipeBackPageRoute<dynamic>? _swipeBackRoute;
 
   // Представительские id сообщений, у которых реакция появилась ТОЛЬКО ЧТО
   // (своя простановка в _handleReaction ИЛИ живой сигнал от собеседника,
@@ -4071,20 +4103,66 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // этот — горизонтального), это штатная композиция для Flutter.
     // Недоступен в режиме выбора и когда переписка заблокирована (реплай
     // всё равно нечем отправить).
-    void handleSwipeReplyStart(DragStartDetails details) {
-      if (_selectionMode || _composerBlocked) return;
-      _swipeReplyTargetId = targetMsg.messageId;
-      _swipeReplyDx = 0;
+    //
+    // Направление свайпа решается ОДИН раз в начале жеста (см. поля
+    // _swipeIsBackNavigation/_swipeCumulativeDx у State) и не меняется до
+    // конца: влево — реплай, вправо — свайп-назад, доигрываемый вручную
+    // теми же публичными методами SwipeBackPageRoute, которыми обычно
+    // управляет SwipeBackDetector (см. swipe_back_page_route.dart). Это
+    // нужно, потому что строка сообщения — более глубоко вложенный
+    // GestureDetector, чем SwipeBackDetector, и всегда выигрывает у него
+    // арену жестов, если жест стартует прямо на сообщении — без этой
+    // доигровки свайп-назад внутри чата вообще переставал работать.
+    void handleSwipeStart(DragStartDetails details) {
+      _swipeTargetId = targetMsg.messageId;
+      _swipeCumulativeDx = 0;
+      _swipeIsBackNavigation = null;
+      _swipeBackRoute = null;
       _swipeReplyFired = false;
     }
 
-    void handleSwipeReplyUpdate(DragUpdateDetails details) {
-      if (_swipeReplyTargetId != targetMsg.messageId) return;
+    void handleSwipeUpdate(DragUpdateDetails details) {
+      if (_swipeTargetId != targetMsg.messageId) return;
+      _swipeCumulativeDx += details.delta.dx;
+
+      if (_swipeIsBackNavigation == null) {
+        if (_swipeCumulativeDx.abs() < 4) return;
+        _swipeIsBackNavigation = _swipeCumulativeDx > 0;
+      }
+
+      if (_swipeIsBackNavigation!) {
+        final backSwipeEnabled =
+            !_emojiMode && !_selectionMode && !_searchMode;
+        if (!backSwipeEnabled) return;
+        var route = _swipeBackRoute;
+        if (route == null) {
+          final modalRoute = ModalRoute.of(context);
+          final navigator = Navigator.of(context);
+          if (modalRoute is SwipeBackPageRoute && navigator.canPop()) {
+            route = modalRoute;
+            _swipeBackRoute = route;
+            route.handleDragStart();
+          } else {
+            return;
+          }
+        }
+        final width = MediaQuery.of(context).size.width;
+        if (width <= 0) return;
+        route.handleDragUpdate(details.delta.dx / width);
+        return;
+      }
+
+      if (_selectionMode || _composerBlocked) return;
       final width = MediaQuery.of(context).size.width;
       final maxOffset = -width * 0.10;
-      final next = (_swipeReplyDx + details.delta.dx).clamp(maxOffset, 0.0);
-      if (next == _swipeReplyDx) return;
-      setState(() => _swipeReplyDx = next);
+      final next = _swipeCumulativeDx.clamp(maxOffset, 0.0);
+      if (_swipeReplyTargetId != targetMsg.messageId ||
+          next != _swipeReplyDx) {
+        setState(() {
+          _swipeReplyTargetId = targetMsg.messageId;
+          _swipeReplyDx = next;
+        });
+      }
       // Порог и визуальный максимум — одно и то же значение (см. ТЗ
       // пользователя): сообщение просто не может сдвинуться ДАЛЬШЕ точки,
       // в которой уже сработал реплай.
@@ -4095,12 +4173,48 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       }
     }
 
-    void resetSwipeReply() {
-      if (_swipeReplyTargetId != targetMsg.messageId) return;
-      setState(() {
-        _swipeReplyDx = 0;
-        _swipeReplyTargetId = null;
-      });
+    void handleSwipeEnd(DragEndDetails details) {
+      if (_swipeTargetId != targetMsg.messageId) return;
+      final route = _swipeBackRoute;
+      _swipeBackRoute = null;
+      _swipeTargetId = null;
+      final wasBackNav = _swipeIsBackNavigation;
+      _swipeIsBackNavigation = null;
+      if (_swipeReplyTargetId == targetMsg.messageId) {
+        setState(() {
+          _swipeReplyDx = 0;
+          _swipeReplyTargetId = null;
+        });
+      }
+      if (route != null) {
+        final width = MediaQuery.of(context).size.width;
+        final velocityFraction = width > 0
+            ? details.velocity.pixelsPerSecond.dx / width
+            : 0.0;
+        route.handleDragEnd(velocityFraction);
+        return;
+      }
+      // Свайп-назад был заблокирован (режим выбора/поиска/эмодзи), но
+      // достаточно длинный — тот же "мягкий" выход, что и у обычного
+      // SwipeBackDetector (см. onBlockedSwipe в build()).
+      if (wasBackNav == true && _swipeCumulativeDx > 80) {
+        _handleBackAction(emojiOnlyVisible: _emojiMode);
+      }
+    }
+
+    void handleSwipeCancel() {
+      if (_swipeTargetId != targetMsg.messageId) return;
+      final route = _swipeBackRoute;
+      _swipeBackRoute = null;
+      _swipeTargetId = null;
+      _swipeIsBackNavigation = null;
+      if (_swipeReplyTargetId == targetMsg.messageId) {
+        setState(() {
+          _swipeReplyDx = 0;
+          _swipeReplyTargetId = null;
+        });
+      }
+      route?.handleDragEnd(0);
     }
 
     // Пустой распорщик, забирающий всё оставшееся место по горизонтали —
@@ -4157,10 +4271,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         onLongPressStart: handleLongPressStart,
         onLongPressMoveUpdate: handleLongPressMoveUpdate,
         onLongPressEnd: handleLongPressEnd,
-        onHorizontalDragStart: handleSwipeReplyStart,
-        onHorizontalDragUpdate: handleSwipeReplyUpdate,
-        onHorizontalDragEnd: (_) => resetSwipeReply(),
-        onHorizontalDragCancel: resetSwipeReply,
+        onHorizontalDragStart: handleSwipeStart,
+        onHorizontalDragUpdate: handleSwipeUpdate,
+        onHorizontalDragEnd: handleSwipeEnd,
+        onHorizontalDragCancel: handleSwipeCancel,
         child: row,
       ),
     );
@@ -5351,10 +5465,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   // пользователя со скриншотами). Вычитаем
                                   // именно из ветки anyPanelOpen, покой не
                                   // трогаем вовсе — он и так уже был верным.
+                                  //
+                                  // "+ (_composerBannerVisible ? ... : 0)" —
+                                  // баннер реплая/редактирования/пересылки
+                                  // стоит НАД пилюлей, а не вместо неё (см.
+                                  // _composerBannerHeight) — без этого
+                                  // добавления резерв учитывал только саму
+                                  // пилюлю, и баннер перекрывал последнее
+                                  // сообщение (жалоба пользователя).
                                   28 +
                                       64 +
                                       reserved -
-                                      (anyPanelOpen ? 5 + systemBottomInset : 0),
+                                      (anyPanelOpen ? 5 + systemBottomInset : 0) +
+                                      (_composerBannerVisible
+                                          ? _composerBannerHeight
+                                          : 0),
                                 ),
                                 itemCount: groups.length,
                                 itemBuilder: (context, index) {

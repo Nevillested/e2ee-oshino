@@ -3,6 +3,7 @@ import '../data/reaction_emojis.dart';
 import '../l10n/app_strings.dart';
 import '../storage/default_reaction_store.dart';
 import '../theme/app_theme.dart';
+import 'frosted_dialog.dart';
 
 /// Выбор реакции по умолчанию (та, что ставится двойным тапом по
 /// сообщению) — сетка идёт по тому же самому reactionEmojis, что и панель
@@ -25,8 +26,7 @@ class _DefaultReactionDialog extends StatefulWidget {
   const _DefaultReactionDialog({required this.initial});
 
   @override
-  State<_DefaultReactionDialog> createState() =>
-      _DefaultReactionDialogState();
+  State<_DefaultReactionDialog> createState() => _DefaultReactionDialogState();
 }
 
 class _DefaultReactionDialogState extends State<_DefaultReactionDialog> {
@@ -34,9 +34,7 @@ class _DefaultReactionDialogState extends State<_DefaultReactionDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: AppColors.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    return FrostedDialog(
       title: Text(
         tr('reaction.pickerTitle'),
         style: TextStyle(color: AppColors.textPrimary),

@@ -44,8 +44,38 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
   bool _loading = false;
   bool _playing = false;
 
+  // Защита от повторного входа в обработку "конец видео" (см. _onTick):
+  // addListener у video_player может выстрелить несколько раз подряд, пока
+  // позиция уже >= длительности, а предыдущий (асинхронный) вызов ещё не
+  // успел домотать pause()+seekTo(0) — без гварда это могло запускать
+  // НЕСКОЛЬКО параллельных перемоток в начало одного и того же контроллера.
+  // Плюс диагностическое логирование (см. _toggle/_onTick ниже) — жалоба
+  // тестировщика "повторно видео не воспроизводится без выхода из чата".
+  bool _handlingEnd = false;
+
+  @override
+  void initState() {
+    super.initState();
+    DebugLog.log('VideoNote initState messageId=${widget.messageId}');
+  }
+
+  @override
+  void didUpdateWidget(covariant VideoNotePlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.messageId != widget.messageId) {
+      DebugLog.log(
+        'VideoNote didUpdateWidget messageId changed '
+        '${oldWidget.messageId} -> ${widget.messageId}',
+      );
+    }
+  }
+
   @override
   void dispose() {
+    DebugLog.log(
+      'VideoNote dispose messageId=${widget.messageId} '
+      'hadController=${_controller != null} playing=$_playing',
+    );
     _controller?.removeListener(_onTick);
     _controller?.dispose();
     // Если это сообщение было "активным" в верхней панели, а сам виджет
@@ -65,9 +95,18 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
     if (widget.coordinator == null || id == null) return;
     widget.coordinator!.activate(
       id,
-      pause: () => unawaited(_doPause()),
-      resume: () => unawaited(_doResume()),
-      stop: () => unawaited(_doStop()),
+      pause: () {
+        DebugLog.log('VideoNote coordinator->pause messageId=$id');
+        unawaited(_doPause());
+      },
+      resume: () {
+        DebugLog.log('VideoNote coordinator->resume messageId=$id');
+        unawaited(_doResume());
+      },
+      stop: () {
+        DebugLog.log('VideoNote coordinator->stop messageId=$id');
+        unawaited(_doStop());
+      },
     );
   }
 
@@ -88,6 +127,9 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
   Future<void> _doResume() async {
     final controller = _controller;
     if (controller == null) return;
+    DebugLog.log(
+      'VideoNote _doResume() start ${_stateSnapshot(controller)}',
+    );
     // На случай, если предыдущий _onTick ещё не успел довести до конца
     // свою перемотку в начало — досрочно дожидаемся её здесь тоже, иначе
     // play() может уйти на контроллер, который вот-вот сам домотает до 0 и
@@ -95,10 +137,40 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
     if (controller.value.position > Duration.zero &&
         controller.value.position >= controller.value.duration) {
       await controller.seekTo(Duration.zero);
+      DebugLog.log(
+        'VideoNote _doResume() pre-seek-to-0 done ${_stateSnapshot(controller)}',
+      );
     }
     await controller.play();
+    DebugLog.log(
+      'VideoNote _doResume() play() returned ${_stateSnapshot(controller)}',
+    );
     if (mounted) setState(() => _playing = true);
     _registerWithCoordinator();
+    // Само play() иногда завершается, даже если декодер реально не
+    // возобновил выдачу кадров (частая проблема video_player на Android
+    // после seekTo в конец/начало) — is Playing=true сразу после play() это
+    // не докажет. Проверяем позицию ещё раз спустя паузу: если она не
+    // сдвинулась вообще — воспроизведение не идёт, несмотря на успешный
+    // play().
+    final posAtPlay = controller.value.position;
+    unawaited(
+      Future.delayed(const Duration(milliseconds: 400), () {
+        if (!mounted || _controller != controller) return;
+        final moved = controller.value.position != posAtPlay;
+        DebugLog.log(
+          'VideoNote _doResume() +400ms check moved=$moved '
+          '${_stateSnapshot(controller)}',
+        );
+      }),
+    );
+  }
+
+  String _stateSnapshot(VideoPlayerController controller) {
+    final v = controller.value;
+    return 'pos=${v.position} dur=${v.duration} isPlaying=${v.isPlaying} '
+        'isInitialized=${v.isInitialized} hasError=${v.hasError} '
+        'errorDescription=${v.errorDescription}';
   }
 
   /// Явная остановка (крестик на верхней панели) — пауза + перемотка в
@@ -125,19 +197,22 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
   Future<void> _toggle() async {
     final controller = _controller;
     DebugLog.log(
-      'VideoNote _toggle() called hasController=${controller != null} '
-      'playing=$_playing loading=$_loading '
-      '${controller != null ? 'pos=${controller.value.position} dur=${controller.value.duration} isPlaying=${controller.value.isPlaying}' : ''}',
+      'VideoNote _toggle() called messageId=${widget.messageId} '
+      'hasController=${controller != null} playing=$_playing loading=$_loading '
+      '${controller != null ? _stateSnapshot(controller) : ''}',
     );
     if (controller != null) {
       if (_playing) {
         await _doPause();
-        DebugLog.log('VideoNote _toggle() paused, setting playing=false');
+        DebugLog.log(
+          'VideoNote _toggle() paused, setting playing=false '
+          '${_stateSnapshot(controller)}',
+        );
       } else {
         await _doResume();
         DebugLog.log(
-          'VideoNote _toggle() play() called, setting playing=true '
-          'postPlay.isPlaying=${controller.value.isPlaying} postPlay.pos=${controller.value.position}',
+          'VideoNote _toggle() resume flow done, setting playing=true '
+          '${_stateSnapshot(controller)}',
         );
       }
       return;
@@ -160,7 +235,7 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       });
       await newController.play();
       DebugLog.log(
-        'VideoNote _toggle() first play, dur=${newController.value.duration}',
+        'VideoNote _toggle() first play ${_stateSnapshot(newController)}',
       );
       if (mounted) setState(() => _playing = true);
       _registerWithCoordinator();
@@ -175,22 +250,42 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
     if (c == null || !c.value.isInitialized) return;
     if (c.value.duration > Duration.zero &&
         c.value.position >= c.value.duration) {
+      if (_handlingEnd) {
+        // addListener у video_player может выстрелить несколько раз
+        // подряд, пока позиция ещё не сброшена предыдущим вызовом — без
+        // этого гварда сюда могли одновременно попасть несколько
+        // параллельных pause()+seekTo(0), гоняющихся друг за другом по
+        // одному и тому же platform-каналу. Логируем сам факт — если это
+        // реально происходит часто, вот прямое тому доказательство.
+        DebugLog.log(
+          'VideoNote _onTick() end-of-video re-entrant call SKIPPED '
+          'pos=${c.value.position} dur=${c.value.duration}',
+        );
+        return;
+      }
+      _handlingEnd = true;
       DebugLog.log(
-        'VideoNote _onTick() end-of-video detected pos=${c.value.position} '
-        'dur=${c.value.duration} currentlyPlayingFlag=$_playing',
+        'VideoNote _onTick() end-of-video detected ${_stateSnapshot(c)} '
+        'currentlyPlayingFlag=$_playing',
       );
-      await c.pause();
-      // Дожидаемся реального завершения перемотки, прежде чем сообщать UI
-      // "готово к повторному воспроизведению" — раньше seekTo не
-      // ожидался, и повторный тап мог прийти на контроллер, ещё не
-      // закончивший перематываться в начало (видимо застревал на
-      // развороте контейнера без реального рестарта видео).
-      await c.seekTo(Duration.zero);
-      DebugLog.log(
-        'VideoNote _onTick() seek-to-0 done, actualPos=${c.value.position}, setting playing=false',
-      );
-      if (mounted) setState(() => _playing = false);
-      _reportPlayingState(false);
+      try {
+        await c.pause();
+        DebugLog.log('VideoNote _onTick() pause() done ${_stateSnapshot(c)}');
+        // Дожидаемся реального завершения перемотки, прежде чем сообщать UI
+        // "готово к повторному воспроизведению" — раньше seekTo не
+        // ожидался, и повторный тап мог прийти на контроллер, ещё не
+        // закончивший перематываться в начало (видимо застревал на
+        // развороте контейнера без реального рестарта видео).
+        await c.seekTo(Duration.zero);
+        DebugLog.log(
+          'VideoNote _onTick() seek-to-0 done ${_stateSnapshot(c)}, '
+          'setting playing=false',
+        );
+        if (mounted) setState(() => _playing = false);
+        _reportPlayingState(false);
+      } finally {
+        _handlingEnd = false;
+      }
     }
   }
 

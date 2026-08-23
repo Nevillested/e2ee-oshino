@@ -3,10 +3,27 @@ import '../l10n/app_strings.dart';
 import '../services/app_lock_store.dart';
 import '../services/biometric_auth.dart';
 import '../theme/app_theme.dart';
+import '../widgets/frosted_dialog.dart';
 import '../widgets/theme_reactive.dart';
 import 'pin_setup_screen.dart';
 
 const _timeoutOptions = [30, 60, 120, 300, 600, 900, 1800, 3600, 7200];
+
+/// Точка входа из настроек — окно поверх текущего экрана (см. ТЗ
+/// пользователя), тот же полупрозрачный заблюренный стиль, что и у
+/// остальных окон настроек (см. FrostedDialog).
+Future<void> showAppLockSettingsWindow(BuildContext context) {
+  return showDialog<void>(
+    context: context,
+    builder: (context) => FrostedDialog(
+      title: Text(
+        tr('applock.title'),
+        style: TextStyle(color: AppColors.textPrimary),
+      ),
+      content: const AppLockSettingsScreen(),
+    ),
+  );
+}
 
 /// "Вход в приложение" — статус/таймаут/PIN/биометрия, всё локально (см.
 /// AppLockStore — ничего из этого не уходит на сервер).
@@ -114,98 +131,93 @@ class _AppLockSettingsScreenState extends State<AppLockSettingsScreen> {
   }
 
   Widget _build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(tr('applock.title'))),
-      body: ValueListenableBuilder<AppLockSettings>(
-        valueListenable: AppLockStore.notifier,
-        builder: (context, settings, _) {
-          return ListView(
-            children: [
+    return ValueListenableBuilder<AppLockSettings>(
+      valueListenable: AppLockStore.notifier,
+      builder: (context, settings, _) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SwitchListTile(
+              value: settings.enabled,
+              onChanged: _onToggleEnabled,
+              activeThumbColor: AppColors.primary,
+              title: Text(
+                tr('applock.status'),
+                style: TextStyle(color: AppColors.textPrimary),
+              ),
+              subtitle: Text(
+                settings.enabled ? tr('applock.on') : tr('applock.off'),
+                style: TextStyle(color: AppColors.textMuted),
+              ),
+            ),
+            ListTile(
+              enabled: settings.enabled,
+              leading: Icon(Icons.timer_outlined, color: AppColors.textMuted),
+              title: Text(
+                tr('applock.timeout'),
+                style: TextStyle(color: AppColors.textPrimary),
+              ),
+              subtitle: Text(
+                tr('applock.timeout.${settings.timeoutSeconds}'),
+                style: TextStyle(color: AppColors.textMuted),
+              ),
+              onTap: settings.enabled ? _onTapTimeout : null,
+            ),
+            const Divider(height: 24),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text(
+                tr('applock.unlockMethod'),
+                style: TextStyle(
+                  color: AppColors.textMuted,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            ListTile(
+              leading: Icon(Icons.pin_outlined, color: AppColors.textMuted),
+              title: Text(
+                tr('applock.pin'),
+                style: TextStyle(color: AppColors.textPrimary),
+              ),
+              subtitle: Text(
+                settings.hasPin
+                    ? tr('applock.pinSet')
+                    : tr('applock.pinNotSet'),
+                style: TextStyle(color: AppColors.textMuted),
+              ),
+              onTap: _onTapPin,
+            ),
+            if (_capabilityLoaded && _capability != null)
               SwitchListTile(
-                value: settings.enabled,
-                onChanged: _onToggleEnabled,
+                value: settings.biometricEnabled,
+                onChanged: _onToggleBiometric,
                 activeThumbColor: AppColors.primary,
+                secondary: Icon(
+                  _capability == BiometricCapability.face
+                      ? Icons.face_outlined
+                      : Icons.fingerprint,
+                  color: AppColors.textMuted,
+                ),
                 title: Text(
-                  tr('applock.status'),
+                  _capability == BiometricCapability.face
+                      ? tr('applock.face')
+                      : _capability == BiometricCapability.fingerprint
+                      ? tr('applock.fingerprint')
+                      : tr('applock.biometric'),
                   style: TextStyle(color: AppColors.textPrimary),
                 ),
-                subtitle: Text(
-                  settings.enabled ? tr('applock.on') : tr('applock.off'),
-                  style: TextStyle(color: AppColors.textMuted),
-                ),
+                subtitle: settings.hasPin
+                    ? null
+                    : Text(
+                        tr('applock.needPinFirst'),
+                        style: TextStyle(color: AppColors.textMuted),
+                      ),
               ),
-              ListTile(
-                enabled: settings.enabled,
-                leading: Icon(Icons.timer_outlined, color: AppColors.textMuted),
-                title: Text(
-                  tr('applock.timeout'),
-                  style: TextStyle(color: AppColors.textPrimary),
-                ),
-                subtitle: Text(
-                  tr('applock.timeout.${settings.timeoutSeconds}'),
-                  style: TextStyle(color: AppColors.textMuted),
-                ),
-                onTap: settings.enabled ? _onTapTimeout : null,
-              ),
-              const Divider(height: 24),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 4,
-                ),
-                child: Text(
-                  tr('applock.unlockMethod'),
-                  style: TextStyle(
-                    color: AppColors.textMuted,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              ListTile(
-                leading: Icon(Icons.pin_outlined, color: AppColors.textMuted),
-                title: Text(
-                  tr('applock.pin'),
-                  style: TextStyle(color: AppColors.textPrimary),
-                ),
-                subtitle: Text(
-                  settings.hasPin
-                      ? tr('applock.pinSet')
-                      : tr('applock.pinNotSet'),
-                  style: TextStyle(color: AppColors.textMuted),
-                ),
-                onTap: _onTapPin,
-              ),
-              if (_capabilityLoaded && _capability != null)
-                SwitchListTile(
-                  value: settings.biometricEnabled,
-                  onChanged: _onToggleBiometric,
-                  activeThumbColor: AppColors.primary,
-                  secondary: Icon(
-                    _capability == BiometricCapability.face
-                        ? Icons.face_outlined
-                        : Icons.fingerprint,
-                    color: AppColors.textMuted,
-                  ),
-                  title: Text(
-                    _capability == BiometricCapability.face
-                        ? tr('applock.face')
-                        : _capability == BiometricCapability.fingerprint
-                        ? tr('applock.fingerprint')
-                        : tr('applock.biometric'),
-                    style: TextStyle(color: AppColors.textPrimary),
-                  ),
-                  subtitle: settings.hasPin
-                      ? null
-                      : Text(
-                          tr('applock.needPinFirst'),
-                          style: TextStyle(color: AppColors.textMuted),
-                        ),
-                ),
-            ],
-          );
-        },
-      ),
+          ],
+        );
+      },
     );
   }
 }

@@ -4,6 +4,7 @@ import '../l10n/app_strings.dart';
 import '../services/my_email_store.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
+import 'frosted_dialog.dart';
 
 /// Простая проверка формата на клиенте — не для безопасности (её всё
 /// равно дублирует сервер), просто чтобы не гонять явно мусорные значения
@@ -47,11 +48,7 @@ class _EmailHubDialog extends StatelessWidget {
       valueListenable: MyEmailStore.notifier,
       builder: (context, email, _) {
         final hasEmail = email != null && email.isNotEmpty;
-        return AlertDialog(
-          backgroundColor: AppColors.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
+        return FrostedDialog(
           title: Text(
             tr('email.title'),
             style: TextStyle(color: AppColors.textPrimary),
@@ -97,9 +94,7 @@ Future<void> _showRemoveConfirmDialog(
 ) async {
   final confirmed = await showDialog<bool>(
     context: hostContext,
-    builder: (context) => AlertDialog(
-      backgroundColor: AppColors.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    builder: (context) => FrostedDialog(
       title: Text(
         tr('email.removeConfirmTitle'),
         style: TextStyle(color: AppColors.textPrimary),
@@ -217,9 +212,7 @@ class _AddEmailDialogState extends State<_AddEmailDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: AppColors.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    return FrostedDialog(
       title: Text(
         _step == _Step.enterEmail
             ? tr('email.title')

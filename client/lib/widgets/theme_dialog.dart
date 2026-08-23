@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
 import '../storage/theme_store.dart';
 import '../theme/app_theme.dart';
+import 'frosted_dialog.dart';
 import 'theme_toggle_switch.dart';
 
 Future<void> showThemeDialog(BuildContext context) async {
@@ -33,9 +34,7 @@ class _ThemeDialogState extends State<_ThemeDialog> {
   @override
   Widget build(BuildContext context) {
     final isLight = _mode == AppThemeMode.light;
-    return AlertDialog(
-      backgroundColor: AppColors.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    return FrostedDialog(
       title: Text(
         tr('theme.title'),
         style: TextStyle(color: AppColors.textPrimary),
