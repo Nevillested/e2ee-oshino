@@ -360,32 +360,42 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   }
 
   Widget _buildSearchField() {
+    // isCollapsed (прошлая версия) на практике так и оставлял текст/хинт
+    // прижатыми к верху поля даже с textAlignVertical.center — судя по
+    // всему, конфликтует с тем, как InputDecorator в collapsed-режиме
+    // резервирует вертикальное место. Тут — надёжная, многократно
+    // проверенная связка: Row с ручными боковыми отступами вместо padding
+    // у самого TextField, isDense+contentPadding:zero вместо isCollapsed —
+    // вертикальное центрирование делает Row (у него по умолчанию
+    // crossAxisAlignment.center), а не InputDecorator.
     return Container(
       height: 38,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(19),
       ),
-      alignment: Alignment.centerLeft,
-      child: TextField(
-        controller: _searchController,
-        focusNode: _searchFocusNode,
-        onChanged: _onSearchChanged,
-        textInputAction: TextInputAction.search,
-        // isCollapsed убирает встроенные внутренние отступы InputDecorator
-        // (нужно — своя фиксированная высота 38 у пилюли), но вместе с ним
-        // ПРОПАДАЕТ и автоматическое вертикальное центрирование текста —
-        // без явного textAlignVertical курсор/текст/хинт садятся к верху
-        // поля, а не по центру (см. скриншот пользователя).
-        textAlignVertical: TextAlignVertical.center,
-        style: TextStyle(color: AppColors.textPrimary, fontSize: 15),
-        decoration: InputDecoration(
-          isCollapsed: true,
-          border: InputBorder.none,
-          hintText: tr('newChat.loginHint'),
-          hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 15),
-        ),
+      child: Row(
+        children: [
+          const SizedBox(width: 14),
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              focusNode: _searchFocusNode,
+              onChanged: _onSearchChanged,
+              textInputAction: TextInputAction.search,
+              textAlignVertical: TextAlignVertical.center,
+              style: TextStyle(color: AppColors.textPrimary, fontSize: 15),
+              decoration: InputDecoration(
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+                border: InputBorder.none,
+                hintText: tr('newChat.loginHint'),
+                hintStyle: TextStyle(color: AppColors.textMuted, fontSize: 15),
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+        ],
       ),
     );
   }
