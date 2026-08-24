@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -23,24 +22,6 @@ import (
 // перезаписывает старый файл, не нужно отдельно чистить прежние версии.
 func avatarObjectKey(accountID string) string {
 	return "avatar_" + accountID
-}
-
-// notifyAvatarChanged — живой сигнал ВСЕМ подключённым устройствам, что
-// у accountID поменялось фото профиля (загружено новое или удалено). В
-// отличие от notifyBlockStatusChanged (websocket.go), тут нет конкретного
-// адресата — сервер не хранит, у кого этот account_id вообще есть в
-// списке контактов, поэтому широковещательно, всем сразу; сам сигнал не
-// содержит ничего чувствительного (только account_id, для которого стоит
-// перепроверить кэш — реальное фото всё равно берётся отдельным GET).
-func notifyAvatarChanged(ctx context.Context, registry *ConnectionRegistry, accountID pgtype.UUID) {
-	msgBytes, err := json.Marshal(struct {
-		Type      string `json:"Type"`
-		AccountID string `json:"AccountId"`
-	}{Type: "avatar_changed", AccountID: accountID.String()})
-	if err != nil {
-		return
-	}
-	registry.Broadcast(ctx, msgBytes)
 }
 
 func NewUploadAvatarHandler(queries *db.Queries, minioClient *minio.Client, registry *ConnectionRegistry) func(http.ResponseWriter, *http.Request) {
@@ -83,7 +64,13 @@ func NewUploadAvatarHandler(queries *db.Queries, minioClient *minio.Client, regi
 			return
 		}
 
-		notifyAvatarChanged(r.Context(), registry, Session.AccountID)
+		// Единый механизм с status/birthday/display_name (см. ТЗ
+		// пользователя — один способ обновления для всех полей профиля,
+		// с учётом приватности): прицельно контактам, с учётом
+		// avatar_visibility, и с доставкой офлайн-получателю при
+		// следующем подключении — не широковещательно всем подряд, как
+		// раньше.
+		notifyProfileUpdatedIfVisible(r.Context(), queries, registry, Session.AccountID, "avatar")
 
 		w.WriteHeader(http.StatusOK)
 	}
@@ -117,7 +104,13 @@ func NewDeleteAvatarHandler(queries *db.Queries, minioClient *minio.Client, regi
 			return
 		}
 
-		notifyAvatarChanged(r.Context(), registry, Session.AccountID)
+		// Единый механизм с status/birthday/display_name (см. ТЗ
+		// пользователя — один способ обновления для всех полей профиля,
+		// с учётом приватности): прицельно контактам, с учётом
+		// avatar_visibility, и с доставкой офлайн-получателю при
+		// следующем подключении — не широковещательно всем подряд, как
+		// раньше.
+		notifyProfileUpdatedIfVisible(r.Context(), queries, registry, Session.AccountID, "avatar")
 
 		w.WriteHeader(http.StatusOK)
 	}

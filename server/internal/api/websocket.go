@@ -375,6 +375,34 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 					continue
 				}
 
+				msgID := msg.ID
+
+				// Служебный control-сигнал (profile_updated/avatar и т.п.,
+				// см. notifyContactsProfileField/account_profile.go) — это
+				// НЕ relay E2EE-конверта от другого устройства (у него нет
+				// осмысленного ToDeviceId), а уже готовый JSON со своими
+				// произвольными полями (AccountId/Field и т.п.). Раньше
+				// такой сигнал, попавший в офлайн-очередь, тоже прогонялся
+				// через WSMsgFrom/WSMsgRelay — те заточены именно под
+				// relay и молча теряли всё, кроме Type, при пересборке:
+				// получатель видел profile_updated без AccountId/Field и
+				// тихо его игнорировал (баг — контакт не видел новых
+				// данных профиля, пока не переподключался ПОСЛЕ следующего
+				// изменения). Шлём как есть, без ack-трекинга — это лёгкий
+				// сигнал "перепроверь кэш", а не пользовательские данные,
+				// потерять один при обрыве сети не критично.
+				if parsed.ToDeviceId == "" {
+					writeErr := ws_object.Write(r.Context(), websocket.MessageText, []byte(msg.Ciphertext))
+					if writeErr != nil {
+						log.Printf("ошибка отправки отложенного control-сигнала: %v", writeErr)
+						continue
+					}
+					if err := queries.DeletePendingMessage(r.Context(), msgID); err != nil {
+						log.Printf("ошибка удаления доставленного control-сигнала: %v", err)
+					}
+					continue
+				}
+
 				deliveryID := generateDeliveryID()
 				relay := WSMsgRelay{
 					ToDeviceId: parsed.ToDeviceId,
@@ -396,7 +424,6 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 				// после этого цикла) — ждать здесь синхронно нельзя, до
 				// readLoop сокет никто не читает, ack физически не может
 				// прийти. Поэтому ждём в фоне, не блокируя вход в readLoop.
-				msgID := msg.ID
 				go func() {
 					select {
 					case <-ackChan:
