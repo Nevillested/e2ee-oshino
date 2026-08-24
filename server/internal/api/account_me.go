@@ -9,9 +9,14 @@ import (
 type AccountMeResponse struct {
 	AccountID string `json:"account_id"`
 	Login     string `json:"login"`
-	Language  string `json:"language"`
-	Email     string `json:"email,omitempty"`
-	HasAvatar bool   `json:"has_avatar"`
+	// Сырое значение (не coalesce с login) — клиенту нужно уметь показать
+	// поле пустым/незаполненным в своих настройках, а не подставлять туда
+	// login. Для показа СОБЕСЕДНИКАМ используется account_profile.go,
+	// который отдаёт уже готовое к показу значение.
+	DisplayName string `json:"display_name,omitempty"`
+	Language    string `json:"language"`
+	Email       string `json:"email,omitempty"`
+	HasAvatar   bool   `json:"has_avatar"`
 	// Собственный статус/дата рождения/настройки приватности — без
 	// ограничений (это же сам владелец аккаунта), нужны клиенту сразу
 	// после логина, чтобы заполнить MyProfileStore без отдельного похода
@@ -40,6 +45,9 @@ func NewAccountMeHandler(queries *db.Queries) func(http.ResponseWriter, *http.Re
 		var Resp AccountMeResponse
 		Resp.AccountID = Account.ID.String()
 		Resp.Login = Account.Login
+		if Account.DisplayName.Valid {
+			Resp.DisplayName = Account.DisplayName.String
+		}
 		Resp.Language = Account.Language
 		if Account.Email.Valid {
 			Resp.Email = Account.Email.String

@@ -15,6 +15,9 @@ import (
 type DeviceOwnerResponse struct {
 	AccountID string `json:"account_id"`
 	Login     string `json:"login"`
+	// Готовое к показу имя — display_name, если задан, иначе login (см.
+	// тот же coalesce в account_profile.go/ProfileResponse.DisplayName).
+	DisplayName string `json:"display_name"`
 }
 
 func NewGetDeviceOwnerHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
@@ -48,6 +51,10 @@ func NewGetDeviceOwnerHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 		var NewResponse DeviceOwnerResponse
 		NewResponse.AccountID = row.AccountID.String()
 		NewResponse.Login = row.Login
+		NewResponse.DisplayName = row.Login
+		if row.DisplayName.Valid && row.DisplayName.String != "" {
+			NewResponse.DisplayName = row.DisplayName.String
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(NewResponse)

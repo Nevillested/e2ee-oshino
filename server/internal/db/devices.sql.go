@@ -101,21 +101,22 @@ func (q *Queries) GetDevicesByAccount(ctx context.Context, accountID pgtype.UUID
 }
 
 const getLoginByDeviceID = `-- name: GetLoginByDeviceID :one
-SELECT a.id AS account_id, a.login
+SELECT a.id AS account_id, a.login, a.display_name
 FROM devices d
 JOIN accounts a ON a.id = d.account_id
 WHERE d.id = $1
 `
 
 type GetLoginByDeviceIDRow struct {
-	AccountID pgtype.UUID
-	Login     string
+	AccountID   pgtype.UUID
+	Login       string
+	DisplayName pgtype.Text
 }
 
 func (q *Queries) GetLoginByDeviceID(ctx context.Context, id pgtype.UUID) (GetLoginByDeviceIDRow, error) {
 	row := q.db.QueryRow(ctx, getLoginByDeviceID, id)
 	var i GetLoginByDeviceIDRow
-	err := row.Scan(&i.AccountID, &i.Login)
+	err := row.Scan(&i.AccountID, &i.Login, &i.DisplayName)
 	return i, err
 }
 

@@ -39,6 +39,9 @@ UPDATE accounts SET status_text = $2 WHERE id = $1;
 -- name: UpdateAccountBirthday :exec
 UPDATE accounts SET birthday = $2 WHERE id = $1;
 
+-- name: UpdateAccountDisplayName :exec
+UPDATE accounts SET display_name = $2 WHERE id = $1;
+
 -- name: UpdateAccountPrivacy :exec
 UPDATE accounts SET
     find_by_login_visibility = $2,

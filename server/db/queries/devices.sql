@@ -10,7 +10,7 @@ SELECT * FROM devices WHERE account_id = $1;
 UPDATE devices SET last_seen = now() WHERE id = $1;
 
 -- name: GetLoginByDeviceID :one
-SELECT a.id AS account_id, a.login
+SELECT a.id AS account_id, a.login, a.display_name
 FROM devices d
 JOIN accounts a ON a.id = d.account_id
 WHERE d.id = $1;

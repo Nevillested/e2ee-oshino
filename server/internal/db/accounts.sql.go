@@ -14,7 +14,7 @@ import (
 const createAccount = `-- name: CreateAccount :one
 INSERT INTO accounts (login, password_hash, totp_secret)
 VALUES ($1, $2, $3)
-RETURNING id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility
+RETURNING id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility, display_name
 `
 
 type CreateAccountParams struct {
@@ -41,6 +41,7 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (A
 		&i.AvatarVisibility,
 		&i.BirthdayVisibility,
 		&i.StatusVisibility,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -66,7 +67,7 @@ func (q *Queries) GetAccountAvatarKey(ctx context.Context, id pgtype.UUID) (pgty
 }
 
 const getAccountByEmail = `-- name: GetAccountByEmail :one
-SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility FROM accounts WHERE email = $1
+SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility, display_name FROM accounts WHERE email = $1
 `
 
 func (q *Queries) GetAccountByEmail(ctx context.Context, email pgtype.Text) (Account, error) {
@@ -87,12 +88,13 @@ func (q *Queries) GetAccountByEmail(ctx context.Context, email pgtype.Text) (Acc
 		&i.AvatarVisibility,
 		&i.BirthdayVisibility,
 		&i.StatusVisibility,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getAccountByID = `-- name: GetAccountByID :one
-SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility FROM accounts WHERE id = $1
+SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility, display_name FROM accounts WHERE id = $1
 `
 
 func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (Account, error) {
@@ -113,12 +115,13 @@ func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (Account, 
 		&i.AvatarVisibility,
 		&i.BirthdayVisibility,
 		&i.StatusVisibility,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getAccountByLogin = `-- name: GetAccountByLogin :one
-SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility FROM accounts WHERE login = $1
+SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility, display_name FROM accounts WHERE login = $1
 `
 
 func (q *Queries) GetAccountByLogin(ctx context.Context, login string) (Account, error) {
@@ -139,6 +142,7 @@ func (q *Queries) GetAccountByLogin(ctx context.Context, login string) (Account,
 		&i.AvatarVisibility,
 		&i.BirthdayVisibility,
 		&i.StatusVisibility,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -168,6 +172,20 @@ type UpdateAccountBirthdayParams struct {
 
 func (q *Queries) UpdateAccountBirthday(ctx context.Context, arg UpdateAccountBirthdayParams) error {
 	_, err := q.db.Exec(ctx, updateAccountBirthday, arg.ID, arg.Birthday)
+	return err
+}
+
+const updateAccountDisplayName = `-- name: UpdateAccountDisplayName :exec
+UPDATE accounts SET display_name = $2 WHERE id = $1
+`
+
+type UpdateAccountDisplayNameParams struct {
+	ID          pgtype.UUID
+	DisplayName pgtype.Text
+}
+
+func (q *Queries) UpdateAccountDisplayName(ctx context.Context, arg UpdateAccountDisplayNameParams) error {
+	_, err := q.db.Exec(ctx, updateAccountDisplayName, arg.ID, arg.DisplayName)
 	return err
 }
 

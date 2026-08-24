@@ -23,6 +23,7 @@ type Account struct {
 	AvatarVisibility      int16
 	BirthdayVisibility    int16
 	StatusVisibility      int16
+	DisplayName           pgtype.Text
 }
 
 type ChatMute struct {

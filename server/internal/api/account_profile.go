@@ -104,6 +104,51 @@ func NewUpdateBirthdayHandler(queries *db.Queries, registry *ConnectionRegistry)
 	}
 }
 
+const maxDisplayNameLength = 50
+
+type UpdateDisplayNameRequest struct {
+	DisplayName string `json:"display_name"`
+}
+
+// NewUpdateDisplayNameHandler — PUT /account/display-name. Пустая строка
+// снимает отображаемое имя целиком (клиент откатывается на login). Без
+// проверки видимости при рассылке уведомления — в отличие от status/
+// birthday/avatar, у display_name нет настройки приватности (см.
+// ProfileResponse.DisplayName).
+func NewUpdateDisplayNameHandler(queries *db.Queries, registry *ConnectionRegistry) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var Session, err = CheckToken(w, r, queries)
+		if err != nil {
+			return
+		}
+
+		var Req UpdateDisplayNameRequest
+		if DecodeErr := json.NewDecoder(r.Body).Decode(&Req); DecodeErr != nil {
+			http.Error(w, "Ошибка декодирования JSON", http.StatusBadRequest)
+			return
+		}
+
+		var Name = strings.TrimSpace(Req.DisplayName)
+		if len(Name) > maxDisplayNameLength*4 {
+			http.Error(w, "Слишком длинное имя", http.StatusBadRequest)
+			return
+		}
+
+		var SqlErr = queries.UpdateAccountDisplayName(r.Context(), db.UpdateAccountDisplayNameParams{
+			ID:          Session.AccountID,
+			DisplayName: pgtype.Text{String: Name, Valid: Name != ""},
+		})
+		if SqlErr != nil {
+			http.Error(w, "Ошибка сохранения имени", http.StatusInternalServerError)
+			return
+		}
+
+		notifyContactsProfileField(r.Context(), queries, registry, Session.AccountID, "display_name")
+
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
 type UpdatePrivacyRequest struct {
 	FindByLogin int16 `json:"find_by_login"`
 	Avatar      int16 `json:"avatar"`
@@ -188,6 +233,11 @@ type ProfileResponse struct {
 	Status    string       `json:"status,omitempty"`
 	Birthday  string       `json:"birthday,omitempty"`
 	HasAvatar bool         `json:"has_avatar"`
+	// Уже готовое к показу имя — display_name, если задан, иначе login
+	// (coalesce делаем тут, а не заставляем каждый клиентский экран
+	// повторять один и тот же фолбэк). Без ограничений по приватности —
+	// это не приватные данные, а то, как пользователь сам представляется.
+	DisplayName string `json:"display_name"`
 }
 
 // NewGetAccountProfileHandler — GET /account/profile/{login}, заменяет
@@ -242,6 +292,10 @@ func NewGetAccountProfileHandler(queries *db.Queries) func(http.ResponseWriter, 
 		Resp.AccountID = Account.ID.String()
 		Resp.Login = Account.Login
 		Resp.Devices = DevicesInfo
+		Resp.DisplayName = Account.Login
+		if Account.DisplayName.Valid && Account.DisplayName.String != "" {
+			Resp.DisplayName = Account.DisplayName.String
+		}
 
 		fieldVisible := func(visibility int16) bool {
 			if isSelf || visibility == 1 {
