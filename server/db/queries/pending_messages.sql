@@ -10,3 +10,6 @@ DELETE FROM pending_messages WHERE to_device_id = $1;
 
 -- name: DeletePendingMessage :exec
 DELETE FROM pending_messages WHERE id = $1;
+
+-- name: DeleteOldPendingMessages :exec
+DELETE FROM pending_messages WHERE created_at < $1;

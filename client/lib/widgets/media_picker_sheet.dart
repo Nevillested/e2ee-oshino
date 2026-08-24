@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -9,6 +10,7 @@ import '../l10n/app_strings.dart';
 import '../services/media_asset_cache.dart';
 import '../theme/app_theme.dart';
 import 'caption_input_bar.dart';
+import 'spoiler_overlay.dart';
 import 'vertical_dismiss_detector.dart';
 
 class MediaPickerSheetResult {
@@ -497,48 +499,92 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
               // Панель "N фото выбрано" + меню из трёх точек (см. ТЗ
               // пользователя, по образцу Телеги) — только пока что-то
               // выбрано, симметрично панели описания снизу.
-              if (hasSelection)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 4, 4),
-                  child: Row(
-                    children: [
-                      Text(
-                        '${tr('media.selectedCount')}: ${_selectedOrder.length}',
-                        style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const Spacer(),
-                      PopupMenuButton<void>(
-                        icon: Icon(Icons.more_vert, color: AppColors.textPrimary),
-                        color: AppColors.surface,
-                        itemBuilder: (context) => [
-                          PopupMenuItem<void>(
-                            onTap: () =>
-                                setState(() => _spoilerEnabled = !_spoilerEnabled),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  _spoilerEnabled
-                                      ? Icons.check_box
-                                      : Icons.check_box_outline_blank,
-                                  size: 20,
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: SizeTransition(
+                    sizeFactor: animation,
+                    alignment: Alignment.topCenter,
+                    child: child,
+                  ),
+                ),
+                child: !hasSelection
+                    ? const SizedBox.shrink(key: ValueKey('no-selection'))
+                    : Padding(
+                        key: const ValueKey('selection-bar'),
+                        padding: const EdgeInsets.fromLTRB(16, 0, 4, 4),
+                        child: Row(
+                          children: [
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 150),
+                              transitionBuilder: (child, animation) =>
+                                  FadeTransition(
+                                    opacity: animation,
+                                    child: ScaleTransition(
+                                      scale: animation,
+                                      child: child,
+                                    ),
+                                  ),
+                              child: Text(
+                                '${tr('media.selectedCount')}: ${_selectedOrder.length}',
+                                key: ValueKey(_selectedOrder.length),
+                                style: TextStyle(
                                   color: AppColors.textPrimary,
+                                  fontWeight: FontWeight.w600,
                                 ),
-                                const SizedBox(width: 10),
-                                Text(
-                                  tr('media.hideWithSpoiler'),
-                                  style: TextStyle(color: AppColors.textPrimary),
+                              ),
+                            ),
+                            const Spacer(),
+                            PopupMenuButton<void>(
+                              icon: Icon(
+                                Icons.more_vert,
+                                color: AppColors.textPrimary,
+                              ),
+                              color: AppColors.surface,
+                              itemBuilder: (context) => [
+                                PopupMenuItem<void>(
+                                  // Гасим стандартную квадратную рябь/highlight
+                                  // Flutter SDK на этом пункте (у стокового
+                                  // PopupMenuItem нет параметра shape/customBorder
+                                  // в этой версии) — меняется только чекбокс,
+                                  // тап не должен выглядеть отдельной "системной"
+                                  // анимацией поверх скруглённого меню.
+                                  onTap: () => setState(
+                                    () => _spoilerEnabled = !_spoilerEnabled,
+                                  ),
+                                  child: Theme(
+                                    data: Theme.of(context).copyWith(
+                                      splashFactory: NoSplash.splashFactory,
+                                      highlightColor: Colors.transparent,
+                                      splashColor: Colors.transparent,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          _spoilerEnabled
+                                              ? Icons.check_box
+                                              : Icons.check_box_outline_blank,
+                                          size: 20,
+                                          color: AppColors.textPrimary,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Text(
+                                          tr('media.hideWithSpoiler'),
+                                          style: TextStyle(
+                                            color: AppColors.textPrimary,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
-                ),
+              ),
               Expanded(
                 // Stack вместо прежнего "сетка + панель друг под другом в
                 // Column" — панель описания теперь ЛЕЖИТ ПОВЕРХ сетки, не
@@ -684,7 +730,26 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
                         snapshot.data == null) {
                       return Container(color: AppColors.surface);
                     }
-                    return Image.memory(snapshot.data!, fit: BoxFit.cover);
+                    final image = Image.memory(
+                      snapshot.data!,
+                      fit: BoxFit.cover,
+                    );
+                    // Спойлер — на весь выбор разом (см. _spoilerEnabled), но
+                    // визуально показываем его только на УЖЕ выбранных
+                    // плитках (order != null) — остальные ещё не участвуют
+                    // в отправке, их превью не должно меняться.
+                    if (_spoilerEnabled && order != null) {
+                      return SpoilerSparkleOverlay(
+                        blurredChild: ImageFiltered(
+                          imageFilter: ui.ImageFilter.blur(
+                            sigmaX: 12,
+                            sigmaY: 12,
+                          ),
+                          child: image,
+                        ),
+                      );
+                    }
+                    return image;
                   },
                 ),
                 if (asset.type == AssetType.video)

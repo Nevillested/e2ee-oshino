@@ -64,13 +64,17 @@ Future<void> sendPeerMessage(String peerDeviceId, InnerMessage inner) async {
     'ratchetPubkey=${next.header['ratchet_pubkey']}',
   );
   await SessionStore.saveState(peerDeviceId, state);
-  final encrypted = await encryptMessage(next.messageKey, inner.encode());
-  final envelope = <String, dynamic>{
-    ...encrypted,
+  final headerFields = <String, dynamic>{
     ...next.header,
     'sender_device_id': myDeviceId,
     if (initHeader != null) ...initHeader,
   };
+  final encrypted = await encryptMessage(
+    next.messageKey,
+    inner.encode(),
+    aad: headerFields,
+  );
+  final envelope = <String, dynamic>{...encrypted, ...headerFields};
 
   await SendQueueProcessor.instance.enqueue(
     toDeviceId: peerDeviceId,

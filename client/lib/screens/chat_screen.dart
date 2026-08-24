@@ -173,6 +173,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   double _lastReserved = 0;
   double? _lastLoggedBottomInset;
 
+  // Держит "клавиатура видна" через короткие провалы realInset до 0 —
+  // системный оверлей "Change keyboard" (долгий тап на пробел) на части
+  // устройств на кадр-другой обнуляет viewInsets.bottom ещё ДО того, как
+  // сам оверлей закрылся; без сглаживания это мгновенно схлопывало
+  // зарезервированное место под клавиатуру (см. keyboardVisible/reserved
+  // ниже), что само гасило и клавиатуру, и оверлей поверх нее (ТЗ
+  // пользователя). Открытие (0 → есть insets) применяется сразу, без
+  // задержки — тормозить именно ЗАКРЫТИЕ.
+  bool _keyboardVisibleDebounced = false;
+  static const _keyboardCloseDebounceDelay = Duration(milliseconds: 250);
+  Timer? _keyboardCloseDebounceTimer;
+
   // Растущая пилюля-композер (см. ТЗ пользователя "Enter — перенос строки,
   // а не закрытие клавиатуры") — считаем число строк по явным '\n' (не
   // мягкому переносу по ширине: без layout-контекста его точно не измерить
@@ -1504,13 +1516,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         );
         await SessionStore.saveState(_currentPeerDeviceId, state);
 
-        final encrypted = await encryptMessage(next.messageKey, inner.encode());
-        final envelope = <String, dynamic>{
-          ...encrypted,
+        final headerFields = <String, dynamic>{
           ...next.header,
           'sender_device_id': myDeviceId,
           if (initHeader != null) ...initHeader,
         };
+        final encrypted = await encryptMessage(
+          next.messageKey,
+          inner.encode(),
+          aad: headerFields,
+        );
+        final envelope = <String, dynamic>{...encrypted, ...headerFields};
 
         await SendQueueProcessor.instance.enqueue(
           toDeviceId: _currentPeerDeviceId,
@@ -1598,13 +1614,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         );
         await SessionStore.saveState(_currentPeerDeviceId, state);
 
-        final encrypted = await encryptMessage(next.messageKey, inner.encode());
-        final envelope = <String, dynamic>{
-          ...encrypted,
+        final headerFields = <String, dynamic>{
           ...next.header,
           'sender_device_id': myDeviceId,
           if (initHeader != null) ...initHeader,
         };
+        final encrypted = await encryptMessage(
+          next.messageKey,
+          inner.encode(),
+          aad: headerFields,
+        );
+        final envelope = <String, dynamic>{...encrypted, ...headerFields};
 
         // Статус на 'sent' проставляет сама очередь по факту реального
         // ack от сервера (см. SendQueueProcessor._attempt), не раньше —
@@ -2102,15 +2122,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             'ratchetPubkey=${next.header['ratchet_pubkey']}',
           );
           await SessionStore.saveState(_currentPeerDeviceId, state);
-          final encryptedEnvelope = await encryptMessage(
-            next.messageKey,
-            inner.encode(),
-          );
-          final envelope = <String, dynamic>{
-            ...encryptedEnvelope,
+          final headerFields = <String, dynamic>{
             ...next.header,
             'sender_device_id': myDeviceId,
             if (initHeader != null) ...initHeader,
+          };
+          final encryptedEnvelope = await encryptMessage(
+            next.messageKey,
+            inner.encode(),
+            aad: headerFields,
+          );
+          final envelope = <String, dynamic>{
+            ...encryptedEnvelope,
+            ...headerFields,
           };
 
           await SendQueueProcessor.instance.enqueue(
@@ -2788,15 +2812,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             'ratchetPubkey=${next.header['ratchet_pubkey']}',
           );
           await SessionStore.saveState(_currentPeerDeviceId, state);
-          final encryptedEnvelope = await encryptMessage(
-            next.messageKey,
-            inner.encode(),
-          );
-          final envelope = <String, dynamic>{
-            ...encryptedEnvelope,
+          final headerFields = <String, dynamic>{
             ...next.header,
             'sender_device_id': myDeviceId,
             if (initHeader != null) ...initHeader,
+          };
+          final encryptedEnvelope = await encryptMessage(
+            next.messageKey,
+            inner.encode(),
+            aad: headerFields,
+          );
+          final envelope = <String, dynamic>{
+            ...encryptedEnvelope,
+            ...headerFields,
           };
 
           await ChatStore.updateProcessingStep(
@@ -2951,15 +2979,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             'ratchetPubkey=${next.header['ratchet_pubkey']}',
           );
           await SessionStore.saveState(_currentPeerDeviceId, state);
-          final encryptedEnvelope = await encryptMessage(
-            next.messageKey,
-            inner.encode(),
-          );
-          final envelope = <String, dynamic>{
-            ...encryptedEnvelope,
+          final headerFields = <String, dynamic>{
             ...next.header,
             'sender_device_id': myDeviceId,
             if (initHeader != null) ...initHeader,
+          };
+          final encryptedEnvelope = await encryptMessage(
+            next.messageKey,
+            inner.encode(),
+            aad: headerFields,
+          );
+          final envelope = <String, dynamic>{
+            ...encryptedEnvelope,
+            ...headerFields,
           };
 
           for (final q in items) {
@@ -4609,6 +4641,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _mediaCoordinator.dispose();
     _pendingTapTimer?.cancel();
     _scrollSaveDebounce?.cancel();
+    _keyboardCloseDebounceTimer?.cancel();
     _keyboardHeightSettleTimer?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
@@ -5348,7 +5381,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Widget _build(BuildContext context) {
     final realInset = MediaQuery.of(context).viewInsets.bottom;
-    final keyboardVisible = realInset > 50;
+    final rawKeyboardVisible = realInset > 50;
+    // Открытие — сразу; закрытие — только если провал держится дольше
+    // _keyboardCloseDebounceDelay (см. поле выше про "Change keyboard").
+    if (rawKeyboardVisible) {
+      _keyboardCloseDebounceTimer?.cancel();
+      _keyboardCloseDebounceTimer = null;
+      _keyboardVisibleDebounced = true;
+    } else if (_keyboardVisibleDebounced &&
+        _keyboardCloseDebounceTimer == null) {
+      _keyboardCloseDebounceTimer = Timer(_keyboardCloseDebounceDelay, () {
+        if (!mounted) return;
+        _keyboardCloseDebounceTimer = null;
+        if (MediaQuery.of(context).viewInsets.bottom <= 50) {
+          setState(() => _keyboardVisibleDebounced = false);
+        }
+      });
+    }
+    final keyboardVisible = _keyboardVisibleDebounced;
     // Настоящий (не занулённый клавиатурой) отступ до жестовой зоны ОС —
     // см. комментарий у зазора-спейсера ниже про то, почему брать его надо
     // ИМЕННО отсюда, а не из MediaQuery.padding.

@@ -599,16 +599,17 @@ class CallService {
 
       final next = await state.nextSendingKey();
       await SessionStore.saveState(peerDeviceId, state);
-      final encrypted = await encryptMessage(
-        next.messageKey,
-        jsonEncode(innerPayload),
-      );
-      return {
-        ...encrypted,
+      final headerFields = <String, dynamic>{
         ...next.header,
         'sender_device_id': myDeviceId,
         if (initHeader != null) ...initHeader,
       };
+      final encrypted = await encryptMessage(
+        next.messageKey,
+        jsonEncode(innerPayload),
+        aad: headerFields,
+      );
+      return {...encrypted, ...headerFields};
     } catch (e) {
       DebugLog.log('CallService encrypt-FAILED to=$peerDeviceId error=$e');
       return null;

@@ -103,6 +103,22 @@ class MessageRouter {
   static String _lastResetKey(String deviceId) =>
       'session_reset_last_request:$deviceId';
 
+  // Сколько ждать с первого "нет сессии и нет хендшейка" от отправителя,
+  // прежде чем сдаться и начать подтверждать такие доставки серверу — см.
+  // _giveUpKey ниже. Раньше такие сообщения НИКОГДА не подтверждались:
+  // сервер честно передоставлял их заново на каждый реконнект НАВСЕГДА
+  // (см. разбор пользовательского лога — тысячи повторов одних и тех же
+  // DROP на каждый реконнект, годами копящийся хвост от контакта с давно
+  // потерянной сессией). Держать их неподтверждёнными есть смысл ТОЛЬКО
+  // на случай гонки доставки: собеседник шлёт несколько сообщений подряд
+  // почти одновременно, и то самое, что несёт X3DH-инициализацию (обычно
+  // самое первое), доставляется НЕ первым — тогда последующие ещё смогут
+  // расшифроваться, как только придёт то, что поднимет сессию. Разумный
+  // запас на такую гонку — минуты, не часы и тем более не дни.
+  static const _noSessionGiveUpDelay = Duration(minutes: 2);
+  static String _noSessionFirstSeenKey(String deviceId) =>
+      'no_session_first_seen:$deviceId';
+
   static Future<void> _processIncoming(
     String senderDeviceId,
     Map<String, dynamic> envelope,
@@ -150,11 +166,17 @@ class MessageRouter {
             '$senderDeviceId, а конверт не содержит данных для нового '
             'X3DH-хендшейка — сообщение отброшено, расшифровать нечем',
           );
+          final gaveUp = await _giveUpIfNoSessionTooLong(senderDeviceId);
           DebugLog.log(
-            'Router DROP from=$senderDeviceId reason=no-session-and-no-handshake',
+            'Router DROP from=$senderDeviceId reason=no-session-and-no-handshake'
+            '${gaveUp ? ' (gave up — acking to stop redelivery loop)' : ''}',
           );
+          if (gaveUp && deliveryId != null) {
+            WebSocketService.instance.ackDelivery(deliveryId);
+          }
           return;
         }
+        await _clearNoSessionFirstSeen(senderDeviceId);
         DebugLog.log(
           'Router accepted fresh X3DH init from=$senderDeviceId (no prior session)',
         );
@@ -213,6 +235,7 @@ class MessageRouter {
       }
 
       await _clearFailureCount(senderDeviceId);
+      await _clearNoSessionFirstSeen(senderDeviceId);
       await SessionStore.saveState(senderDeviceId, state);
 
       final inner = InnerMessage.decode(rawInner);
@@ -496,10 +519,29 @@ class MessageRouter {
   ) async {
     final rootKey = await establishIncomingSessionRaw(envelope);
     if (rootKey == null) return null;
-    await PeerIdentityStore.save(
-      senderDeviceId,
-      envelope['sender_identity_dh_pubkey'] as String,
-    );
+    final newIdentityDh = envelope['sender_identity_dh_pubkey'] as String;
+    // Только диагностика (см. ТЗ пользователя — максимальная надёжность и
+    // безопасность X3DH/Double Ratchet): identity DH-ключ устройства в норме
+    // не меняется за время его жизни (см. KeyStore.getOrCreateIdentityDhKeyPair
+    // — генерируется один раз и хранится постоянно). Если для уже знакомого
+    // device_id вдруг приходит ДРУГОЙ identity-ключ, это либо переустановка
+    // приложения тем же человеком (легитимно), либо подмена ключа кем-то
+    // третьим (см. PeerIdentityStore — используется на экране "Проверка
+    // ключей" для ручной сверки) — самостоятельно отличить одно от другого
+    // здесь нельзя, но громко залогировать, чтобы это было видно при разборе
+    // лога, можно и нужно. Сессию всё равно устанавливаем — жёсткая
+    // блокировка тут менее приемлема (сломала бы легитимные переустановки),
+    // чем "мы это хотя бы записали для дальнейшего расследования".
+    final previous = await PeerIdentityStore.get(senderDeviceId);
+    final previousIdentityDh = previous?['identity_dh'];
+    if (previousIdentityDh != null && previousIdentityDh != newIdentityDh) {
+      DebugLog.log(
+        'Router SECURITY-WARNING identity_dh_pubkey CHANGED for from=$senderDeviceId '
+        '— either a legitimate reinstall or a possible key substitution; '
+        'session established anyway, verify via safety-number screen if unsure',
+      );
+    }
+    await PeerIdentityStore.save(senderDeviceId, newIdentityDh);
     return RatchetState.initAsReceiver(
       rootKey: rootKey,
       remoteEphemeralPubkey: base64DecodeSafe(
@@ -566,6 +608,30 @@ class MessageRouter {
   static Future<void> _clearFailureCount(String senderDeviceId) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_failureCountKey(senderDeviceId));
+  }
+
+  /// true, если пора сдаться и подтвердить эту доставку серверу, а не ждать
+  /// снова. Первый раз просто запоминает момент — ничего не подтверждает,
+  /// давая шанс гонке доставки разрешиться самой (см. _noSessionGiveUpDelay
+  /// выше). Молчаливо переживает перезапуск процесса — счётчик в
+  /// SharedPreferences, а не в памяти, по той же причине, что и у
+  /// decrypt-failure-count (см. _onDecryptFailure).
+  static Future<bool> _giveUpIfNoSessionTooLong(String senderDeviceId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = _noSessionFirstSeenKey(senderDeviceId);
+    final firstSeenMs = prefs.getInt(key);
+    final now = DateTime.now();
+    if (firstSeenMs == null) {
+      await prefs.setInt(key, now.millisecondsSinceEpoch);
+      return false;
+    }
+    return now.difference(DateTime.fromMillisecondsSinceEpoch(firstSeenMs)) >
+        _noSessionGiveUpDelay;
+  }
+
+  static Future<void> _clearNoSessionFirstSeen(String senderDeviceId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_noSessionFirstSeenKey(senderDeviceId));
   }
 
   static Future<void> _sendSessionReset(String toDeviceId) async {

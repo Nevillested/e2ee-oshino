@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Постоянный лог-файл на устройстве — в отличие от debugPrint (который
 /// вообще не пишется в release-сборке, а даже в debug исчезает вместе с
@@ -60,4 +61,25 @@ class DebugLog {
   }
 
   static Future<File> getFile() => _getFile();
+
+  // Разовое обнуление у уже установленных пользователей — лог разросся за
+  // время closed-тестирования (см. _maxBytes выше — поднимался несколько
+  // раз), у части пользователей файл, который они шлют через "Поделиться
+  // логом", стал неудобно большим. Флаг в SharedPreferences гарантирует,
+  // что это сработает РОВНО один раз за всё время жизни установки — при
+  // следующих запусках (и на новых установках, где флаг сразу true с
+  // первого чтения — а не в этом случае, см. ниже) больше ничего не трогает.
+  static const _resetOnceKey = 'debug_log_reset_once_v1';
+
+  static Future<void> resetOnceIfNeeded() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_resetOnceKey) ?? false) return;
+      await prefs.setBool(_resetOnceKey, true);
+      final file = await _getFile();
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // Не критично — максимум лог останется прежнего размера ещё раз.
+    }
+  }
 }
