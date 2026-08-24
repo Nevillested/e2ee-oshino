@@ -22,25 +22,22 @@ Future<void> showEmailDialog(BuildContext context) async {
   if (token == null) return;
   await showDialog<void>(
     context: context,
-    // hostContext — контекст экрана настроек, ОТДЕЛЬНО от контекста
-    // самого диалога ниже: диалог мы закрываем (Navigator.pop) ДО того,
-    // как запрос на удаление вообще уходит на сервер, и после pop() его
-    // собственный context.mounted почти сразу становится false. Раньше
-    // именно на нём же (уже закрытом диалоге) и проверялось
-    // "context.mounted" перед вызовом updateEmail() — проверка всегда
-    // проваливалась, и функция тихо выходила ДО сетевого запроса: почта
-    // визуально "удалялась" (диалог закрывался), но по факту не
-    // удалялась нигде — ни на сервере, ни в кэше. hostContext (экран
-    // настроек) никуда не девается, пока открыты/закрываются дочерние
-    // диалоги поверх него — на нём и проверяем.
-    builder: (context) => _EmailHubDialog(token: token, hostContext: context),
+    // screenContext — контекст ЭКРАНА НАСТРОЕК, а не билдера этого
+    // showDialog (тот, несмотря на видимость, всё ещё лежит ВНУТРИ
+    // диалогового route и разделяет с ним жизненный цикл — раньше именно
+    // его использовали как "стабильный" hostContext, но он переставал
+    // быть mounted одновременно с самим хабом, просто с небольшой
+    // задержкой на анимацию закрытия). screenContext переживает закрытие
+    // ЛЮБОГО количества дочерних диалогов — на нём и держим сеть/снекбар.
+    builder: (context) =>
+        _EmailHubDialog(token: token, screenContext: context),
   );
 }
 
 class _EmailHubDialog extends StatelessWidget {
   final String token;
-  final BuildContext hostContext;
-  const _EmailHubDialog({required this.token, required this.hostContext});
+  final BuildContext screenContext;
+  const _EmailHubDialog({required this.token, required this.screenContext});
 
   @override
   Widget build(BuildContext context) {
@@ -66,12 +63,20 @@ class _EmailHubDialog extends StatelessWidget {
             ),
             TextButton(
               onPressed: () {
-                Navigator.pop(context);
                 if (hasEmail) {
-                  _showRemoveConfirmDialog(hostContext, token);
+                  // Хаб НЕ закрываем заранее — само удаление делает это,
+                  // и только после того, как запрос на сервер реально
+                  // отработал (см. _confirmAndRemoveEmail: раньше хаб
+                  // закрывался ДО сетевого запроса, и если что-то в
+                  // асинхронной цепочке успевало разойтись по времени с
+                  // анимацией закрытия диалога, запрос на удаление мог
+                  // тихо не уйти вовсе — почта "визуально" пропадала, но
+                  // на сервере оставалась).
+                  _confirmAndRemoveEmail(context, token);
                 } else {
+                  Navigator.pop(context);
                   showDialog<void>(
-                    context: hostContext,
+                    context: screenContext,
                     builder: (context) => _AddEmailDialog(token: token),
                   );
                 }
@@ -88,12 +93,16 @@ class _EmailHubDialog extends StatelessWidget {
   }
 }
 
-Future<void> _showRemoveConfirmDialog(
-  BuildContext hostContext,
+/// hubContext — контекст самого хаба (см. _EmailHubDialog.build) — диалог
+/// подтверждения открывается ПОВЕРХ него, а не вместо, и хаб остаётся
+/// mounted на всё время сетевого запроса (закрываем его сами, явно, уже
+/// ПОСЛЕ успеха — см. комментарий в actions выше).
+Future<void> _confirmAndRemoveEmail(
+  BuildContext hubContext,
   String token,
 ) async {
   final confirmed = await showDialog<bool>(
-    context: hostContext,
+    context: hubContext,
     builder: (context) => FrostedDialog(
       title: Text(
         tr('email.removeConfirmTitle'),
@@ -118,19 +127,20 @@ Future<void> _showRemoveConfirmDialog(
       ],
     ),
   );
-  if (confirmed != true || !hostContext.mounted) return;
+  if (confirmed != true || !hubContext.mounted) return;
 
   try {
     await ApiClient().updateEmail(token, '');
     MyEmailStore.clear();
-    if (!hostContext.mounted) return;
+    if (!hubContext.mounted) return;
     ScaffoldMessenger.of(
-      hostContext,
+      hubContext,
     ).showSnackBar(SnackBar(content: Text(tr('email.removed'))));
+    Navigator.pop(hubContext);
   } on ApiException catch (e) {
-    if (!hostContext.mounted) return;
+    if (!hubContext.mounted) return;
     ScaffoldMessenger.of(
-      hostContext,
+      hubContext,
     ).showSnackBar(SnackBar(content: Text(e.message)));
   }
 }

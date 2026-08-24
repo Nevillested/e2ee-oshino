@@ -236,6 +236,7 @@ class MessageRouter {
         final fileName = mediaInfo['file_name'] as String;
         final fileSize = mediaInfo['file_size'] as int? ?? 0;
         final chunked = mediaInfo['chunked'] as bool? ?? false;
+        final spoiler = mediaInfo['spoiler'] as bool? ?? false;
 
         await ChatStore.addMessage(
           ownerInfo.login,
@@ -248,6 +249,7 @@ class MessageRouter {
             isFile: isFile,
             fileSize: fileSize,
             chunked: chunked,
+            isSpoiler: spoiler,
             mediaId: mediaInfo['media_id'] as String,
             mediaKeyBase64: mediaInfo['key'] as String,
             mediaNonceBase64: mediaInfo['nonce'] as String?,
@@ -319,6 +321,7 @@ class MessageRouter {
               isFile: isFile,
               fileSize: f['file_size'] as int? ?? 0,
               chunked: f['chunked'] as bool? ?? false,
+              isSpoiler: f['spoiler'] as bool? ?? false,
               mediaId: f['media_id'] as String,
               mediaKeyBase64: f['key'] as String,
               mediaNonceBase64: f['nonce'] as String?,
@@ -578,12 +581,11 @@ class MessageRouter {
   // перезапуска), затем на диске через PeerAccountStore (device_id →
   // account_id, уже используется в других местах) + известный логин из
   // списка чатов — и только если ни то, ни другое не помогло, идём в сеть.
-  static final Map<String, ({String accountId, String login})> _ownerCache =
-      {};
+  static final Map<String, ({String accountId, String login, String displayName})>
+  _ownerCache = {};
 
-  static Future<({String accountId, String login})?> _resolveOwner(
-    String deviceId,
-  ) async {
+  static Future<({String accountId, String login, String displayName})?>
+  _resolveOwner(String deviceId) async {
     final cached = _ownerCache[deviceId];
     if (cached != null) return cached;
 
@@ -592,9 +594,15 @@ class MessageRouter {
       final peers = await ChatStore.getKnownPeers();
       final match = peers.where((p) => p.lastKnownAccountId == cachedAccountId);
       if (match.isNotEmpty) {
+        // peerLogin тут — просто известный логин чата (ключ ChatStore), не
+        // отображаемое имя: путь через кэш экономит сетевой запрос, но не
+        // несёт displayName — подставляем login как разумный фолбэк
+        // (реальное отображаемое имя резолвится отдельно там, где оно
+        // реально показывается пользователю — PeerProfileCache).
         final resolved = (
           accountId: cachedAccountId,
           login: match.first.peerLogin,
+          displayName: match.first.peerLogin,
         );
         _ownerCache[deviceId] = resolved;
         return resolved;

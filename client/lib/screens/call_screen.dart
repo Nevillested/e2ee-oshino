@@ -9,6 +9,7 @@ import '../services/call_service.dart';
 import '../services/pip_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_settings_tile.dart';
+import '../widgets/peer_name_text.dart';
 import '../widgets/theme_reactive.dart';
 
 class CallScreen extends StatefulWidget {
@@ -231,13 +232,22 @@ class _CallScreenState extends State<CallScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
-                          Text(
-                            widget.peerLogin,
-                            style: TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 22,
-                            ),
-                          ),
+                          widget.peerAccountId.isEmpty
+                              ? Text(
+                                  widget.peerLogin,
+                                  style: TextStyle(
+                                    color: AppColors.textPrimary,
+                                    fontSize: 22,
+                                  ),
+                                )
+                              : PeerNameText(
+                                  accountId: widget.peerAccountId,
+                                  fallbackLogin: widget.peerLogin,
+                                  style: TextStyle(
+                                    color: AppColors.textPrimary,
+                                    fontSize: 22,
+                                  ),
+                                ),
                           const SizedBox(height: 8),
                           Text(
                             _statusText(),
@@ -268,13 +278,22 @@ class _CallScreenState extends State<CallScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          widget.peerLogin,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                          ),
-                        ),
+                        widget.peerAccountId.isEmpty
+                            ? Text(
+                                widget.peerLogin,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                ),
+                              )
+                            : PeerNameText(
+                                accountId: widget.peerAccountId,
+                                fallbackLogin: widget.peerLogin,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                ),
+                              ),
                         if (_statusText().isNotEmpty)
                           Text(
                             _statusText(),

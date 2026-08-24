@@ -24,6 +24,13 @@ class StoredMessage {
   final String? mediaMacBase64;
   final String? fileName;
 
+  /// Фото/видео со спойлером (см. media_picker_sheet.dart — "Hide with
+  /// spoiler" на весь выбор разом) — до тапа показывается заблюренным (см.
+  /// _photoPreview в chat_screen.dart), тап открывает как обычно.
+  /// Раскрытие ЭФЕМЕРНОЕ (не сохраняется) — при повторном входе в чат
+  /// снова показывается скрытым, см. ТЗ пользователя.
+  final bool isSpoiler;
+
   /// Голосовое/видео-кружок (у нас — квадрат) сообщение — используют те же
   /// media*-поля выше для загрузки/шифрования, просто рендерятся и
   /// проигрываются иначе, чем обычное фото/файл.
@@ -82,6 +89,7 @@ class StoredMessage {
     this.mediaNonceBase64,
     this.mediaMacBase64,
     this.fileName,
+    this.isSpoiler = false,
     this.isVoice = false,
     this.isVideoNote = false,
     this.durationMs,
@@ -141,6 +149,7 @@ class StoredMessage {
       mediaNonceBase64: mediaNonceBase64 ?? this.mediaNonceBase64,
       mediaMacBase64: mediaMacBase64 ?? this.mediaMacBase64,
       fileName: fileName,
+      isSpoiler: isSpoiler,
       isVoice: isVoice,
       isVideoNote: isVideoNote,
       durationMs: durationMs,
@@ -179,6 +188,7 @@ class StoredMessage {
     'media_nonce': mediaNonceBase64,
     'media_mac': mediaMacBase64,
     'file_name': fileName,
+    'is_spoiler': isSpoiler,
     'is_voice': isVoice,
     'is_video_note': isVideoNote,
     'duration_ms': durationMs,
@@ -212,6 +222,7 @@ class StoredMessage {
     mediaNonceBase64: j['media_nonce'] as String?,
     mediaMacBase64: j['media_mac'] as String?,
     fileName: j['file_name'] as String?,
+    isSpoiler: j['is_spoiler'] as bool? ?? false,
     isVoice: j['is_voice'] as bool? ?? false,
     isVideoNote: j['is_video_note'] as bool? ?? false,
     durationMs: j['duration_ms'] as int?,
@@ -260,6 +271,14 @@ class ChatSummary {
   bool blockedByMe;
   bool blockingMe;
 
+  /// Галочки в списке чатов (см. ТЗ пользователя) — показываются, только
+  /// когда последнее сообщение чата МОЁ (lastMessageIsMine): одна, если
+  /// собеседник его ещё не прочитал (lastMessageIsRead == false), две —
+  /// если уже прочитал. Для входящих последних сообщений галочки не
+  /// показываются вовсе, вне зависимости от этих полей.
+  bool lastMessageIsMine;
+  bool lastMessageIsRead;
+
   ChatSummary(
     this.peerLogin,
     this.lastMessage,
@@ -273,6 +292,8 @@ class ChatSummary {
     this.muted = false,
     this.blockedByMe = false,
     this.blockingMe = false,
+    this.lastMessageIsMine = false,
+    this.lastMessageIsRead = false,
   });
 }
 
@@ -388,6 +409,8 @@ class ChatStore {
       message.timestamp,
       accountId: accountId,
       incrementUnread: incrementUnread,
+      isMine: message.isMine,
+      isRead: message.status == 'read',
     );
   }
 
@@ -429,6 +452,8 @@ class ChatStore {
       last.timestamp,
       accountId: accountId,
       incrementUnread: incrementUnread,
+      isMine: last.isMine,
+      isRead: last.status == 'read',
     );
   }
 
@@ -596,6 +621,7 @@ class ChatStore {
   ) async {
     if (messageIds.isEmpty) return;
     final ids = messageIds.toSet();
+    var lastAfterUpdate = const <StoredMessage>[];
     await _withPeerLock(peerLogin, () async {
       final messages = await getMessages(peerLogin);
       var changed = false;
@@ -607,7 +633,32 @@ class ChatStore {
         }
       }
       if (changed) await _writeMessages(peerLogin, messages);
+      lastAfterUpdate = messages;
     });
+    // Галочки в списке чатов (см. ChatSummary.lastMessageIsRead) отражают
+    // read-статус ПОСЛЕДНЕГО сообщения, а не конкретно того, что попало в
+    // этот список id — пересчитываем по факту, а не пытаемся угадать,
+    // совпадает ли одно из только что прочитанных с текущим последним.
+    if (lastAfterUpdate.isNotEmpty) {
+      final last = lastAfterUpdate.reduce(
+        (a, b) => a.timestamp >= b.timestamp ? a : b,
+      );
+      await _withPeersLock(() async {
+        final peers = await getKnownPeers();
+        final existing = peers
+            .where((p) => p.peerLogin == peerLogin)
+            .toList();
+        if (existing.isNotEmpty &&
+            (existing.first.lastMessageIsMine != last.isMine ||
+                existing.first.lastMessageIsRead !=
+                    (last.isMine && last.status == 'read'))) {
+          existing.first.lastMessageIsMine = last.isMine;
+          existing.first.lastMessageIsRead =
+              last.isMine && last.status == 'read';
+          await _writePeers(peers);
+        }
+      });
+    }
     _changesController.add(null);
   }
 
@@ -667,12 +718,16 @@ class ChatStore {
       if (remaining.isEmpty) {
         existing.first.lastMessage = '';
         existing.first.lastTimestamp = 0;
+        existing.first.lastMessageIsMine = false;
+        existing.first.lastMessageIsRead = false;
       } else {
         final last = remaining.reduce(
           (a, b) => a.timestamp >= b.timestamp ? a : b,
         );
         existing.first.lastMessage = last.text;
         existing.first.lastTimestamp = last.timestamp;
+        existing.first.lastMessageIsMine = last.isMine;
+        existing.first.lastMessageIsRead = last.status == 'read';
       }
       await _writePeers(peers);
     });
@@ -868,6 +923,8 @@ class ChatStore {
     int timestamp, {
     String? accountId,
     bool incrementUnread = false,
+    bool isMine = false,
+    bool isRead = false,
   }) {
     return _withPeersLock(() async {
       final peers = await getKnownPeers();
@@ -875,6 +932,8 @@ class ChatStore {
       if (existing.isNotEmpty) {
         existing.first.lastMessage = lastMessage;
         existing.first.lastTimestamp = timestamp;
+        existing.first.lastMessageIsMine = isMine;
+        existing.first.lastMessageIsRead = isMine && isRead;
         if (accountId != null) existing.first.lastKnownAccountId = accountId;
         if (incrementUnread) existing.first.unreadCount += 1;
       } else {
@@ -885,6 +944,8 @@ class ChatStore {
             timestamp,
             lastKnownAccountId: accountId,
             unreadCount: incrementUnread ? 1 : 0,
+            lastMessageIsMine: isMine,
+            lastMessageIsRead: isMine && isRead,
           ),
         );
       }
@@ -942,6 +1003,8 @@ class ChatStore {
                 'muted': p.muted,
                 'blocked_by_me': p.blockedByMe,
                 'blocking_me': p.blockingMe,
+                'last_is_mine': p.lastMessageIsMine,
+                'last_is_read': p.lastMessageIsRead,
               },
             )
             .toList(),
@@ -969,6 +1032,8 @@ class ChatStore {
             muted: e['muted'] as bool? ?? false,
             blockedByMe: e['blocked_by_me'] as bool? ?? false,
             blockingMe: e['blocking_me'] as bool? ?? false,
+            lastMessageIsMine: e['last_is_mine'] as bool? ?? false,
+            lastMessageIsRead: e['last_is_read'] as bool? ?? false,
           ),
         )
         .toList()

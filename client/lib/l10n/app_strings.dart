@@ -267,6 +267,10 @@ class AppStrings {
       AppLocale.ru: 'Не удалось сохранить дату рождения',
       AppLocale.en: 'Failed to save birthday',
     },
+    'error.displayNameSaveFailed': {
+      AppLocale.ru: 'Не удалось сохранить отображаемое имя',
+      AppLocale.en: 'Failed to save display name',
+    },
     'error.privacySaveFailed': {
       AppLocale.ru: 'Не удалось сохранить настройки приватности',
       AppLocale.en: 'Failed to save privacy settings',
@@ -669,6 +673,18 @@ class AppStrings {
       AppLocale.ru: 'Голосовое сообщение',
       AppLocale.en: 'Voice message',
     },
+    'media.selectedCount': {
+      AppLocale.ru: 'Выбрано',
+      AppLocale.en: 'Selected',
+    },
+    'media.hideWithSpoiler': {
+      AppLocale.ru: 'Скрыть спойлером',
+      AppLocale.en: 'Hide with spoiler',
+    },
+    'media.spoilerHint': {
+      AppLocale.ru: 'Нажмите, чтобы посмотреть',
+      AppLocale.en: 'Tap to view',
+    },
 
     'push.newMessageBody': {
       AppLocale.ru: 'У вас новое сообщение',
@@ -807,6 +823,22 @@ class AppStrings {
 
     'profile.title': {AppLocale.ru: 'Профиль', AppLocale.en: 'Profile'},
     'profile.login': {AppLocale.ru: 'Логин', AppLocale.en: 'Username'},
+    'profile.displayName': {
+      AppLocale.ru: 'Отображаемое имя',
+      AppLocale.en: 'Display name',
+    },
+    'profile.displayNameEmpty': {
+      AppLocale.ru: 'Не указано',
+      AppLocale.en: 'Not set',
+    },
+    'profile.displayNameHint': {
+      AppLocale.ru: 'Как вас будут видеть собеседники',
+      AppLocale.en: 'How people will see you',
+    },
+    'profile.editDisplayName': {
+      AppLocale.ru: 'Изменить отображаемое имя',
+      AppLocale.en: 'Edit display name',
+    },
     'profile.status': {AppLocale.ru: 'Био', AppLocale.en: 'Bio'},
     'profile.statusEmpty': {
       AppLocale.ru: 'Не указано',

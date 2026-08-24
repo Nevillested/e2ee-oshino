@@ -160,6 +160,24 @@ class _MyProfileContentState extends State<MyProfileContent> {
               ),
               ListTile(
                 leading: Icon(
+                  Icons.badge_outlined,
+                  color: AppColors.textMuted,
+                ),
+                title: Text(
+                  tr('profile.displayName'),
+                  style: TextStyle(color: AppColors.textPrimary),
+                ),
+                subtitle: Text(
+                  profile.displayName?.isNotEmpty == true
+                      ? profile.displayName!
+                      : tr('profile.displayNameEmpty'),
+                  style: TextStyle(color: AppColors.textMuted),
+                ),
+                trailing: Icon(Icons.edit_outlined, color: AppColors.textMuted),
+                onTap: () => _editDisplayName(context, profile.displayName),
+              ),
+              ListTile(
+                leading: Icon(
                   Icons.chat_bubble_outline,
                   color: AppColors.textMuted,
                 ),
@@ -241,6 +259,49 @@ class _MyProfileContentState extends State<MyProfileContent> {
       retryUntilSuccess(
         () => ApiClient().updateStatus(token, newStatus),
       ).then((_) => MyProfileStore.setStatus(newStatus)),
+    );
+  }
+
+  Future<void> _editDisplayName(BuildContext context, String? current) async {
+    final controller = TextEditingController(text: current ?? '');
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text(
+          tr('profile.editDisplayName'),
+          style: TextStyle(color: AppColors.textPrimary),
+        ),
+        content: TextField(
+          controller: controller,
+          maxLength: 50,
+          autofocus: true,
+          style: TextStyle(color: AppColors.textPrimary),
+          decoration: InputDecoration(hintText: tr('profile.displayNameHint')),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(tr('common.cancel')),
+          ),
+          TextButton(
+            // Пустая строка — валидное значение (снимает имя целиком,
+            // клиент/сервер откатываются на login), не блокируем сохранение.
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: Text(tr('common.save')),
+          ),
+        ],
+      ),
+    );
+    if (newName == null) return;
+
+    final token = await Session.getToken();
+    if (token == null) return;
+    unawaited(
+      retryUntilSuccess(
+        () => ApiClient().updateDisplayName(token, newName),
+      ).then((_) => MyProfileStore.setDisplayName(newName)),
     );
   }
 

@@ -8,6 +8,12 @@ import '../session.dart';
 
 class MyProfile {
   final String login;
+  // Сырое значение (может быть null/пустым) — см. ApiClient.getMyAccountInfo.
+  // Показ собеседникам всегда идёт через уже готовое к показу значение с
+  // сервера (PeerProfileCache/PeerProfile.displayName), это поле — только
+  // для экрана настроек, где нужно уметь показать "не указано" отдельно
+  // от login.
+  final String? displayName;
   final String? status;
   final String? birthday;
   final int findByLoginVisibility;
@@ -17,6 +23,7 @@ class MyProfile {
 
   const MyProfile({
     required this.login,
+    this.displayName,
     this.status,
     this.birthday,
     required this.findByLoginVisibility,
@@ -26,6 +33,8 @@ class MyProfile {
   });
 
   MyProfile copyWith({
+    String? displayName,
+    bool clearDisplayName = false,
     String? status,
     bool clearStatus = false,
     String? birthday,
@@ -37,6 +46,9 @@ class MyProfile {
   }) {
     return MyProfile(
       login: login,
+      displayName: clearDisplayName
+          ? null
+          : (displayName ?? this.displayName),
       status: clearStatus ? null : (status ?? this.status),
       birthday: clearBirthday ? null : (birthday ?? this.birthday),
       findByLoginVisibility: findByLoginVisibility ?? this.findByLoginVisibility,
@@ -48,6 +60,7 @@ class MyProfile {
 
   Map<String, dynamic> toJson() => {
     'login': login,
+    'display_name': displayName,
     'status': status,
     'birthday': birthday,
     'find_by_login_visibility': findByLoginVisibility,
@@ -58,6 +71,7 @@ class MyProfile {
 
   static MyProfile fromJson(Map<String, dynamic> j) => MyProfile(
     login: j['login'] as String,
+    displayName: j['display_name'] as String?,
     status: j['status'] as String?,
     birthday: j['birthday'] as String?,
     findByLoginVisibility: j['find_by_login_visibility'] as int? ?? 1,
@@ -104,6 +118,7 @@ class MyProfileStore {
     if (info == null) return;
     final fresh = MyProfile(
       login: info.login,
+      displayName: info.displayName,
       status: info.status,
       birthday: info.birthday,
       findByLoginVisibility: info.findByLoginVisibility,
@@ -130,6 +145,17 @@ class MyProfileStore {
   /// SendQueueProcessor.onAcked в экранах профиля/приватности. Кэш
   /// обновляется ТОЛЬКО по факту подтверждения, не раньше — тот же
   /// принцип, что уже применён к read-receipts в этой сессии.
+  static void setDisplayName(String? displayName) {
+    final current = notifier.value;
+    if (current == null) return;
+    final updated = current.copyWith(
+      displayName: displayName,
+      clearDisplayName: displayName == null || displayName.isEmpty,
+    );
+    notifier.value = updated;
+    unawaited(_writeToDisk(updated));
+  }
+
   static void setStatus(String? status) {
     final current = notifier.value;
     if (current == null) return;

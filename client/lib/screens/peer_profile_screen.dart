@@ -99,7 +99,7 @@ class _PeerProfileScreenState extends State<PeerProfileScreen> {
                   const SizedBox(height: 16),
                   Center(
                     child: Text(
-                      widget.peerLogin,
+                      _profile?.displayName ?? widget.peerLogin,
                       style: TextStyle(
                         color: AppColors.textPrimary,
                         fontSize: 22,

@@ -7,6 +7,7 @@ import '../services/avatar_cache.dart';
 import '../services/call_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_settings_tile.dart';
+import '../widgets/peer_name_text.dart';
 import '../widgets/theme_reactive.dart';
 import 'call_screen.dart';
 
@@ -96,10 +97,22 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                   AvatarThumbnail(bytes: snapshot.data, radius: 56),
             ),
             const SizedBox(height: 20),
-            Text(
-              peerLogin,
-              style: TextStyle(color: AppColors.textPrimary, fontSize: 24),
-            ),
+            widget.peerAccountId.isEmpty
+                ? Text(
+                    peerLogin,
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 24,
+                    ),
+                  )
+                : PeerNameText(
+                    accountId: widget.peerAccountId,
+                    fallbackLogin: peerLogin,
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 24,
+                    ),
+                  ),
             const SizedBox(height: 8),
             Text(
               tr('call.incoming'),

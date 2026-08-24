@@ -32,6 +32,7 @@ import '../widgets/cached_avatar_image.dart';
 import '../widgets/chat_list_context_menu.dart';
 import '../widgets/connection_status_indicator.dart';
 import '../widgets/delete_message_dialog.dart';
+import '../widgets/peer_name_text.dart';
 import '../widgets/swipe_back_page_route.dart';
 import '../widgets/theme_reactive.dart';
 import 'chat_screen.dart';
@@ -435,13 +436,22 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                   accountId: _searchFoundAccountId!,
                   radius: 20,
                 ),
-          title: Text(
-            _searchFoundIsSelf ? tr('home.notes') : _searchFoundLogin!,
-            style: TextStyle(
-              color: AppColors.textPrimary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          title: _searchFoundIsSelf
+              ? Text(
+                  tr('home.notes'),
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                )
+              : PeerNameText(
+                  accountId: _searchFoundAccountId!,
+                  fallbackLogin: _searchFoundLogin!,
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
           onTap: () => unawaited(_openSearchResult()),
         ),
       );
@@ -789,6 +799,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     final result = await showDeleteMessagesDialog(
       context,
       peerName: entry.peerLogin,
+      peerAccountId: entry.lastKnownAccountId,
       title: alsoDeleteChat
           ? tr('chatMenu.deleteChatTitle')
           : tr('chatMenu.clearHistoryTitle'),
@@ -1040,20 +1051,32 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                   isNotes: isNotes,
                   accountId: entry.lastKnownAccountId,
                 ),
-                title: Text(
-                  isNotes
-                      ? tr('home.notes')
-                      : (entry.isDeleted
-                            ? tr('home.deletedAccount')
-                            : entry.peerLogin),
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 17,
-                    fontWeight: entry.unreadCount > 0
-                        ? FontWeight.bold
-                        : FontWeight.w600,
-                  ),
-                ),
+                title: isNotes || entry.isDeleted || entry.lastKnownAccountId == null
+                    ? Text(
+                        isNotes
+                            ? tr('home.notes')
+                            : (entry.isDeleted
+                                  ? tr('home.deletedAccount')
+                                  : entry.peerLogin),
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 17,
+                          fontWeight: entry.unreadCount > 0
+                              ? FontWeight.bold
+                              : FontWeight.w600,
+                        ),
+                      )
+                    : PeerNameText(
+                        accountId: entry.lastKnownAccountId!,
+                        fallbackLogin: entry.peerLogin,
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 17,
+                          fontWeight: entry.unreadCount > 0
+                              ? FontWeight.bold
+                              : FontWeight.w600,
+                        ),
+                      ),
                 subtitle: Text(
                   entry.lastMessage,
                   style: TextStyle(
@@ -1122,7 +1145,24 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                           color: AppColors.textMuted,
                         ),
                       ),
-                    if (entry.lastTimestamp > 0)
+                    if (entry.lastTimestamp > 0) ...[
+                      // Галочки — только когда последнее сообщение МОЁ (см.
+                      // ТЗ пользователя): одна, если ещё не прочитано, две
+                      // — если собеседник уже прочитал. Тот же цвет, что и
+                      // у времени рядом, чтобы читалось одной группой.
+                      if (entry.lastMessageIsMine)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 3),
+                          child: Icon(
+                            entry.lastMessageIsRead
+                                ? Icons.done_all
+                                : Icons.done,
+                            size: 14,
+                            color: entry.unreadCount > 0
+                                ? AppColors.primary
+                                : AppColors.textMuted,
+                          ),
+                        ),
                       Text(
                         formatChatTime(entry.lastTimestamp),
                         style: TextStyle(
@@ -1135,6 +1175,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                               : FontWeight.normal,
                         ),
                       ),
+                    ],
                   ],
                 ),
                 onTap: () async {

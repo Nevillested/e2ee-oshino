@@ -8,6 +8,7 @@ import '../storage/chat_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_settings_tile.dart';
 import '../widgets/cached_avatar_image.dart';
+import '../widgets/peer_name_text.dart';
 import '../widgets/swipe_back_page_route.dart';
 import '../widgets/theme_reactive.dart';
 import 'chat_screen.dart';
@@ -105,14 +106,23 @@ class _ForwardScreenState extends State<ForwardScreen> {
                                 accountId: entry.lastKnownAccountId!,
                                 radius: 22,
                               )),
-                  title: Text(
-                    isNotes
-                        ? tr('home.notes')
-                        : (entry.isDeleted
-                              ? tr('home.deletedAccount')
-                              : entry.peerLogin),
-                    style: TextStyle(color: AppColors.textPrimary),
-                  ),
+                  title:
+                      isNotes ||
+                          entry.isDeleted ||
+                          entry.lastKnownAccountId == null
+                      ? Text(
+                          isNotes
+                              ? tr('home.notes')
+                              : (entry.isDeleted
+                                    ? tr('home.deletedAccount')
+                                    : entry.peerLogin),
+                          style: TextStyle(color: AppColors.textPrimary),
+                        )
+                      : PeerNameText(
+                          accountId: entry.lastKnownAccountId!,
+                          fallbackLogin: entry.peerLogin,
+                          style: TextStyle(color: AppColors.textPrimary),
+                        ),
                   subtitle: Text(
                     entry.lastMessage,
                     style: TextStyle(color: AppColors.textMuted),

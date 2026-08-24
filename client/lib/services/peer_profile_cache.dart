@@ -7,6 +7,10 @@ import '../session.dart';
 
 class PeerProfile {
   final String login;
+  // Уже готовое к показу значение (display_name, если задан, иначе login
+  // — см. ApiClient.getAccountProfile/сервер) — именно его и нужно
+  // показывать везде, где раньше показывался login напрямую.
+  final String displayName;
   final List<Map<String, dynamic>> devices;
   final String? status;
   final String? birthday;
@@ -14,6 +18,7 @@ class PeerProfile {
 
   const PeerProfile({
     required this.login,
+    required this.displayName,
     required this.devices,
     this.status,
     this.birthday,
@@ -22,6 +27,7 @@ class PeerProfile {
 
   Map<String, dynamic> toJson() => {
     'login': login,
+    'display_name': displayName,
     'devices': devices,
     'status': status,
     'birthday': birthday,
@@ -30,6 +36,7 @@ class PeerProfile {
 
   static PeerProfile fromJson(Map<String, dynamic> j) => PeerProfile(
     login: j['login'] as String,
+    displayName: j['display_name'] as String? ?? j['login'] as String,
     devices: (j['devices'] as List).cast<Map<String, dynamic>>(),
     status: j['status'] as String?,
     birthday: j['birthday'] as String?,
@@ -136,6 +143,7 @@ class PeerProfileCache {
       if (data == null) return null;
       return PeerProfile(
         login: data.login,
+        displayName: data.displayName,
         devices: data.devices,
         status: data.status,
         birthday: data.birthday,

@@ -17,6 +17,7 @@ import '../screens/call_screen.dart';
 import '../storage/chat_store.dart';
 import 'debug_log.dart';
 import 'peer_messenger.dart';
+import 'peer_profile_cache.dart';
 import 'pip_service.dart';
 import 'send_lock.dart';
 import 'sound_service.dart';
@@ -385,9 +386,24 @@ class CallService {
     // гарантированно знает, что разговор закончился и уведомление пора
     // убрать.
     if (s == CallState.connected) {
-      CallRingPlugin.showOngoingCallNotification(
-        currentPeerLogin ?? tr('call.otherParty'),
-      );
+      final fallbackName = currentPeerLogin ?? tr('call.otherParty');
+      CallRingPlugin.showOngoingCallNotification(fallbackName);
+      // Отображаемое имя (см. ТЗ пользователя — используется везде, где
+      // раньше показывался login) резолвится асинхронно и обновляет уже
+      // показанное уведомление, если/когда придёт — сперва показываем
+      // login, чтобы уведомление не задерживалось ради сети.
+      final accountId = currentPeerAccountId;
+      final login = currentPeerLogin;
+      if (accountId != null && accountId.isNotEmpty && login != null) {
+        unawaited(
+          PeerProfileCache.get(accountId, login).then((profile) {
+            if (profile == null || _state != CallState.connected) return;
+            if (profile.displayName != fallbackName) {
+              CallRingPlugin.showOngoingCallNotification(profile.displayName);
+            }
+          }),
+        );
+      }
     } else if (s == CallState.idle) {
       CallRingPlugin.hideOngoingCallNotification();
     }

@@ -126,21 +126,19 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
 
   Future<void> _doResume() async {
     final controller = _controller;
-    if (controller == null) return;
+    if (controller == null) {
+      // Контроллера уже нет — см. _onTick/_doStop: после конца видео или
+      // явной остановки мы теперь ПЕРЕСОЗДАЁМ контроллер с нуля вместо
+      // того, чтобы доигрывать старый (см. комментарий там, причина —
+      // подтверждённый по логам баг video_player на Android). Верхняя
+      // панель управления может прислать resume уже после этого — ведём
+      // себя как обычный холодный старт.
+      await _startFresh();
+      return;
+    }
     DebugLog.log(
       'VideoNote _doResume() start ${_stateSnapshot(controller)}',
     );
-    // На случай, если предыдущий _onTick ещё не успел довести до конца
-    // свою перемотку в начало — досрочно дожидаемся её здесь тоже, иначе
-    // play() может уйти на контроллер, который вот-вот сам домотает до 0 и
-    // "перепрыгнет" только что начавшееся воспроизведение.
-    if (controller.value.position > Duration.zero &&
-        controller.value.position >= controller.value.duration) {
-      await controller.seekTo(Duration.zero);
-      DebugLog.log(
-        'VideoNote _doResume() pre-seek-to-0 done ${_stateSnapshot(controller)}',
-      );
-    }
     await controller.play();
     DebugLog.log(
       'VideoNote _doResume() play() returned ${_stateSnapshot(controller)}',
@@ -173,17 +171,26 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
         'errorDescription=${v.errorDescription}';
   }
 
-  /// Явная остановка (крестик на верхней панели) — пауза + перемотка в
-  /// начало + схлопывание обратно до compactSize (см. build(): size
-  /// зависит от _playing), плюс сообщаем панели, что сообщение больше не
-  /// активно, чтобы она сама анимированно скрылась.
+  /// Явная остановка (крестик на верхней панели) — схлопывание обратно до
+  /// compactSize (см. build(): size зависит от _playing), плюс сообщаем
+  /// панели, что сообщение больше не активно, чтобы она сама анимированно
+  /// скрылась. Контроллер не просто ставим на паузу+перематываем в начало,
+  /// а полностью уничтожаем (см. _onTick — та же причина: video_player на
+  /// Android не всегда возобновляет декодирование после seekTo(0), надёжно
+  /// работает только пересоздание с нуля при следующем плее).
   Future<void> _doStop() async {
     final controller = _controller;
     if (controller != null) {
+      controller.removeListener(_onTick);
       await controller.pause();
-      await controller.seekTo(Duration.zero);
+      await controller.dispose();
     }
-    if (mounted) setState(() => _playing = false);
+    if (mounted) {
+      setState(() {
+        _controller = null;
+        _playing = false;
+      });
+    }
     final id = widget.messageId;
     if (widget.coordinator != null && id != null) {
       widget.coordinator!.deactivate(id);
@@ -192,8 +199,10 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
 
   // Временное диагностическое логирование (см. обсуждение с пользователем
   // — тестировщик прислал жалобу "второй тап не воспроизводит повторно",
-  // а прошлая попытка чинить это вслепую не помогла). Снять, когда баг
-  // будет реально понят и закрыт.
+  // разобрано по присланному debug_log: play() после seekTo(0) на конце
+  // видео стабильно репортит isPlaying=true, но позиция навсегда
+  // застревает на 0 — известная особенность video_player/ExoPlayer на
+  // Android. Оставляем логи как есть — полезны и для будущей диагностики).
   Future<void> _toggle() async {
     final controller = _controller;
     DebugLog.log(
@@ -218,6 +227,18 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       return;
     }
 
+    await _startFresh();
+  }
+
+  /// "Холодный старт" — создаёт контроллер с нуля, инициализирует и сразу
+  /// проигрывает. Единственный путь, который в присланном debug_log
+  /// отработал НАДЁЖНО каждый раз (в отличие от play() на уже
+  /// существующем, однажды доигранном до конца контроллере — см. _onTick/
+  /// _doStop, которые поэтому теперь полностью уничтожают контроллер
+  /// вместо paused-в-начале). Вызывается и из _toggle() (первый тап), и из
+  /// _doResume() (повторный тап/панель управления — после того, как
+  /// предыдущий контроллер уже уничтожен).
+  Future<void> _startFresh() async {
     setState(() => _loading = true);
     try {
       final file = await widget.resolveFile();
@@ -235,12 +256,12 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       });
       await newController.play();
       DebugLog.log(
-        'VideoNote _toggle() first play ${_stateSnapshot(newController)}',
+        'VideoNote _startFresh() play ${_stateSnapshot(newController)}',
       );
       if (mounted) setState(() => _playing = true);
       _registerWithCoordinator();
     } catch (e) {
-      DebugLog.log('VideoNote _toggle() first-play FAILED error=$e');
+      DebugLog.log('VideoNote _startFresh() FAILED error=$e');
       if (mounted) setState(() => _loading = false);
     }
   }
@@ -269,19 +290,24 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
         'currentlyPlayingFlag=$_playing',
       );
       try {
+        // Раньше тут были pause()+seekTo(0), доигрывая старый контроллер —
+        // по debug_log это ЕДИНСТВЕННОЕ место, откуда начинается стабильно
+        // воспроизводящийся баг: play() после такого seekTo репортит
+        // isPlaying=true, но позиция навсегда застревает на 0 (проверено
+        // +400ms замером в _doResume — moved=false на каждой последующей
+        // попытке). Вместо доигровки — полностью уничтожаем контроллер;
+        // следующий тап пойдёт через холодный старт (_startFresh),
+        // единственный путь, что в логе работал каждый раз без сбоев.
+        c.removeListener(_onTick);
         await c.pause();
-        DebugLog.log('VideoNote _onTick() pause() done ${_stateSnapshot(c)}');
-        // Дожидаемся реального завершения перемотки, прежде чем сообщать UI
-        // "готово к повторному воспроизведению" — раньше seekTo не
-        // ожидался, и повторный тап мог прийти на контроллер, ещё не
-        // закончивший перематываться в начало (видимо застревал на
-        // развороте контейнера без реального рестарта видео).
-        await c.seekTo(Duration.zero);
-        DebugLog.log(
-          'VideoNote _onTick() seek-to-0 done ${_stateSnapshot(c)}, '
-          'setting playing=false',
-        );
-        if (mounted) setState(() => _playing = false);
+        await c.dispose();
+        DebugLog.log('VideoNote _onTick() disposed controller after end');
+        if (mounted) {
+          setState(() {
+            _controller = null;
+            _playing = false;
+          });
+        }
         _reportPlayingState(false);
       } finally {
         _handlingEnd = false;

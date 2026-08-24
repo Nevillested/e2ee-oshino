@@ -738,10 +738,8 @@ class ApiClient {
     return response.bodyBytes;
   }
 
-  Future<({String accountId, String login})?> getDeviceOwnerInfo(
-    String token,
-    String deviceId,
-  ) async {
+  Future<({String accountId, String login, String displayName})?>
+  getDeviceOwnerInfo(String token, String deviceId) async {
     try {
       final response = await http
           .get(
@@ -751,9 +749,11 @@ class ApiClient {
           .timeout(const Duration(seconds: 8));
       if (response.statusCode != 200) return null;
       final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final login = data['login'] as String;
       return (
         accountId: data['account_id'] as String,
-        login: data['login'] as String,
+        login: login,
+        displayName: data['display_name'] as String? ?? login,
       );
     } catch (_) {
       return null;
@@ -864,6 +864,11 @@ class ApiClient {
     ({
       String accountId,
       String login,
+      // Сырое значение (может быть пустым) — см. AccountMeResponse.DisplayName
+      // на сервере: тут это "что редактировать в настройках", а не "что
+      // показать собеседникам" (для этого — displayName в getAccountProfile/
+      // getDeviceOwnerInfo, уже с фолбэком на login).
+      String? displayName,
       String language,
       String? email,
       bool hasAvatar,
@@ -888,6 +893,7 @@ class ApiClient {
       return (
         accountId: data['account_id'] as String,
         login: data['login'] as String,
+        displayName: data['display_name'] as String?,
         language: data['language'] as String? ?? 'en',
         email: data['email'] as String?,
         hasAvatar: data['has_avatar'] as bool? ?? false,
@@ -900,6 +906,22 @@ class ApiClient {
       );
     } catch (_) {
       return null;
+    }
+  }
+
+  /// PUT /account/display-name — пустая строка снимает отображаемое имя
+  /// целиком (клиент откатывается на login).
+  Future<void> updateDisplayName(String token, String displayName) async {
+    final response = await http.put(
+      Uri.parse('${ApiConfig.baseUrl}/account/display-name'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'display_name': displayName}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.displayNameSaveFailed'));
     }
   }
 
@@ -968,6 +990,7 @@ class ApiClient {
     ({
       String accountId,
       String login,
+      String displayName,
       List<Map<String, dynamic>> devices,
       String? status,
       String? birthday,
@@ -988,9 +1011,11 @@ class ApiClient {
     final devices = rawDevices is List
         ? rawDevices.map((d) => Map<String, dynamic>.from(d as Map)).toList()
         : <Map<String, dynamic>>[];
+    final resolvedLogin = data['login'] as String;
     return (
       accountId: data['account_id'] as String,
-      login: data['login'] as String,
+      login: resolvedLogin,
+      displayName: data['display_name'] as String? ?? resolvedLogin,
       devices: devices,
       status: data['status'] as String?,
       birthday: data['birthday'] as String?,

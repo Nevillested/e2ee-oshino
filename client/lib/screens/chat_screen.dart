@@ -46,6 +46,7 @@ import '../services/media_asset_cache.dart';
 import '../services/media_playback_coordinator.dart';
 import '../services/message_router.dart';
 import '../services/my_avatar_store.dart';
+import '../services/peer_profile_cache.dart';
 import '../services/send_lock.dart';
 import '../services/send_queue_processor.dart';
 import '../services/websocket_service.dart';
@@ -249,6 +250,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // поверх, ровно на его месте.
   final Set<String> _dissolvingMessageIds = {};
 
+  // Раскрытые спойлер-фото (см. StoredMessage.isSpoiler/_photoPreview) —
+  // представительский Set id сообщений, ПЕРВЫЙ тап по которым уже снял
+  // блюр в ЭТОМ открытии чата. Намеренно НЕ персистится никуда: у
+  // _ChatScreenState свежий State на каждый повторный вход в чат (см. ТЗ
+  // пользователя — эффект должен сбрасываться при перезаходе).
+  final Set<String> _revealedSpoilerIds = {};
+
   // Единая точка координации проигрывания голосовых/видео-сообщений — см.
   // MediaPlaybackCoordinator и _buildMediaControlBar ниже (ТЗ пользователя:
   // верхняя панель с play/pause+крестиком, общая для обоих типов).
@@ -320,6 +328,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   _incomingDeleteSub;
   Timer? _presenceTickTimer;
   DateTime? _lastTypingSentAt;
+
+  // Отображаемое имя собеседника (см. ТЗ пользователя) — если задано,
+  // показывается в шапке вместо peerLogin; null, пока не резолвилось (или
+  // если не задано вовсе — тогда title просто продолжает падать на
+  // widget.peerLogin). Живой сигнал (PeerProfileCache.changes) — на случай,
+  // если собеседник сменит имя, пока чат уже открыт.
+  String? _peerDisplayName;
+  StreamSubscription<String>? _peerProfileSub;
 
   // Голосовые/видео-сообщения (запись) — см. _beginRecording и всё, что
   // рядом. _recCameraSelected — какая иконка сейчас показана в состоянии
@@ -548,6 +564,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         unawaited(_playIncomingDeleteEffect(event.targetIds));
       }
     });
+    if (!_isNotes) {
+      unawaited(_loadPeerDisplayName());
+      _peerProfileSub = PeerProfileCache.changes.listen((accountId) {
+        if (accountId == widget.peerAccountId) {
+          unawaited(_loadPeerDisplayName());
+        }
+      });
+    }
     ChatStore.changes.listen((_) {
       _loadHistory();
       _loadKnownDeletedStatus();
@@ -1082,6 +1106,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final result = await showDeleteMessagesDialog(
       context,
       peerName: widget.peerLogin,
+      peerAccountId: _isNotes ? null : widget.peerAccountId,
       showPeerCheckbox: !_isNotes,
     );
     if (result == null || !mounted) return;
@@ -2481,7 +2506,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final file = await asset.file;
         if (file != null) {
           files.add(
-            PickedMedia(file: file, isVideo: asset.type == AssetType.video),
+            PickedMedia(
+              file: file,
+              isVideo: asset.type == AssetType.video,
+              isSpoiler: result.spoiler,
+            ),
           );
         }
       }
@@ -2581,6 +2610,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           fileSize: size,
           chunked: size > _streamingThresholdBytes,
           fileName: fileName,
+          isSpoiler: item.isSpoiler,
           status: 'sending',
           processingStep: tr('chat.queued'),
           localPreviewPath: (item.isVideo || item.isFile)
@@ -2712,6 +2742,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       'is_file': item.isFile || item.isVideo,
       'file_size': size,
       'chunked': chunked,
+      'spoiler': item.isSpoiler,
     };
   }
 
@@ -2791,6 +2822,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             isFile: item.isFile || item.isVideo,
             fileSize: size,
             chunked: desc['chunked'] as bool,
+            spoiler: item.isSpoiler,
           );
 
           final next = await state.nextSendingKey();
@@ -3565,23 +3597,74 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// Фото со спойлером (см. StoredMessage.isSpoiler) до раскрытия — то же
+  /// изображение, но заблюренное + затемнённое + иконка-подсказка поверх,
+  /// тем же эффектом, что у Телеги. Первый тап только раскрывает (см.
+  /// _revealedSpoilerIds), открыть просмотрщик можно только СЛЕДУЮЩИМ,
+  /// уже по раскрытому фото — как и в Телеге.
+  Widget _spoilerOverlayImage(Uint8List bytes, double side) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ImageFiltered(
+          imageFilter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: Image.memory(
+            bytes,
+            fit: BoxFit.cover,
+            cacheWidth: (side * 2).round(),
+          ),
+        ),
+        Container(color: Colors.black.withValues(alpha: 0.28)),
+        Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.visibility_off_outlined,
+                color: Colors.white,
+                size: 30,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                tr('media.spoilerHint'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _photoPreview(StoredMessage msg, {double size = 220}) {
     final double side = size;
+    final isHiddenSpoiler =
+        msg.isSpoiler && !_revealedSpoilerIds.contains(msg.messageId);
+    void handleTap() {
+      if (isHiddenSpoiler) {
+        setState(() => _revealedSpoilerIds.add(msg.messageId));
+      } else {
+        _openMediaViewer(msg);
+      }
+    }
 
     final cached = _resolvedMedia[msg.mediaId!];
     if (cached != null) {
       return GestureDetector(
-        onTap: () => _openMediaViewer(msg),
+        onTap: handleTap,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(14),
           child: SizedBox(
             width: side,
             height: side,
-            child: Image.memory(
-              cached,
-              fit: BoxFit.cover,
-              cacheWidth: (side * 2).round(),
-            ),
+            child: isHiddenSpoiler
+                ? _spoilerOverlayImage(cached, side)
+                : Image.memory(
+                    cached,
+                    fit: BoxFit.cover,
+                    cacheWidth: (side * 2).round(),
+                  ),
           ),
         ),
       );
@@ -3615,17 +3698,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _resolvedMedia[msg.mediaId!] = snapshot.data!;
 
         return GestureDetector(
-          onTap: () => _openMediaViewer(msg),
+          onTap: handleTap,
           child: ClipRRect(
             borderRadius: BorderRadius.circular(14),
             child: SizedBox(
               width: side,
               height: side,
-              child: Image.memory(
-                snapshot.data!,
-                fit: BoxFit.cover,
-                cacheWidth: (side * 2).round(),
-              ),
+              child: isHiddenSpoiler
+                  ? _spoilerOverlayImage(snapshot.data!, side)
+                  : Image.memory(
+                      snapshot.data!,
+                      fit: BoxFit.cover,
+                      cacheWidth: (side * 2).round(),
+                    ),
             ),
           ),
         );
@@ -4623,6 +4708,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _blockStatusSub?.cancel();
     _incomingReactionSub?.cancel();
     _incomingDeleteSub?.cancel();
+    _peerProfileSub?.cancel();
     for (final timer in _justReactedTimers.values) {
       timer.cancel();
     }
@@ -4864,11 +4950,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// ним, по центру, статус: "печатает…" / "в сети" / когда был последний
   /// раз (см. formatPresenceStatus). Для "Заметок" статуса нет и не будет —
   /// это переписка с самим собой, там нечему быть "в сети".
+  Future<void> _loadPeerDisplayName() async {
+    final profile = await PeerProfileCache.get(
+      widget.peerAccountId,
+      widget.peerLogin,
+    );
+    if (!mounted || profile == null) return;
+    if (profile.displayName != _peerDisplayName) {
+      setState(() => _peerDisplayName = profile.displayName);
+    }
+  }
+
   Widget _buildAppBarTitle() {
     final title = Text(
       _isNotes
           ? tr('home.notes')
-          : (_isPeerDeleted ? tr('home.deletedAccount') : widget.peerLogin),
+          : (_isPeerDeleted
+                ? tr('home.deletedAccount')
+                : (_peerDisplayName ?? widget.peerLogin)),
     );
 
     final Widget textColumn;

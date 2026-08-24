@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
+import 'peer_name_text.dart';
 
 class DeleteConfirmResult {
   final bool alsoForPeer;
@@ -23,6 +24,11 @@ class DeleteConfirmResult {
 Future<DeleteConfirmResult?> showDeleteMessagesDialog(
   BuildContext context, {
   required String peerName,
+  // Если известен — текст "удалить также у X" показывает отображаемое
+  // имя (см. PeerNameText/ТЗ пользователя: имя должно использоваться
+  // ВЕЗДЕ, где раньше показывался голый login), peerName остаётся только
+  // запасным вариантом на время резолва/для "Заметок" (accountId==null).
+  String? peerAccountId,
   String? title,
   String? confirmLabel,
   bool showPeerCheckbox = true,
@@ -31,6 +37,7 @@ Future<DeleteConfirmResult?> showDeleteMessagesDialog(
     context: context,
     builder: (context) => _DeleteMessagesDialog(
       peerName: peerName,
+      peerAccountId: peerAccountId,
       title: title,
       confirmLabel: confirmLabel,
       showPeerCheckbox: showPeerCheckbox,
@@ -40,11 +47,13 @@ Future<DeleteConfirmResult?> showDeleteMessagesDialog(
 
 class _DeleteMessagesDialog extends StatefulWidget {
   final String peerName;
+  final String? peerAccountId;
   final String? title;
   final String? confirmLabel;
   final bool showPeerCheckbox;
   const _DeleteMessagesDialog({
     required this.peerName,
+    this.peerAccountId,
     this.title,
     this.confirmLabel,
     this.showPeerCheckbox = true,
@@ -96,13 +105,38 @@ class _DeleteMessagesDialogState extends State<_DeleteMessagesDialog> {
                     ),
                     const SizedBox(width: 10),
                     Flexible(
-                      child: Text(
-                        '${tr('deleteMessage.alsoForPeer')} ${widget.peerName}',
-                        style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 14,
-                        ),
-                      ),
+                      child: widget.peerAccountId == null
+                          ? Text(
+                              '${tr('deleteMessage.alsoForPeer')} ${widget.peerName}',
+                              style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 14,
+                              ),
+                            )
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '${tr('deleteMessage.alsoForPeer')} ',
+                                  style: TextStyle(
+                                    color: AppColors.textPrimary,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                Flexible(
+                                  child: PeerNameText(
+                                    accountId: widget.peerAccountId!,
+                                    fallbackLogin: widget.peerName,
+                                    style: TextStyle(
+                                      color: AppColors.textPrimary,
+                                      fontSize: 14,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
                     ),
                   ],
                 ),

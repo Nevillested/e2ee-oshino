@@ -50,6 +50,7 @@ class InnerMessage {
     bool isFile = false,
     int fileSize = 0,
     bool chunked = false,
+    bool spoiler = false,
     String? replyToMessageId,
     String? replyToPreview,
   }) {
@@ -62,6 +63,7 @@ class InnerMessage {
       'is_file': isFile,
       'file_size': fileSize,
       'chunked': chunked,
+      'spoiler': spoiler,
     });
     return InnerMessage(
       messageId: messageId ?? _uuid.v4(),

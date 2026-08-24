@@ -14,7 +14,11 @@ import 'vertical_dismiss_detector.dart';
 class MediaPickerSheetResult {
   final List<AssetEntity> items;
   final String caption;
-  MediaPickerSheetResult(this.items, this.caption);
+  // Спойлер — на весь текущий выбор разом (как в Телеге: пункт меню "Hide
+  // with spoiler" применяется ко ВСЕЙ пачке, которую собираетесь отправить,
+  // а не к отдельным фото по одному), см. ТЗ пользователя.
+  final bool spoiler;
+  MediaPickerSheetResult(this.items, this.caption, {this.spoiler = false});
 }
 
 /// Стандартная кривая появления модального bottom sheet в Flutter
@@ -101,6 +105,9 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
   double? _lastScrollNotifPixels;
   List<AssetEntity> _assets = [];
   final Map<String, int> _selectedOrder = {};
+  // См. MediaPickerSheetResult.spoiler — на весь выбор разом, сбрасывается,
+  // как только выбор становится пустым (нечему больше применяться).
+  bool _spoilerEnabled = false;
   CameraController? _liveCamera;
   bool _loading = true;
   final Map<String, Future<Uint8List?>> _thumbnailFutures = {};
@@ -356,6 +363,7 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
       } else {
         _selectedOrder[asset.id] = _selectedOrder.length + 1;
       }
+      if (_selectedOrder.isEmpty) _spoilerEnabled = false;
     });
   }
 
@@ -369,7 +377,9 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
         _assets.where((a) => _selectedOrder.containsKey(a.id)).toList()..sort(
           (a, b) => _selectedOrder[a.id]!.compareTo(_selectedOrder[b.id]!),
         );
-    _closeSheet(MediaPickerSheetResult(ordered, caption));
+    _closeSheet(
+      MediaPickerSheetResult(ordered, caption, spoiler: _spoilerEnabled),
+    );
   }
 
   /// Единая точка закрытия шторки — вместо мгновенного Navigator.pop (тогда
@@ -482,6 +492,51 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
                         ),
                       ],
                     ),
+                  ),
+                ),
+              // Панель "N фото выбрано" + меню из трёх точек (см. ТЗ
+              // пользователя, по образцу Телеги) — только пока что-то
+              // выбрано, симметрично панели описания снизу.
+              if (hasSelection)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 4, 4),
+                  child: Row(
+                    children: [
+                      Text(
+                        '${tr('media.selectedCount')}: ${_selectedOrder.length}',
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      PopupMenuButton<void>(
+                        icon: Icon(Icons.more_vert, color: AppColors.textPrimary),
+                        color: AppColors.surface,
+                        itemBuilder: (context) => [
+                          PopupMenuItem<void>(
+                            onTap: () =>
+                                setState(() => _spoilerEnabled = !_spoilerEnabled),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _spoilerEnabled
+                                      ? Icons.check_box
+                                      : Icons.check_box_outline_blank,
+                                  size: 20,
+                                  color: AppColors.textPrimary,
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  tr('media.hideWithSpoiler'),
+                                  style: TextStyle(color: AppColors.textPrimary),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
               Expanded(
