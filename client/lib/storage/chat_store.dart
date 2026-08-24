@@ -1039,4 +1039,36 @@ class ChatStore {
         .toList()
       ..sort(compareForList);
   }
+
+  /// Разовый самопочиняющийся пересчёт lastMessageIsMine/lastMessageIsRead
+  /// по РЕАЛЬНОЙ истории каждого чата — нужен для уже существующих чатов,
+  /// заведённых ДО того, как эти два поля вообще появились (см. ТЗ
+  /// пользователя): у них в сохранённом JSON просто нет ключей
+  /// last_is_mine/last_is_read, getKnownPeers() молча подставляет false, и
+  /// галочки не появляются, пока в чат не придёт/не уйдёт НОВОЕ сообщение
+  /// (только тогда сработает _touchPeer). Вызывается один раз при
+  /// подключении (см. HomePlaceholderScreen._connect), пересчитывает ВСЕХ
+  /// разом по последнему реальному сообщению — так корректно и для старых
+  /// чатов, и как подстраховка от любого возможного рассинхрона вообще.
+  static Future<void> backfillLastMessageMeta() {
+    return _withPeersLock(() async {
+      final peers = await getKnownPeers();
+      var changed = false;
+      for (final p in peers) {
+        final messages = await getMessages(p.peerLogin);
+        if (messages.isEmpty) continue;
+        final last = messages.reduce(
+          (a, b) => a.timestamp >= b.timestamp ? a : b,
+        );
+        final isRead = last.isMine && last.status == 'read';
+        if (p.lastMessageIsMine != last.isMine ||
+            p.lastMessageIsRead != isRead) {
+          p.lastMessageIsMine = last.isMine;
+          p.lastMessageIsRead = isRead;
+          changed = true;
+        }
+      }
+      if (changed) await _writePeers(peers);
+    });
+  }
 }

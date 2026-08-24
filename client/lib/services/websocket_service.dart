@@ -45,7 +45,6 @@ class WebSocketService {
   final _presenceController =
       StreamController<Map<String, dynamic>>.broadcast();
   final _blockStatusController = StreamController<void>.broadcast();
-  final _avatarChangedController = StreamController<String>.broadcast();
   final _profileChangedController =
       StreamController<({String accountId, String field})>.broadcast();
 
@@ -61,18 +60,14 @@ class WebSocketService {
   // перезапрашивают актуальное состояние (см. ApiClient.getBlockedContacts)
   // вместо того чтобы ждать следующего открытия чата.
   Stream<void> get blockStatusEvents => _blockStatusController.stream;
-  // "avatar_changed" — у кого-то (см. AccountId в самом сообщении)
-  // поменялось фото профиля (см. notifyAvatarChanged на сервере) — тоже
-  // без реального фото внутри, только account_id, для которого нужно
-  // сбросить локальный кэш (см. AvatarCache.invalidate) и перезапросить
-  // заново.
-  Stream<String> get avatarChangedEvents => _avatarChangedController.stream;
   // "profile_updated" — у кого-то из контактов поменялось конкретное поле
-  // профиля (статус/дата рождения/фото — см. AccountId+Field, notifyProfileUpdatedIfVisible
-  // на сервере). В отличие от avatar_changed это НЕ broadcast всем подряд
-  // — сервер теперь знает контакты (см. таблицу contacts) и шлёт только
-  // им, поэтому здесь можно спокойно доверять: раз пришло — оно того
-  // стоило перепроверить.
+  // профиля (имя/статус/дата рождения/фото — см. AccountId+Field,
+  // notifyProfileUpdatedIfVisible на сервере). Единый сигнал на ВСЕ поля
+  // профиля разом (avatar — не исключение, раньше был отдельным broadcast-
+  // всем-подряд "avatar_changed", см. историю) — сервер знает контакты
+  // (см. таблицу contacts) и шлёт прицельно только им, доставляя офлайн-
+  // получателю при следующем подключении, поэтому здесь можно спокойно
+  // доверять: раз пришло — оно того стоило перепроверить.
   Stream<({String accountId, String field})> get profileChangedEvents =>
       _profileChangedController.stream;
   bool get isConnected => _channel != null;
@@ -229,12 +224,6 @@ class WebSocketService {
 
           if (type == 'block_status_changed') {
             _blockStatusController.add(null);
-            return;
-          }
-
-          if (type == 'avatar_changed') {
-            final accountId = outer['AccountId'] as String?;
-            if (accountId != null) _avatarChangedController.add(accountId);
             return;
           }
 

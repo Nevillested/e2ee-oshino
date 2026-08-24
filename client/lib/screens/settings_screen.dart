@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/account_actions.dart';
+import '../widgets/bottom_action_bar.dart';
 import '../widgets/default_reaction_dialog.dart';
 import '../widgets/email_dialog.dart';
 import '../widgets/font_size_dialog.dart';
@@ -52,6 +53,7 @@ class SettingsContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
+      padding: EdgeInsets.only(bottom: bottomActionBarReservedHeight(context)),
       children: [
         ListTile(
           leading: const _SettingsIcon(

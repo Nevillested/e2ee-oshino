@@ -10,6 +10,7 @@ import '../services/retry_until_success.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
 import '../widgets/avatar_settings_tile.dart';
+import '../widgets/bottom_action_bar.dart';
 import '../widgets/photo_viewer_screen.dart';
 import '../widgets/theme_reactive.dart';
 
@@ -125,8 +126,12 @@ class _MyProfileContentState extends State<MyProfileContent> {
             // Теперь пустой AppBar снова есть (нужен, чтобы высота Scaffold
             // не прыгала при переключении табов), безопасную зону сверху
             // он уже сам учитывает — тут остаётся только небольшой отступ
-            // до кружка с фото.
-            padding: const EdgeInsets.only(top: 16),
+            // до кружка с фото. Снизу — резерв под плавающую капсулу
+            // нижней навигации (см. bottomActionBarReservedHeight).
+            padding: EdgeInsets.only(
+              top: 16,
+              bottom: bottomActionBarReservedHeight(context),
+            ),
             children: [
               Center(
                 child: GestureDetector(

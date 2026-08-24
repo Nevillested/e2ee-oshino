@@ -39,33 +39,44 @@ class FrostedDialog extends StatelessWidget {
               ),
             ),
             padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (title != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: DefaultTextStyle(
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
+            // Material(color: transparent) — то же лечение, что уже
+            // применено к ListTile в списке чатов (см. home_placeholder_
+            // screen.dart): Dialog изнутри задаёт Material с прозрачным
+            // фоном, а ListTile/SwitchListTile (Privacy/App Lock/About —
+            // теперь встроены в это окно вместо отдельного экрана) ищут
+            // ближайший Material именно для собственной заливки/ripple —
+            // без этой обёртки Flutter честно предупреждает в консоль, что
+            // они могут оказаться невидимыми.
+            child: Material(
+              color: Colors.transparent,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (title != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: DefaultTextStyle(
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        child: title!,
                       ),
-                      child: title!,
                     ),
-                  ),
-                if (content != null)
-                  Flexible(child: SingleChildScrollView(child: content!)),
-                if (actions != null && actions!.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8, bottom: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: actions!,
+                  if (content != null)
+                    Flexible(child: SingleChildScrollView(child: content!)),
+                  if (actions != null && actions!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8, bottom: 8),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: actions!,
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

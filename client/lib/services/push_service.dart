@@ -56,9 +56,20 @@ class PushService {
       debugPrint('PushService: onTokenRefresh: $t');
       _registerToken(t);
     });
-    final token = await messaging.getToken();
-    debugPrint('PushService: getToken() = $token');
-    if (token != null) await _registerToken(token);
+    // getToken() ходит в Google Play Services (FCM/Firebase Installations) —
+    // на эмуляторах без них (или просто при временной недоступности сети/
+    // сервиса, см. SERVICE_NOT_AVAILABLE) бросает необработанное исключение,
+    // которое иначе прервало бы весь init() — push всё равно опционален
+    // (см. комментарий класса), сообщения в открытом приложении и так идут
+    // через WebSocket; без токена просто не будет будящего push, когда
+    // приложение свёрнуто/закрыто.
+    try {
+      final token = await messaging.getToken();
+      debugPrint('PushService: getToken() = $token');
+      if (token != null) await _registerToken(token);
+    } catch (e) {
+      debugPrint('PushService: getToken() failed: $e');
+    }
 
     FirebaseMessaging.onMessage.listen((message) {
       // Приложение и так на переднем плане с живым WebSocket — реальное

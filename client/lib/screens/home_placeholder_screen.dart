@@ -178,6 +178,13 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   bool _searchLoading = false;
   bool _searchFoundIsSelf = false;
   String? _searchFoundLogin;
+  // Отображаемое имя найденного пользователя (см. ТЗ пользователя) —
+  // приходит ОДНИМ ответом вместе с остальным (см. _runSearch,
+  // ApiClient.getAccountProfile), а не отдельным асинхронным запросом
+  // следом — раньше строка сперва показывала login, а через мгновение
+  // резко "прыгала" на отображаемое имя (жалоба пользователя), потому что
+  // оно резолвилось отдельно (PeerNameText) уже ПОСЛЕ первой отрисовки.
+  String? _searchFoundDisplayName;
   String? _searchFoundAccountId;
   String? _searchFoundDeviceId;
   String? _searchNotFoundMessage;
@@ -203,6 +210,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
       _searchLoading = false;
       _searchFoundIsSelf = false;
       _searchFoundLogin = null;
+      _searchFoundDisplayName = null;
       _searchFoundAccountId = null;
       _searchFoundDeviceId = null;
       _searchNotFoundMessage = null;
@@ -217,6 +225,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
         _searchLoading = false;
         _searchFoundIsSelf = false;
         _searchFoundLogin = null;
+        _searchFoundDisplayName = null;
         _searchFoundAccountId = null;
         _searchFoundDeviceId = null;
         _searchNotFoundMessage = null;
@@ -241,6 +250,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
         _searchLoading = false;
         _searchFoundIsSelf = true;
         _searchFoundLogin = myLogin;
+        _searchFoundDisplayName = null;
         _searchFoundAccountId = null;
         _searchFoundDeviceId = null;
         _searchNotFoundMessage = null;
@@ -250,8 +260,27 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
 
     try {
       final token = await Session.getToken();
-      final result = await ApiClient().getDevicesByLogin(token!, query);
+      // getAccountProfile вместо прежнего getDevicesByLogin — тем же одним
+      // ответом сразу приходит и список устройств, и отображаемое имя (см.
+      // ТЗ пользователя): раньше имя резолвилось ОТДЕЛЬНЫМ асинхронным
+      // запросом уже ПОСЛЕ первой отрисовки строки результата (через
+      // PeerNameText) — из-за этого строка сперва показывала login и
+      // через мгновение резко "прыгала" на имя. Теперь всё приходит и
+      // отображается одним куском, скачка нет.
+      final result = await ApiClient().getAccountProfile(token!, query);
       if (!mounted || _searchController.text.trim() != query) return;
+      if (result == null) {
+        setState(() {
+          _searchLoading = false;
+          _searchFoundIsSelf = false;
+          _searchFoundLogin = null;
+          _searchFoundDisplayName = null;
+          _searchFoundAccountId = null;
+          _searchFoundDeviceId = null;
+          _searchNotFoundMessage = tr('error.userNotFound');
+        });
+        return;
+      }
       final deviceId = result.devices.isNotEmpty
           ? (result.devices.first['device_id'] ??
                     result.devices.first['deviceId'])
@@ -260,12 +289,19 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
       if (deviceId != null && deviceId.isNotEmpty) {
         await PeerAccountStore.save(deviceId, result.accountId);
       }
-      unawaited(PeerProfileCache.get(result.accountId, query));
       if (!mounted) return;
       setState(() {
         _searchLoading = false;
         _searchFoundIsSelf = false;
         _searchFoundLogin = query;
+        // displayName у getAccountProfile уже с фолбэком на login на
+        // сервере (см. account_profile.go) — сравниваем, чтобы понять,
+        // есть ли у пользователя РЕАЛЬНОЕ кастомное имя (тогда покажем
+        // его основным, а login — мельче под ним) или нет (тогда просто
+        // login, без второй строки).
+        _searchFoundDisplayName = result.displayName != result.login
+            ? result.displayName
+            : null;
         _searchFoundAccountId = result.accountId;
         _searchFoundDeviceId = deviceId;
         _searchNotFoundMessage = null;
@@ -276,6 +312,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
         _searchLoading = false;
         _searchFoundIsSelf = false;
         _searchFoundLogin = null;
+        _searchFoundDisplayName = null;
         _searchFoundAccountId = null;
         _searchFoundDeviceId = null;
         _searchNotFoundMessage = e.toString();
@@ -436,22 +473,26 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                   accountId: _searchFoundAccountId!,
                   radius: 20,
                 ),
-          title: _searchFoundIsSelf
+          title: Text(
+            _searchFoundIsSelf
+                ? tr('home.notes')
+                : (_searchFoundDisplayName ?? _searchFoundLogin!),
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          // Логин — второй строкой, мельче, ТОЛЬКО когда у пользователя
+          // есть настоящее отображаемое имя (тогда оно ушло в title выше,
+          // а login один остаться не может — иначе логина не видно вообще
+          // нигде). Если отображаемого имени нет, login и так уже в title,
+          // вторая строка не нужна (см. ТЗ пользователя).
+          subtitle: _searchFoundDisplayName != null
               ? Text(
-                  tr('home.notes'),
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  _searchFoundLogin!,
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                 )
-              : PeerNameText(
-                  accountId: _searchFoundAccountId!,
-                  fallbackLogin: _searchFoundLogin!,
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+              : null,
           onTap: () => unawaited(_openSearchResult()),
         ),
       );
@@ -504,6 +545,11 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     MessageRouter.start();
     SendQueueProcessor.instance.start();
     ChatStore.changes.listen((_) => _refreshChats());
+    // Разово чинит галочки прочтения для чатов, заведённых ДО появления
+    // этой фичи (см. ChatStore.backfillLastMessageMeta) — сама допишет в
+    // хранилище и вызовет ChatStore.changes, если что-то реально
+    // пересчиталось, список выше сам перерисуется.
+    unawaited(ChatStore.backfillLastMessageMeta());
     PushService.init();
     unawaited(_syncMutedChats(token));
     unawaited(_syncBlockedContacts(token));
@@ -517,20 +563,13 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     _webSocketService.blockStatusEvents.listen(
       (_) => unawaited(_syncBlockedContacts(token)),
     );
-    // Живой сигнал "у кого-то поменялось фото профиля" (см.
-    // notifyAvatarChanged на сервере) — сбрасываем локальный кэш для этого
-    // account_id сразу же (см. AvatarCache.invalidate), а не ждём, пока
-    // истечёт TTL (тот остаётся только подстраховкой на случай пропущенного
-    // сигнала). Своё же фото сюда не попадает — оно живёт в MyAvatarStore,
-    // не в AvatarCache.
-    _webSocketService.avatarChangedEvents.listen(AvatarCache.invalidate);
-    // Живой сигнал "у контакта поменялся статус/дата рождения" — в
-    // отличие от avatar_changed это НЕ broadcast, сервер шлёт только
-    // реальным контактам (см. таблицу contacts), поэтому тут просто
-    // сбрасываем кэш соответствующего поля без дополнительных проверок.
-    // avatar тоже может прийти этим же событием (Field == 'avatar') —
-    // тогда используем существующий AvatarCache, отдельный PeerProfileCache
-    // байты фото не хранит.
+    // Живой сигнал "у контакта поменялось что-то в профиле" — единый на
+    // все поля (имя/статус/дата рождения/фото — см. websocket_service.dart:
+    // profileChangedEvents), сервер шлёт только реальным контактам (см.
+    // таблицу contacts) и доставляет офлайн-получателю при следующем
+    // подключении. avatar сбрасывает AvatarCache (отдельный от
+    // PeerProfileCache — тот байты фото не хранит), остальные поля —
+    // PeerProfileCache, не ждём, пока истечёт TTL.
     _webSocketService.profileChangedEvents.listen((event) {
       if (event.field == 'avatar') {
         AvatarCache.invalidate(event.accountId);
@@ -875,12 +914,6 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   }
 
   Widget _build(BuildContext context) {
-    // Держим в синхроне с реальной высотой плавающей капсулы
-    // BottomActionBar (иконка+подпись+внутренние отступы ≈ 60, плюс её же
-    // зазор под капсулой = bottomInset + 14, см. её build()) — иначе на
-    // 3-кнопочной навигации содержимое списка чатов пряталось бы за ней.
-    final barHeight = 60.0 + MediaQuery.of(context).padding.bottom + 14;
-
     return PopScope(
       // На "обратной стороне" (настройки/профиль) системный back должен
       // сначала развернуть карточку обратно к чатам, а не сразу закрывать
@@ -948,10 +981,17 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                 onHorizontalDragStart: _onHorizontalDragStart,
                 onHorizontalDragUpdate: _onHorizontalDragUpdate,
                 onHorizontalDragEnd: _onHorizontalDragEnd,
-                child: Padding(
-                  padding: EdgeInsets.only(bottom: barHeight),
-                  child: _buildFlippableBody(),
-                ),
+                // БЕЗ Padding(bottom:) снаружи — иначе сам прокручиваемый
+                // viewport списка обрезан этой высотой и последний чат
+                // физически не может доехать до зоны под капсулой, ни при
+                // каком скролле (см. скриншоты пользователя — Notes
+                // упирался в границу). Тот же по величине отступ теперь
+                // висит на паддинге прокрутки внутри каждой вкладки (см.
+                // bottomActionBarReservedHeight — _buildChatList/
+                // SettingsContent/MyProfileContent) — в покое выглядит
+                // так же, но последний элемент можно докрутить под
+                // капсулу и увидеть его сквозь блюр.
+                child: _buildFlippableBody(),
               ),
             ),
             Positioned(
@@ -1021,6 +1061,9 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     return ScrollConfiguration(
       behavior: _NoGlowScrollBehavior(),
       child: ListView.builder(
+        padding: EdgeInsets.only(
+          bottom: bottomActionBarReservedHeight(context),
+        ),
         itemCount: _entries.length,
         itemBuilder: (context, index) {
           final entry = _entries[index];
