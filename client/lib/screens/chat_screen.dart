@@ -3045,6 +3045,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           'failed',
         );
       }
+      // Файлы НЕ удаляем — нужны PendingSendRetrier для повторной загрузки
+      // (тот же приём, что и для одиночного медиа/голосового выше).
+      await PendingSendStore.add({
+        'id': groupId,
+        'kind': 'media_group',
+        'peer_login': widget.peerLogin,
+        'peer_device_id': _currentPeerDeviceId,
+        'peer_account_id': widget.peerAccountId,
+        'caption': caption,
+        'text_message_id': textMessageId,
+        'items': items
+            .map(
+              (q) => {
+                'message_id': q.messageId,
+                'file_path': q.item.file.path,
+                'size': q.size,
+                'file_name': q.fileName,
+                'is_file': q.item.isFile,
+                'is_video': q.item.isVideo,
+                'is_spoiler': q.item.isSpoiler,
+              },
+            )
+            .toList(),
+      });
     } finally {
       await _loadHistory();
     }

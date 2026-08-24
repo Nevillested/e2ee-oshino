@@ -70,7 +70,20 @@ class WebSocketService {
   // доверять: раз пришло — оно того стоило перепроверить.
   Stream<({String accountId, String field})> get profileChangedEvents =>
       _profileChangedController.stream;
-  bool get isConnected => _channel != null;
+  // ВАЖНО: не просто "канал существует" — см. _openConnection(): _channel
+  // присваивается СРАЗУ при создании (строка ниже), а само подключение
+  // (DNS+TCP+WS handshake) происходит асинхронно и может занимать до 8с
+  // (см. channel.ready.timeout). Всё это время _channel != null, хотя
+  // канал ещё не готов принимать данные — раньше именно эта путаница была
+  // причиной того, что sendEnvelope/sendCallSignal/ackDelivery считали себя
+  // успешными (никакого исключения, .sink.add() на неготовый канал просто
+  // тихо проглатывает данные), хотя ничего никуда не уходило: текстовые
+  // сообщения зависали на статусе "отправка" на все 8с ack-таймаута
+  // (вместо мгновенного "оффлайн, положу в очередь"), а сигналы звонка
+  // (без ретрая вообще) пропадали безвозвратно — см. разбор
+  // пользовательского стресс-теста.
+  bool get isConnected =>
+      _channel != null && status == ConnectionStatus.connected;
 
   final _sessionInvalidController = StreamController<void>.broadcast();
   Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
@@ -367,8 +380,9 @@ class WebSocketService {
   /// его (см. комментарий в listener() выше про то, почему ack больше не
   /// шлётся отсюда же по факту получения кадра).
   void ackDelivery(String deliveryId) {
-    DebugLog.log('WS send ack deliveryId=$deliveryId connected=${_channel != null}');
-    _channel?.sink.add(jsonEncode({'Type': 'ack', 'DeliveryId': deliveryId}));
+    DebugLog.log('WS send ack deliveryId=$deliveryId connected=$isConnected');
+    if (!isConnected) return;
+    _channel!.sink.add(jsonEncode({'Type': 'ack', 'DeliveryId': deliveryId}));
   }
 
   /// Отправляет уже готовый (зашифрованный) конверт напрямую в сокет —
@@ -393,7 +407,7 @@ class WebSocketService {
     String deliveryId, {
     bool silent = false,
   }) async {
-    if (_channel == null) {
+    if (!isConnected) {
       throw StateError('WebSocket не подключен');
     }
 
@@ -424,7 +438,47 @@ class WebSocketService {
       'Ciphertext': jsonEncode(payload),
       'Type': type,
     };
-    _channel?.sink.add(jsonEncode(message));
+    final encoded = jsonEncode(message);
+    if (isConnected) {
+      _channel!.sink.add(encoded);
+      return;
+    }
+    // Канал технически может уже существовать (см. isConnected — раньше
+    // это тут не проверялось вообще, только _channel != null), но ещё не
+    // готов принимать данные, обычно на доли секунды сразу после
+    // _openConnection(), до нескольких секунд при плохой сети (см.
+    // channel.ready.timeout(8s)). У сигналов звонка нет собственной
+    // очереди/ретрая — раньше это окно тихо ронял сигнал совсем: если
+    // именно в этот момент уходил call_answer, звонящий никогда не узнавал,
+    // что на звонок ответили, и продолжал ждать — ровно баг, пойманный
+    // пользователем на стресс-тесте. Даём короткий шанс дождаться, прежде
+    // чем сдаться молча, как раньше.
+    unawaited(_sendCallSignalWhenReady(encoded, type));
+  }
+
+  Future<void> _sendCallSignalWhenReady(String encoded, String type) async {
+    final completer = Completer<void>();
+    final sub = statusUpdates.listen((s) {
+      if (s == ConnectionStatus.connected && !completer.isCompleted) {
+        completer.complete();
+      }
+    });
+    try {
+      await completer.future.timeout(const Duration(seconds: 5));
+      if (isConnected) {
+        _channel!.sink.add(encoded);
+      } else {
+        DebugLog.log(
+          'WS sendCallSignal type=$type DROPPED — reconnected but channel still not ready',
+        );
+      }
+    } catch (_) {
+      DebugLog.log(
+        'WS sendCallSignal type=$type DROPPED — no connection within 5s',
+      );
+    } finally {
+      await sub.cancel();
+    }
   }
 
   /// Подписка на живой статус устройства собеседника (см.

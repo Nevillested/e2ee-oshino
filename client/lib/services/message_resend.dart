@@ -46,6 +46,7 @@ class MessageResend {
     required String peerDeviceId,
     required String peerLogin,
     required InnerMessage inner,
+    Future<void> Function()? onAcked,
   }) async {
     await SendLock.run(peerDeviceId, () async {
       final myDeviceId = await KeyStore.getStoredDeviceId();
@@ -101,6 +102,7 @@ class MessageResend {
         deliveryId: inner.messageId,
         messageId: inner.messageId,
         peerLogin: peerLogin,
+        onAcked: onAcked,
       );
     });
   }
