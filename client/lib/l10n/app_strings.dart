@@ -474,6 +474,12 @@ class AppStrings {
       AppLocale.en: 'Failed to change password',
     },
 
+    'login.invalid': {
+      AppLocale.ru:
+          'Логин: от 3 до 32 символов, только латинские буквы и цифры',
+      AppLocale.en: 'Login: 3-32 characters, Latin letters and digits only',
+    },
+
     'password.tooShort': {
       AppLocale.ru: 'Пароль должен быть не короче 6 символов',
       AppLocale.en: 'Password must be at least 6 characters long',
@@ -614,6 +620,14 @@ class AppStrings {
     'call.otherParty': {
       AppLocale.ru: 'собеседником',
       AppLocale.en: 'the other party',
+    },
+    'call.declined': {
+      AppLocale.ru: 'Абонент занят',
+      AppLocale.en: 'The person declined',
+    },
+    'call.busy': {
+      AppLocale.ru: 'Абонент разговаривает',
+      AppLocale.en: 'The person is on another call',
     },
 
     'push.messagesChannelName': {

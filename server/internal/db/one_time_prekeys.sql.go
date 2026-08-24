@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countUnusedOneTimePrekeys = `-- name: CountUnusedOneTimePrekeys :one
+SELECT count(*) FROM one_time_prekeys WHERE device_id = $1 AND used = false
+`
+
+func (q *Queries) CountUnusedOneTimePrekeys(ctx context.Context, deviceID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countUnusedOneTimePrekeys, deviceID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createOneTimePrekeys = `-- name: CreateOneTimePrekeys :many
 INSERT INTO one_time_prekeys (device_id, pubkey)
 SELECT $1, unnest($2::bytea[])

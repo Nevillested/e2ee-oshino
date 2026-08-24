@@ -324,6 +324,60 @@ class ChatStore {
     );
   }
 
+  // "Надгробия" удалённых id — нужны на случай, когда входящее
+  // control-сообщение 'delete' (см. message_router.dart) обгоняет само
+  // удаляемое сообщение: обе доставки идут независимо через одну и ту же
+  // офлайн-очередь на сервере, и хотя сервер отдаёт их в порядке
+  // ORDER BY created_at (создание 'delete' физически позже — его нельзя
+  // отправить раньше, чем удаляемое сообщение уже существует), сам факт
+  // "раньше создано" не гарантирует "раньше обработано" на приёмной
+  // стороне (например, если 'delete' успело доставиться и подтвердиться, а
+  // оригинал — ещё не расшифрован из-за временного сбоя сессии, см.
+  // AlreadyProcessedException/session-reset выше, и будет переспрошен
+  // позже). Без этого addMessage тихо добавил(а) бы уже "удалённое"
+  // сообщение обратно — removeWhere в deleteMessages к этому моменту уже
+  // отработал и ему нечего будет вычищать при повторном приходе 'delete'
+  // (которого и не будет: у отправителя это было одно-единственное событие).
+  static String _deletedIdsKey(String peerLogin) => 'deleted_ids:$peerLogin';
+  static const _maxTombstones = 500;
+
+  static Future<Set<String>> _getTombstones(String peerLogin) async {
+    final stored = await _storage.read(key: _deletedIdsKey(peerLogin));
+    if (stored == null) return {};
+    return (jsonDecode(stored) as List<dynamic>).cast<String>().toSet();
+  }
+
+  static Future<void> _addTombstones(String peerLogin, List<String> ids) async {
+    if (ids.isEmpty) return;
+    final set = await _getTombstones(peerLogin);
+    set.addAll(ids);
+    // Ограничиваем размер — это короткоживущая защита от гонки доставки, а
+    // не журнал на всю историю чата, расти бесконечно ей незачем.
+    final trimmed = set.length > _maxTombstones
+        ? set.skip(set.length - _maxTombstones).toSet()
+        : set;
+    await _storage.write(
+      key: _deletedIdsKey(peerLogin),
+      value: jsonEncode(trimmed.toList()),
+    );
+  }
+
+  /// true, если это сообщение уже было помечено удалённым ДО того, как
+  /// успело реально попасть в хранилище — заодно "расходует" запись: раз
+  /// она сослужила службу, незачем занимать место дальше.
+  static Future<bool> _consumeTombstone(
+    String peerLogin,
+    String messageId,
+  ) async {
+    final set = await _getTombstones(peerLogin);
+    if (!set.remove(messageId)) return false;
+    await _storage.write(
+      key: _deletedIdsKey(peerLogin),
+      value: jsonEncode(set.toList()),
+    );
+    return true;
+  }
+
   // Каждое из addMessage/addMessages/_replace/deleteMessages читает ВЕСЬ
   // список сообщений пира, меняет его в памяти и пишет обратно целиком —
   // без сериализации это классический lost update: если два вызова для
@@ -398,6 +452,7 @@ class ChatStore {
       // все входящие сообщения, поэтому дубль по message_id гасим именно
       // здесь, а не в каждом месте, откуда вызывается addMessage.
       if (messages.any((m) => m.messageId == message.messageId)) return;
+      if (await _consumeTombstone(peerLogin, message.messageId)) return;
       messages.add(message);
       added = true;
       await _writeMessages(peerLogin, messages);
@@ -429,9 +484,24 @@ class ChatStore {
       final messages = await getMessages(peerLogin);
       final existingIds = messages.map((m) => m.messageId).toSet();
       // Тот же дубль-гард, что и в addMessage — см. комментарий там.
-      actuallyAdded = newMessages
+      final candidates = newMessages
           .where((m) => !existingIds.contains(m.messageId))
           .toList();
+      final tombstones = await _getTombstones(peerLogin);
+      actuallyAdded = candidates
+          .where((m) => !tombstones.contains(m.messageId))
+          .toList();
+      final consumed = candidates
+          .where((m) => tombstones.contains(m.messageId))
+          .map((m) => m.messageId)
+          .toSet();
+      if (consumed.isNotEmpty) {
+        tombstones.removeAll(consumed);
+        await _storage.write(
+          key: _deletedIdsKey(peerLogin),
+          value: jsonEncode(tombstones.toList()),
+        );
+      }
       if (actuallyAdded.isEmpty) return;
       messages.addAll(actuallyAdded);
       await _writeMessages(peerLogin, messages);
@@ -701,6 +771,11 @@ class ChatStore {
       messages.removeWhere((m) => ids.contains(m.messageId));
       remaining = messages;
       await _writeMessages(peerLogin, messages);
+      // Помечаем удалённым и то, чего ещё не было в списке — если сообщение
+      // с этим id придёт позже (переспрошенная офлайн-очередь, гонка
+      // 'delete' vs оригинала, см. _consumeTombstone выше), addMessage не
+      // должен молча вернуть его обратно в чат.
+      await _addTombstones(peerLogin, ids.toList());
     });
     // Превью последнего сообщения в списке чатов могло указывать как раз на
     // одно из только что удалённых (это касается и своего удаления, и
@@ -874,6 +949,7 @@ class ChatStore {
   static Future<void> clearHistory(String peerLogin) async {
     await _withPeerLock(peerLogin, () async {
       await _writeMessages(peerLogin, []);
+      await _storage.delete(key: _deletedIdsKey(peerLogin));
     });
     await _withPeersLock(() async {
       final peers = await getKnownPeers();
@@ -894,6 +970,7 @@ class ChatStore {
   static Future<void> removeChat(String peerLogin) async {
     await _withPeerLock(peerLogin, () async {
       await _storage.delete(key: _messagesKey(peerLogin));
+      await _storage.delete(key: _deletedIdsKey(peerLogin));
     });
     await _withPeersLock(() async {
       final peers = await getKnownPeers();

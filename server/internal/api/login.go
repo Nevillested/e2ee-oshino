@@ -29,14 +29,14 @@ type LoginResponse struct {
 	Language string `json:"language"`
 }
 
-func NewLoginHandler(queries *db.Queries, limiter *LoginRateLimiter) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
+// perAccountLoginLimiter — отдельный, более широкий лимит ПО ОДНОМУ ЛОГИНУ
+// (без привязки к IP): защищает конкретный аккаунт от распределённого
+// перебора с разных адресов, который ip+login лимитер ниже не поймает (у
+// каждой отдельной пары ip+login свой маленький бюджет).
+var perAccountLoginLimiter = NewRateLimiter(15*time.Minute, 15)
 
-		var ip = clientIP(r)
-		if !limiter.Allowed(ip) {
-			http.Error(w, "Слишком много неудачных попыток входа, попробуйте позже", http.StatusTooManyRequests)
-			return
-		}
+func NewLoginHandler(queries *db.Queries, limiter *RateLimiter) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 
 		//объявляем переменную, где будут храниться данные логина и кода TOTP, которые пришли от клиента в JSON-формате
 		var NewDataFromClient LoginRequest
@@ -58,13 +58,26 @@ func NewLoginHandler(queries *db.Queries, limiter *LoginRateLimiter) func(http.R
 		var TOTPCodeFromClient string = NewDataFromClient.TotpCode
 		var PWDFromClient string = NewDataFromClient.Password
 
+		var ip = clientIP(r)
+		// Ключ "ip|login" — а не просто ip — чтобы неудачные попытки против
+		// ОДНОГО аккаунта с общего IP (офис/CGNAT/VPN) не блокировали вход
+		// остальным, кто сидит за тем же IP, но логинится в СВОИ аккаунты.
+		var ipLoginKey = ip + "|" + LoginFromClient
+		if !limiter.Allowed(ipLoginKey) || !perAccountLoginLimiter.Allowed(LoginFromClient) {
+			http.Error(w, "Слишком много неудачных попыток входа, попробуйте позже", http.StatusTooManyRequests)
+			return
+		}
+
 		//делаем запрос к бд, передавая в качестве параметра логин, который пришел от клиента. В ответ получаем структуру Account, которая содержит все данные аккаунта, включая секретный ключ TOTP, который сохранили на этапе регистрации
 		var account, SqlError = queries.GetAccountByLogin(r.Context(), LoginFromClient)
 
-		//проверяем ошибки, при запросе к бд, если есть, даем пользователю ответ со статусом 500
+		//проверяем ошибки, при запросе к бд — намеренно НЕ отличаем от "неверный
+		//пароль/код" ни статусом, ни текстом ответа (см. ветку else ниже) —
+		//иначе сам факт разного ответа выдавал бы, существует логин или нет.
 		if SqlError != nil {
-			limiter.RecordFailure(ip)
-			http.Error(w, "Ошибка поиска пользователя", http.StatusInternalServerError)
+			limiter.RecordFailure(ipLoginKey)
+			perAccountLoginLimiter.RecordFailure(LoginFromClient)
+			http.Error(w, "Неверные данные входа", http.StatusUnauthorized)
 			return
 		}
 
@@ -105,7 +118,8 @@ func NewLoginHandler(queries *db.Queries, limiter *LoginRateLimiter) func(http.R
 
 		//отправляем результат
 		if CheckCodeResult && PWDCheck == 1 {
-			limiter.RecordSuccess(ip)
+			limiter.RecordSuccess(ipLoginKey)
+			perAccountLoginLimiter.RecordSuccess(LoginFromClient)
 
 			//генерируем срез в 32 байта
 			var tokenBytes = make([]byte, 32)
@@ -164,7 +178,8 @@ func NewLoginHandler(queries *db.Queries, limiter *LoginRateLimiter) func(http.R
 			json.NewEncoder(w).Encode(NewLoginResponse)
 
 		} else {
-			limiter.RecordFailure(ip)
+			limiter.RecordFailure(ipLoginKey)
+			perAccountLoginLimiter.RecordFailure(LoginFromClient)
 			http.Error(w, "Неверные данные входа", http.StatusUnauthorized)
 		}
 

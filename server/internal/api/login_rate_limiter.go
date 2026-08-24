@@ -7,16 +7,38 @@ import (
 	"time"
 )
 
-// LoginRateLimiter — простой rate-limiter по IP для /login: слишком много
-// неудачных попыток подряд с одного адреса — временная блокировка. В
-// памяти процесса (тот же стиль, что и ConnectionRegistry/AckRegistry в
-// этом проекте), без внешних зависимостей: сервер — один процесс на одной
-// VPS, распределённый rate-limit тут ни к чему. Раньше от перебора паролей
-// были защищены только коды восстановления (см. password_recovery.go), а
-// сам /login — нет.
-type LoginRateLimiter struct {
+// RateLimiter — простой rate-limiter по произвольному строковому ключу:
+// слишком много неудачных попыток подряд для одного ключа — временная
+// блокировка. В памяти процесса (тот же стиль, что и
+// ConnectionRegistry/AckRegistry в этом проекте), без внешних зависимостей:
+// сервер — один процесс на одной VPS, распределённый rate-limit тут ни к
+// чему.
+//
+// Ключ — не обязательно IP: для /login используется связка "ip|login"
+// (см. login.go) плюс отдельный лимитер по одному только login — так один
+// человек, ломящийся в конкретный чужой аккаунт с разных IP, всё равно
+// упирается в лимит по логину, а не просто перебирает IP-адреса, но при
+// этом NAT/офис/VPN с одним внешним IP не блокирует ВСЕХ, кто за ним сидит,
+// из-за чужих неудачных попыток — только тех, кто ломится в тот же логин.
+type RateLimiter struct {
 	mu       sync.Mutex
-	attempts map[string][]time.Time // ip -> моменты неудачных попыток за окно
+	window   time.Duration
+	maxTries int
+	attempts map[string][]time.Time // key -> моменты неудачных попыток за окно
+}
+
+func NewRateLimiter(window time.Duration, maxTries int) *RateLimiter {
+	return &RateLimiter{
+		window:   window,
+		maxTries: maxTries,
+		attempts: make(map[string][]time.Time),
+	}
+}
+
+// Совместимость со старым именем конструктора — /login исторически заведён
+// через NewLoginRateLimiter(), поведение (15 минут / 5 попыток) сохранено.
+func NewLoginRateLimiter() *RateLimiter {
+	return NewRateLimiter(loginRateLimitWindow, loginRateLimitMaxTries)
 }
 
 const (
@@ -24,47 +46,42 @@ const (
 	loginRateLimitMaxTries = 5
 )
 
-func NewLoginRateLimiter() *LoginRateLimiter {
-	return &LoginRateLimiter{attempts: make(map[string][]time.Time)}
-}
-
-// Allowed — можно ли сейчас пробовать логиниться с этого IP. Заодно
-// вычищает устаревшие (за пределами окна) попытки — так карта не растёт
-// вечно для IP, переставших ломиться.
-func (l *LoginRateLimiter) Allowed(ip string) bool {
+// Allowed — можно ли сейчас пробовать снова с этим ключом. Заодно вычищает
+// устаревшие (за пределами окна) попытки — так карта не растёт вечно для
+// ключей, переставших ломиться.
+func (l *RateLimiter) Allowed(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	cutoff := time.Now().Add(-loginRateLimitWindow)
-	fresh := l.attempts[ip][:0]
-	for _, t := range l.attempts[ip] {
+	cutoff := time.Now().Add(-l.window)
+	fresh := l.attempts[key][:0]
+	for _, t := range l.attempts[key] {
 		if t.After(cutoff) {
 			fresh = append(fresh, t)
 		}
 	}
 	if len(fresh) == 0 {
-		delete(l.attempts, ip)
+		delete(l.attempts, key)
 	} else {
-		l.attempts[ip] = fresh
+		l.attempts[key] = fresh
 	}
 
-	return len(fresh) < loginRateLimitMaxTries
+	return len(fresh) < l.maxTries
 }
 
-// RecordFailure — зафиксировать неудачную попытку входа с этого IP.
-func (l *LoginRateLimiter) RecordFailure(ip string) {
+// RecordFailure — зафиксировать неудачную попытку для этого ключа.
+func (l *RateLimiter) RecordFailure(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.attempts[ip] = append(l.attempts[ip], time.Now())
+	l.attempts[key] = append(l.attempts[key], time.Now())
 }
 
-// RecordSuccess — успешный вход сбрасывает счётчик для этого IP: не
-// наказываем легитимного пользователя, пару раз опечатавшегося перед
-// правильным паролем.
-func (l *LoginRateLimiter) RecordSuccess(ip string) {
+// RecordSuccess — успех сбрасывает счётчик для этого ключа: не наказываем
+// легитимного пользователя, пару раз опечатавшегося перед правильным вводом.
+func (l *RateLimiter) RecordSuccess(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.attempts, ip)
+	delete(l.attempts, key)
 }
 
 // clientIP — реальный IP клиента, а не адрес nginx. Сервер стоит за

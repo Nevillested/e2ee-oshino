@@ -23,6 +23,14 @@ const (
 	recoveryMaxAttempts = 5
 )
 
+// recoverRequestLimiter — сам ЗАПРОС кода (не ввод) раньше был вообще без
+// лимита: только код потом ограничен по попыткам (recoveryMaxAttempts), а
+// генерировать и слать новые письма можно было бесконечно — открытая
+// возможность заспамить письмами чужой почтовый ящик. Ключ — логин: у
+// каждого аккаунта свой бюджет запросов независимо от того, с какого IP их
+// шлют.
+var recoverRequestLimiter = NewRateLimiter(time.Hour, 3)
+
 type RecoverRequestRequest struct {
 	Login string `json:"login"`
 }
@@ -47,6 +55,16 @@ func NewRecoverRequestHandler(queries *db.Queries) func(http.ResponseWriter, *ht
 		}
 
 		login := strings.TrimSpace(Req.Login)
+
+		// Считаем попытку запроса СРАЗУ, до любых проверок ниже — иначе
+		// лимит легко обойти, узнавая заодно (по разнице в 429 vs 404),
+		// какие из перебираемых логинов вообще существуют.
+		if !recoverRequestLimiter.Allowed(login) {
+			http.Error(w, "Слишком много запросов кода, попробуйте позже", http.StatusTooManyRequests)
+			return
+		}
+		recoverRequestLimiter.RecordFailure(login)
+
 		account, err := queries.GetAccountByLogin(r.Context(), login)
 		if err != nil {
 			http.Error(w, "Пользователь с таким логином не найден", http.StatusNotFound)

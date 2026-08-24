@@ -6,6 +6,22 @@ final _hmac = Hmac.sha256();
 
 const _maxSkippedKeys = 100; // защита от чрезмерного расхода памяти/диска
 
+/// Сообщение с этим номером уже было честно расшифровано раньше — это
+/// повторная (дублирующая) доставка, а не рассинхрон сессии: ратчет-цепочка
+/// сама по себе в порядке. Отдельный тип нужен вызывающему коду
+/// (MessageRouter), чтобы отличить безобидный дубль от настоящей ошибки
+/// расшифровки — иначе сам факт получения дубля (например, при повторной
+/// доставке недоставленных сообщений после реконнекта) может быть принят за
+/// признак рассинхрона и привести к ненужному сбросу рабочей сессии.
+class AlreadyProcessedException implements Exception {
+  final int messageNumber;
+  AlreadyProcessedException(this.messageNumber);
+
+  @override
+  String toString() =>
+      'Сообщение с номером $messageNumber уже было обработано ранее';
+}
+
 Future<List<int>> _hkdf(List<int> ikm, String info, int length) async {
   final hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: length);
   final derived = await hkdf.deriveKey(
@@ -162,10 +178,9 @@ class RatchetState {
 
     if (messageNumber < receiveMessageNumber) {
       // Номер меньше уже обработанного и не найден среди пропущенных —
-      // это повтор или испорченные данные, ключ восстановить невозможно.
-      throw Exception(
-        'Сообщение с номером $messageNumber уже было обработано ранее',
-      );
+      // это повтор (дублирующая доставка), ключ для него уже израсходован
+      // и восстановить его невозможно, но сама сессия при этом здорова.
+      throw AlreadyProcessedException(messageNumber);
     }
 
     if (messageNumber - receiveMessageNumber > _maxSkippedKeys) {

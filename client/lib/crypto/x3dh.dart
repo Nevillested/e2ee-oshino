@@ -184,6 +184,10 @@ Future<List<int>?> establishIncomingSessionRaw(
         remotePublicKey: senderEphemeralKey,
       );
       ikm.addAll(await dh4.extractBytes());
+      // Одноразовый — и по названию, и по гарантии forward secrecy: как
+      // только он реально использован в DH, приватную часть больше не
+      // держим на диске (см. docstring у deleteOneTimePrekeyPair).
+      await KeyStore.deleteOneTimePrekeyPair(usedOneTimePrekeyBase64);
     }
   }
 

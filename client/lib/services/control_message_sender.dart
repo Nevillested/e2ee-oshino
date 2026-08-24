@@ -27,7 +27,7 @@ class ControlMessageSender {
   }) async {
     if (peerDeviceId.isEmpty) return;
     try {
-      await SendLock.run(peerLogin, () async {
+      await SendLock.run(peerDeviceId, () async {
         final myDeviceId = await KeyStore.getStoredDeviceId();
         var state = await SessionStore.getState(peerDeviceId);
         Map<String, dynamic>? initHeader;

@@ -5,6 +5,7 @@ import '../api/api_client.dart';
 import '../l10n/app_locale.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
+import '../utils/login_validator.dart';
 import '../utils/password_validator.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/theme_reactive.dart';
@@ -45,6 +46,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _handleRegister() async {
     FocusScope.of(context).unfocus();
+
+    final loginError = validateLogin(_loginController.text.trim());
+    if (loginError != null) {
+      setState(() => _errorText = loginError);
+      return;
+    }
 
     final policyError = validatePassword(_passwordController.text);
     if (policyError != null) {

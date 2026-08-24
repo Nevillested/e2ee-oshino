@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"server/internal/db"
+	"time"
 
 	"github.com/pquerna/otp/totp"
 )
@@ -12,6 +13,14 @@ type VerifyTOTPRequest struct {
 	Login string `json:"login"`
 	Code  string `json:"code"`
 }
+
+// verifyTotpLimiter — /verify-totp публичный и раньше был вообще без
+// троттлинга: голый оракул "валиден ли ЭТОТ 6-значный код прямо сейчас для
+// ЭТОГО логина" (30 секунд действия кода, ~1 000 000 вариантов — вполне
+// перебираемо без лимита). Тот же лимит, что и на recovery-код
+// (recoveryMaxAttempts=5 за окно), ключ — логин (не IP): именно конкретный
+// аккаунт и является целью перебора.
+var verifyTotpLimiter = NewRateLimiter(15*time.Minute, 5)
 
 func NewVerifyTOTPHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -31,11 +40,17 @@ func NewVerifyTOTPHandler(queries *db.Queries) func(http.ResponseWriter, *http.R
 			return
 		}
 
+		if !verifyTotpLimiter.Allowed(NewDataFromClient.Login) {
+			http.Error(w, "Слишком много попыток, попробуйте позже", http.StatusTooManyRequests)
+			return
+		}
+
 		//делаем запрос к бд, передавая в качестве параметра логин, который пришел от клиента. В ответ получаем структуру Account, которая содержит все данные аккаунта, включая секретный ключ TOTP, который сохранили на этапе регистрации
 		var account, SqlError = queries.GetAccountByLogin(r.Context(), NewDataFromClient.Login)
 
 		//проверяем ошибки, при запросе к бд, если есть, даем пользователю ответ со статусом 500
 		if SqlError != nil {
+			verifyTotpLimiter.RecordFailure(NewDataFromClient.Login)
 			http.Error(w, "Ошибка поиска пользователя", http.StatusInternalServerError)
 			return
 		}
@@ -51,8 +66,10 @@ func NewVerifyTOTPHandler(queries *db.Queries) func(http.ResponseWriter, *http.R
 
 		//отправляем результат
 		if CheckResult {
+			verifyTotpLimiter.RecordSuccess(NewDataFromClient.Login)
 			w.WriteHeader(http.StatusOK)
 		} else {
+			verifyTotpLimiter.RecordFailure(NewDataFromClient.Login)
 			http.Error(w, "Неверный код", http.StatusUnauthorized)
 		}
 

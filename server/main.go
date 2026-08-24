@@ -79,6 +79,7 @@ func main() {
 	mux.HandleFunc("POST /register-device", api.NewRegisterDeviceHandler(queries, registry))
 	mux.HandleFunc("POST /prekeys/upload", api.NewUploadPrekeysHandler(queries))
 	mux.HandleFunc("GET /devices/{device_id}/prekey-bundle", api.NewGetPrekeyBundleHandler(queries))
+	mux.HandleFunc("GET /devices/{device_id}/prekey-count", api.NewGetPrekeyCountHandler(queries))
 	mux.HandleFunc("GET /accounts/{login}/devices", api.NewGetDevicesByLoginHandler(queries))
 	mux.HandleFunc("GET /devices/{device_id}/owner", api.NewGetDeviceOwnerHandler(queries))
 	mux.HandleFunc("POST /upload-media", api.NewUploadMediaHandler(queries, minioClient))

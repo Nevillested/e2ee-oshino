@@ -17,7 +17,9 @@ import '../services/my_avatar_store.dart';
 import '../services/my_email_store.dart';
 import '../services/my_profile_store.dart';
 import '../services/peer_profile_cache.dart';
+import '../services/pending_send_retrier.dart';
 import '../services/pip_service.dart';
+import '../services/prekey_replenisher.dart';
 import '../services/send_queue_processor.dart';
 import '../services/push_service.dart';
 import '../services/websocket_service.dart';
@@ -544,6 +546,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     _webSocketService.connect(token, deviceId);
     MessageRouter.start();
     SendQueueProcessor.instance.start();
+    PendingSendRetrier.instance.start();
     ChatStore.changes.listen((_) => _refreshChats());
     // Разово чинит галочки прочтения для чатов, заведённых ДО появления
     // этой фичи (см. ChatStore.backfillLastMessageMeta) — сама допишет в
@@ -556,6 +559,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     unawaited(MyAvatarStore.init());
     unawaited(MyEmailStore.init());
     unawaited(MyProfileStore.init());
+    unawaited(ensurePrekeysTopped(ApiClient(), token, deviceId));
     // Живой сигнал "кто-то поменял блокировку" (см. notifyBlockStatusChanged
     // на сервере) — без него локальный кэш обновлялся бы только при
     // следующем подключении/входе в конкретный чат, а не сразу, пока

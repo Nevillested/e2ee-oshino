@@ -166,6 +166,20 @@ class MessageRouter {
       try {
         final messageKey = await state.nextReceivingKey(envelope);
         rawInner = await decryptMessage(messageKey, envelope);
+      } on AlreadyProcessedException catch (e) {
+        // Безобидный дубль (повторная доставка уже расшифрованного
+        // сообщения, например после реконнекта) — сама сессия здорова,
+        // просто подтверждаем и молча игнорируем. Ни в коем случае не
+        // считаем это как decrypt-failure: иначе burst дублей после
+        // реконнекта (см. лог пользователя) сносит рабочую сессию и
+        // собеседник перестаёт доходить на много часов.
+        DebugLog.log(
+          'Router IGNORING duplicate from=$senderDeviceId $e — session untouched',
+        );
+        if (deliveryId != null) {
+          WebSocketService.instance.ackDelivery(deliveryId);
+        }
+        return;
       } catch (e) {
         // Расшифровка с текущим состоянием не удалась — если конверт
         // всё же несёт валидные X3DH-поля (собеседник уже сам поднял

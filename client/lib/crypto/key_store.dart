@@ -133,9 +133,20 @@ class KeyStore {
   /// Генерирует пачку одноразовых prekeys (X25519), сохраняет приватные
   /// части локально — понадобятся позже, когда кто-то начнёт X3DH-обмен
   /// с этим устройством и использует один из этих ключей.
+  ///
+  /// ДОБАВЛЯЕТ к уже сохранённым, а не затирает их — эта функция вызывается
+  /// не только один раз при первой регистрации устройства (device_setup.dart),
+  /// но и при пополнении пула (см. services/prekey_replenisher.dart), когда
+  /// часть из ранее выгруженных на сервер ключей ещё не израсходована.
+  /// Раньше (до появления пополнения) перезапись была безобидна, потому что
+  /// функция и так вызывалась ровно один раз за всё время жизни устройства —
+  /// но перезаписывать было бы уже нельзя: это стёрло бы приватные части
+  /// ещё не использованных, но уже отданных серверу ключей, и когда кто-то
+  /// начал бы X3DH именно с одним из них, findOneTimePrekeyPair ничего бы
+  /// не нашёл.
   static Future<List<List<int>>> createOneTimePrekeys(int count) async {
     final publicKeys = <List<int>>[];
-    final stored = <Map<String, String>>[];
+    final newlyStored = <Map<String, String>>[];
 
     for (var i = 0; i < count; i++) {
       final pair = await X25519().newKeyPair();
@@ -143,15 +154,44 @@ class KeyStore {
       final public = await pair.extractPublicKey();
 
       publicKeys.add(public.bytes);
-      stored.add({
+      newlyStored.add({
         'public': base64Encode(public.bytes),
         'private': base64Encode(private),
       });
     }
 
-    await _storage.write(key: _oneTimePrekeysKey, value: jsonEncode(stored));
+    final existingRaw = await _storage.read(key: _oneTimePrekeysKey);
+    final existing = existingRaw == null
+        ? <Map<String, String>>[]
+        : (jsonDecode(existingRaw) as List<dynamic>)
+              .map((e) => (e as Map<String, dynamic>).cast<String, String>())
+              .toList();
+
+    await _storage.write(
+      key: _oneTimePrekeysKey,
+      value: jsonEncode([...existing, ...newlyStored]),
+    );
 
     return publicKeys;
+  }
+
+  /// Убирает приватную часть уже ИЗРАСХОДОВАННОГО one-time prekey — вызывать
+  /// сразу после успешного использования в establishIncomingSessionRaw
+  /// (x3dh.dart). Ключ одноразовый по определению (в этом и весь смысл
+  /// forward secrecy четвёртого DH в X3DH): если оставить приватную часть
+  /// лежать в хранилище и дальше, компрометация диска задним числом
+  /// расшифровывает и самое первое сообщение переписки тоже, а не только
+  /// текущие.
+  static Future<void> deleteOneTimePrekeyPair(String publicKeyBase64) async {
+    final stored = await _storage.read(key: _oneTimePrekeysKey);
+    if (stored == null) return;
+    final list = (jsonDecode(stored) as List<dynamic>)
+        .map((e) => (e as Map<String, dynamic>).cast<String, String>())
+        .toList();
+    final before = list.length;
+    list.removeWhere((entry) => entry['public'] == publicKeyBase64);
+    if (list.length == before) return;
+    await _storage.write(key: _oneTimePrekeysKey, value: jsonEncode(list));
   }
 
   static Future<String?> getStoredDeviceId() {

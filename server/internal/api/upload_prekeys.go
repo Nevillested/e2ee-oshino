@@ -8,6 +8,7 @@ import (
 
 	"encoding/base64"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -23,7 +24,7 @@ func NewUploadPrekeysHandler(queries *db.Queries) func(http.ResponseWriter, *htt
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		//проверяем Токен
-		var _, ErrTokCheck = CheckToken(w, r, queries)
+		var Session, ErrTokCheck = CheckToken(w, r, queries)
 
 		//если с токеном проблемы - выходим и не создаем подключение по вебсокету
 		if ErrTokCheck != nil {
@@ -53,6 +54,20 @@ func NewUploadPrekeysHandler(queries *db.Queries) func(http.ResponseWriter, *htt
 		//проверяем на ошибки конечно же
 		if ScanUuidErr != nil {
 			http.Error(w, "Ошибка конвертации Device ID", http.StatusBadRequest)
+			return
+		}
+
+		var owner, OwnerErr = queries.GetLoginByDeviceID(r.Context(), DeviceID)
+		if OwnerErr != nil {
+			if OwnerErr == pgx.ErrNoRows {
+				http.Error(w, "Устройство не найдено", http.StatusNotFound)
+			} else {
+				http.Error(w, "Ошибка проверки владельца устройства", http.StatusInternalServerError)
+			}
+			return
+		}
+		if owner.AccountID != Session.AccountID {
+			http.Error(w, "Устройство принадлежит другому аккаунту", http.StatusForbidden)
 			return
 		}
 

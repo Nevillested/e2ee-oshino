@@ -43,6 +43,13 @@ func NewRegisterHandler(queries *db.Queries, pool *pgxpool.Pool) func(http.Respo
 			return
 		}
 
+		//только латиница и цифры, 3-32 символа — среди прочего закрывает
+		//обход reservedLogins через кириллический омоглиф (см. auth.ValidateLogin).
+		if LoginPolicyErr := auth.ValidateLogin(newRegisterRequest.Login); LoginPolicyErr != nil {
+			http.Error(w, LoginPolicyErr.Error(), http.StatusBadRequest)
+			return
+		}
+
 		//логины вида "admin"/"support"/"oshino" зарезервированы — иначе ими
 		//мог бы представиться кто угодно, а собеседник в 1-в-1 переписке
 		//видит только сам логин, без какой-либо отдельной "галочки" сервиса.

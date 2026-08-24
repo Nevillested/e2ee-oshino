@@ -610,6 +610,25 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  /// Сколько ещё не израсходованных one-time-prekeys лежит на сервере для
+  /// СВОЕГО устройства — см. services/prekey_replenisher.dart. null при
+  /// любой сетевой/серверной ошибке — вызывающий код просто пропускает
+  /// пополнение до следующей попытки, а не считает это чем-то, что нужно
+  /// показывать пользователю.
+  Future<int?> getPrekeyCount(String token, String deviceId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/devices/$deviceId/prekey-count'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return data['remaining'] as int;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<String> registerDevice(
     String token,
     String identityPubkeyBase64, {

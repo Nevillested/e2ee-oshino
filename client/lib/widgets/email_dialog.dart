@@ -1,10 +1,31 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
 import '../services/my_email_store.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
 import 'frosted_dialog.dart';
+
+// Код подтверждения уже отправлен, диалог ждёт его ввода — пользователь
+// обычно сворачивает приложение за письмом (почтовый клиент/браузер) и
+// возвращается. Если Android в это время убьёт процесс (частый случай на
+// агрессивных по батарее прошивках — MIUI/EMUI и т.п., см. обсуждение с
+// пользователем), при возврате приложение стартует заново и без этой
+// подстраховки открытый диалог просто пропадает: пользователь возвращается
+// на экран настроек как ни в чём не бывало, код в письме уже есть, а ввести
+// его негде без повторного запроса нового. Храним, что запрос уже отправлен
+// и на какую почту — и при следующем открытии этого диалога (см.
+// _AddEmailDialogState.initState) сразу продолжаем с шага ввода кода, а не
+// заставляем начинать заново.
+const _pendingEmailKey = 'pending_email_verification_email';
+const _pendingAtKey = 'pending_email_verification_requested_at_ms';
+// Чуть меньше серверного TTL кода (30 минут, см. emailVerificationTTL в
+// account_email_verification.go) — не имеет смысла молча подсовывать шаг
+// ввода кода, который уже наверняка не примется.
+const _pendingTtl = Duration(minutes: 25);
 
 /// Простая проверка формата на клиенте — не для безопасности (её всё
 /// равно дублирует сервер), просто чтобы не гонять явно мусорные значения
@@ -166,6 +187,42 @@ class _AddEmailDialogState extends State<_AddEmailDialog> {
   bool _isLoading = false;
 
   @override
+  void initState() {
+    super.initState();
+    _restorePendingVerification();
+  }
+
+  Future<void> _restorePendingVerification() async {
+    final prefs = await SharedPreferences.getInstance();
+    final email = prefs.getString(_pendingEmailKey);
+    final atMs = prefs.getInt(_pendingAtKey);
+    if (email == null || atMs == null) return;
+    final requestedAt = DateTime.fromMillisecondsSinceEpoch(atMs);
+    if (DateTime.now().difference(requestedAt) >= _pendingTtl) {
+      await _clearPendingVerification();
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _pendingEmail = email;
+      _emailController.text = email;
+      _step = _Step.enterCode;
+    });
+  }
+
+  Future<void> _savePendingVerification(String email) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_pendingEmailKey, email);
+    await prefs.setInt(_pendingAtKey, DateTime.now().millisecondsSinceEpoch);
+  }
+
+  Future<void> _clearPendingVerification() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_pendingEmailKey);
+    await prefs.remove(_pendingAtKey);
+  }
+
+  @override
   void dispose() {
     _emailController.dispose();
     _codeController.dispose();
@@ -185,6 +242,7 @@ class _AddEmailDialogState extends State<_AddEmailDialog> {
     });
     try {
       await _apiClient.requestEmailVerification(widget.token, value);
+      await _savePendingVerification(value);
       if (!mounted) return;
       setState(() {
         _pendingEmail = value;
@@ -207,6 +265,7 @@ class _AddEmailDialogState extends State<_AddEmailDialog> {
     });
     try {
       await _apiClient.confirmEmailVerification(widget.token, code);
+      await _clearPendingVerification();
       if (!mounted) return;
       MyEmailStore.setEmail(_pendingEmail!);
       Navigator.pop(context);
@@ -238,7 +297,14 @@ class _AddEmailDialogState extends State<_AddEmailDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: _isLoading ? null : () => Navigator.pop(context),
+          onPressed: _isLoading
+              ? null
+              : () {
+                  if (_step == _Step.enterCode) {
+                    unawaited(_clearPendingVerification());
+                  }
+                  Navigator.pop(context);
+                },
           child: Text(tr('common.cancel')),
         ),
         TextButton(

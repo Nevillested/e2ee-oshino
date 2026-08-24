@@ -44,6 +44,7 @@ import '../services/debug_log.dart';
 import '../services/keyboard_height_store.dart';
 import '../services/media_asset_cache.dart';
 import '../services/media_playback_coordinator.dart';
+import '../services/media_upload.dart' as media_upload;
 import '../services/message_router.dart';
 import '../services/my_avatar_store.dart';
 import '../services/peer_profile_cache.dart';
@@ -55,6 +56,7 @@ import '../storage/chat_store.dart';
 import '../storage/media_cache.dart';
 import '../storage/peer_account_store.dart';
 import '../storage/peer_identity_store.dart';
+import '../storage/pending_send_store.dart';
 import '../theme/app_theme.dart';
 import '../utils/presence_format.dart';
 import '../utils/time_format.dart';
@@ -69,6 +71,7 @@ import '../widgets/ongoing_call_banner.dart';
 import '../widgets/particle_shatter_overlay.dart';
 import '../widgets/hero_zoom_page_route.dart';
 import '../widgets/report_message_dialog.dart';
+import '../widgets/spoiler_overlay.dart';
 import '../widgets/swipe_back_page_route.dart';
 import '../widgets/theme_reactive.dart';
 import '../widgets/video_note_player.dart';
@@ -118,7 +121,10 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   static const int _autoDownloadLimitBytes = 10 * 1024 * 1024; // 10 МБ
-  static const int _streamingThresholdBytes = 20 * 1024 * 1024; // 20 МБ
+  // Общий с PendingSendRetrier порог (см. media_upload.dart) — единый
+  // источник истины, чтобы автоматический повтор после сбоя сети грузил
+  // файл тем же способом (потоково/целиком), что и обычная отправка.
+  static const int _streamingThresholdBytes = media_upload.streamingThresholdBytes;
   static const int _maxAttachmentSizeBytes = 500 * 1024 * 1024; // 500 МБ
   // Голосовые — без ограничения по времени, только видео-кружочки: у них
   // заметно тяжелее байт на секунду (видео+аудио), и на них же завязан
@@ -1484,7 +1490,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }) async {
     if (_isNotes) return true;
     try {
-      await SendLock.run(widget.peerLogin, () async {
+      await SendLock.run(_currentPeerDeviceId, () async {
         final myDeviceId = await KeyStore.getStoredDeviceId();
         final state = await _ensureSessionForSending();
         final initHeader = _pendingInitHeader;
@@ -1578,7 +1584,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
 
     try {
-      await SendLock.run(widget.peerLogin, () async {
+      await SendLock.run(_currentPeerDeviceId, () async {
         final myDeviceId = await KeyStore.getStoredDeviceId();
         final state = await _ensureSessionForSending();
         final initHeader = _pendingInitHeader;
@@ -1619,6 +1625,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         messageId,
         'failed',
       );
+      // 'failed' тут — не окончательный приговор: если это был сетевой сбой
+      // (например, самая первая отправка этому собеседнику, а prekey-бандл
+      // не удалось получить офлайн), PendingSendRetrier сам переотправит,
+      // как только вернётся связь, и статус тогда сменится на 'sent' без
+      // участия пользователя (см. ТЗ — "сообщения просто падают").
+      await PendingSendStore.add({
+        'id': messageId,
+        'kind': 'text',
+        'peer_login': widget.peerLogin,
+        'peer_device_id': _currentPeerDeviceId,
+        'text': text,
+        'sent_at': inner.sentAt,
+        if (replyToMessageId != null) 'reply_to_id': replyToMessageId,
+        if (replyToPreview != null) 'reply_to_preview': replyToPreview,
+      });
     } finally {
       await _loadHistory();
     }
@@ -2025,7 +2046,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       // более узкая сериализация именно крипто-состояния ЭТОГО
       // собеседника, друг другу эти два уровня не мешают.
       await SendQueueProcessor.instance.runHeavy(
-        () => SendLock.run(widget.peerLogin, () async {
+        () => SendLock.run(_currentPeerDeviceId, () async {
           final token = await Session.getToken();
           final myDeviceId = await KeyStore.getStoredDeviceId();
           final state = await _ensureSessionForSending();
@@ -2108,11 +2129,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         messageId,
         'failed',
       );
+      // Файл НЕ удаляем (см. отличие от notes-ветки выше) — он нужен
+      // PendingSendRetrier для повторной загрузки, как только вернётся
+      // связь; удалит его сам ретрай, после успешной пересылки.
+      await PendingSendStore.add({
+        'id': messageId,
+        'kind': isVideo ? 'video_note' : 'voice',
+        'peer_login': widget.peerLogin,
+        'peer_device_id': _currentPeerDeviceId,
+        'peer_account_id': widget.peerAccountId,
+        'file_path': file.path,
+        'size': size,
+        'duration_ms': duration.inMilliseconds,
+      });
     } finally {
       await _loadHistory();
-      try {
-        await file.delete();
-      } catch (_) {}
     }
   }
 
@@ -2649,8 +2680,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Шифрует и грузит один файл на сервер, сохраняя прогресс локально —
-  /// используется и для одиночной отправки, и для сборки группы.
+  /// Шифрует и грузит один файл на сервер — тонкая обёртка над общей
+  /// логикой из media_upload.dart (переиспользуется и PendingSendRetrier
+  /// для автоматического повтора после сбоя сети, см. ТЗ пользователя).
   Future<Map<String, dynamic>> _uploadAndDescribeMedia(
     PickedMedia item,
     String messageId,
@@ -2658,92 +2690,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     String fileName,
     String token,
     String peerAccountIdForUpload,
-  ) async {
-    final chunked = size > _streamingThresholdBytes;
-    String mediaId;
-    String keyBase64;
-    String? nonceBase64;
-    String? macBase64;
-
-    await ChatStore.updateProcessingStep(
-      widget.peerLogin,
-      messageId,
-      tr('chat.encrypting'),
+  ) {
+    return media_upload.uploadAndDescribeMedia(
+      peerLogin: widget.peerLogin,
+      item: item,
+      messageId: messageId,
+      size: size,
+      fileName: fileName,
+      token: token,
+      peerAccountIdForUpload: peerAccountIdForUpload,
     );
-
-    if (chunked) {
-      final tempDir = await getTemporaryDirectory();
-      final encTempFile = File('${tempDir.path}/enc_$messageId.bin');
-      final inputPath = item.file.path;
-      final outputPath = encTempFile.path;
-      final keyPath = '${tempDir.path}/key_$messageId.bin';
-      await compute(encryptFileIsolateEntry, {
-        'input': inputPath,
-        'output': outputPath,
-        'key': keyPath,
-      });
-      final keyBytes = await File(keyPath).readAsBytes();
-      try {
-        await File(keyPath).delete();
-      } catch (_) {}
-
-      await ChatStore.updateProcessingStep(
-        widget.peerLogin,
-        messageId,
-        tr('chat.uploading'),
-      );
-      mediaId = await _apiClient.uploadEncryptedMediaFileWithProgress(
-        token,
-        encTempFile.path,
-        peerAccountIdForUpload,
-        onProgress: (_) {},
-      );
-      try {
-        await encTempFile.delete();
-      } catch (_) {}
-      await MediaCache.writeFromFile(mediaId, item.file);
-      keyBase64 = base64Encode(keyBytes);
-    } else {
-      final bytes = await item.file.readAsBytes();
-      final encrypted = await encryptFileBytes(bytes);
-      await ChatStore.updateProcessingStep(
-        widget.peerLogin,
-        messageId,
-        tr('chat.uploading'),
-      );
-      mediaId = await _apiClient.uploadEncryptedMediaWithProgress(
-        token,
-        encrypted.ciphertext,
-        peerAccountIdForUpload,
-        onProgress: (_) {},
-      );
-      await MediaCache.write(mediaId, bytes);
-      keyBase64 = base64Encode(encrypted.key);
-      nonceBase64 = base64Encode(encrypted.nonce);
-      macBase64 = base64Encode(encrypted.mac);
-    }
-
-    await ChatStore.updateMediaInfo(
-      widget.peerLogin,
-      messageId,
-      mediaId: mediaId,
-      keyBase64: keyBase64,
-      nonceBase64: nonceBase64,
-      macBase64: macBase64,
-    );
-
-    return {
-      'message_id': messageId,
-      'media_id': mediaId,
-      'key': keyBase64,
-      'nonce': nonceBase64,
-      'mac': macBase64,
-      'file_name': fileName,
-      'is_file': item.isFile || item.isVideo,
-      'file_size': size,
-      'chunked': chunked,
-      'spoiler': item.isSpoiler,
-    };
   }
 
   Future<void> _processQueuedMedia(
@@ -2786,7 +2742,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     try {
       await SendQueueProcessor.instance.runHeavy(
-        () => SendLock.run(widget.peerLogin, () async {
+        () => SendLock.run(_currentPeerDeviceId, () async {
           final token = await Session.getToken();
           final myDeviceId = await KeyStore.getStoredDeviceId();
           final state = await _ensureSessionForSending();
@@ -2864,6 +2820,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         messageId,
         'failed',
       );
+      // Файл НЕ удаляем — нужен PendingSendRetrier для повторной загрузки
+      // (см. тот же приём в _sendRecordedMessage выше).
+      await PendingSendStore.add({
+        'id': messageId,
+        'kind': 'media',
+        'peer_login': widget.peerLogin,
+        'peer_device_id': _currentPeerDeviceId,
+        'peer_account_id': widget.peerAccountId,
+        'file_path': item.file.path,
+        'size': size,
+        'file_name': fileName,
+        'is_file': item.isFile,
+        'is_video': item.isVideo,
+        'is_spoiler': item.isSpoiler,
+      });
     } finally {
       await _loadHistory();
     }
@@ -2933,7 +2904,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     try {
       await SendQueueProcessor.instance.runHeavy(
-        () => SendLock.run(widget.peerLogin, () async {
+        () => SendLock.run(_currentPeerDeviceId, () async {
           final token = await Session.getToken();
           final myDeviceId = await KeyStore.getStoredDeviceId();
           final state = await _ensureSessionForSending();
@@ -3597,43 +3568,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  /// Фото со спойлером (см. StoredMessage.isSpoiler) до раскрытия — то же
-  /// изображение, но заблюренное + затемнённое + иконка-подсказка поверх,
-  /// тем же эффектом, что у Телеги. Первый тап только раскрывает (см.
-  /// _revealedSpoilerIds), открыть просмотрщик можно только СЛЕДУЮЩИМ,
-  /// уже по раскрытому фото — как и в Телеге.
+  /// Фото со спойлером (см. StoredMessage.isSpoiler) до раскрытия — блюр +
+  /// анимированная мерцающая пыль поверх (см. SpoilerSparkleOverlay), тем
+  /// же эффектом, что у Телеги: без иконки и подписи поверх самого фото —
+  /// у Телеги на фото ничего не написано, есть только обычная подпись
+  /// сообщения под пузырём, если она задана. Первый тап только раскрывает
+  /// (см. _revealedSpoilerIds), открыть просмотрщик можно только
+  /// СЛЕДУЮЩИМ, уже по раскрытому фото — как и в Телеге.
   Widget _spoilerOverlayImage(Uint8List bytes, double side) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        ImageFiltered(
-          imageFilter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-          child: Image.memory(
-            bytes,
-            fit: BoxFit.cover,
-            cacheWidth: (side * 2).round(),
-          ),
+    return SpoilerSparkleOverlay(
+      blurredChild: ImageFiltered(
+        imageFilter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          cacheWidth: (side * 2).round(),
         ),
-        Container(color: Colors.black.withValues(alpha: 0.28)),
-        Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.visibility_off_outlined,
-                color: Colors.white,
-                size: 30,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                tr('media.spoilerHint'),
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white, fontSize: 11),
-              ),
-            ],
-          ),
-        ),
-      ],
+      ),
     );
   }
 

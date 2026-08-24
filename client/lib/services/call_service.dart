@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:call_ring_plugin/call_ring_plugin.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -6,8 +7,12 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:proximity_sensor/proximity_sensor.dart';
 import 'package:uuid/uuid.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import '../crypto/double_ratchet.dart';
 import '../crypto/key_store.dart';
+import '../crypto/message_cipher.dart';
 import '../crypto/message_envelope.dart';
+import '../crypto/session_store.dart';
+import '../crypto/x3dh.dart';
 import '../l10n/app_strings.dart';
 import 'websocket_service.dart';
 import '../api/api_client.dart';
@@ -15,6 +20,8 @@ import '../session.dart';
 import '../navigator_key.dart';
 import '../screens/call_screen.dart';
 import '../storage/chat_store.dart';
+import '../storage/peer_account_store.dart';
+import '../storage/peer_identity_store.dart';
 import 'debug_log.dart';
 import 'peer_messenger.dart';
 import 'peer_profile_cache.dart';
@@ -506,14 +513,149 @@ class CallService {
     }
   }
 
+  /// SDP/ICE-кандидаты и остальное содержимое сигналов звонка шифруются
+  /// той же Double Ratchet сессией, что и обычные сообщения этому
+  /// устройству (см. _encryptCallSignal/_decryptCallSignal ниже) — раньше
+  /// call_* кадры уходили ОТКРЫТЫМ текстом (см. websocket.go: сервер прямо
+  /// разбирает их как plaintext JSON, чтобы достать call_id для своей
+  /// офлайн-очереди звонков), и это был единственный канал в приложении,
+  /// не покрытый E2EE. call_id и sender_device_id ОСТАЮТСЯ снаружи, в
+  /// открытом виде — они и раньше были нужны серверу для маршрутизации
+  /// (см. PendingCallRegistry на сервере) и сами по себе не раскрывают
+  /// содержимое разговора (та же модель, что и sender/recipient device_id
+  /// у обычных сообщений).
   Future<void> _send(String type, Map<String, dynamic> payload) async {
     if (_peerDeviceId == null) return;
-    final myDeviceId = await KeyStore.getStoredDeviceId();
-    WebSocketService.instance.sendCallSignal(_peerDeviceId!, type, {
-      ...payload,
-      'sender_device_id': myDeviceId,
-      'call_id': _callId,
-    });
+    await _sendTo(_peerDeviceId!, type, payload, callId: _callId);
+  }
+
+  /// То же самое, что и _send, но для ЛЮБОГО устройства, а не только
+  /// текущего собеседника по звонку — нужен для авто-ответа "занято"
+  /// (case 'call_offer' ниже): это единственный сигнал звонка, который
+  /// отправляется НЕ в рамках собственного _peerDeviceId/_callId этого
+  /// экземпляра CallService (мы разговариваем с ОДНИМ человеком, а
+  /// "занято" шлём ДРУГОМУ, только что позвонившему).
+  Future<void> _sendTo(
+    String toDeviceId,
+    String type,
+    Map<String, dynamic> payload, {
+    String? callId,
+  }) async {
+    final envelope = await SendLock.run(
+      toDeviceId,
+      () => _encryptCallSignal(toDeviceId, {...payload, 'type': type}),
+    );
+    if (envelope == null) {
+      DebugLog.log(
+        'CallService _sendTo: encrypt-FAILED type=$type to=$toDeviceId, dropped',
+      );
+      return;
+    }
+    envelope['call_id'] = callId;
+    WebSocketService.instance.sendCallSignal(toDeviceId, type, envelope);
+  }
+
+  /// Шифрует payload для одного конкретного сигнала звонка — та же схема,
+  /// что и в services/peer_messenger.dart (X3DH при первом обращении к
+  /// этому устройству + шаг Double Ratchet), но БЕЗ SendQueueProcessor:
+  /// звонки намеренно не проходят через дисковую очередь офлайн-доставки
+  /// (см. исходный комментарий у sendCallSignal в websocket_service.dart)
+  /// — устаревший ICE-кандидат, переотправленный после того, как звонок
+  /// уже закончился, был бы просто мусором. null — если зашифровать не
+  /// удалось (нет сети для X3DH-бандла и т.п.); вызывающий код просто
+  /// теряет этот конкретный кадр, как терял бы и раньше при недоступном
+  /// соединении.
+  Future<Map<String, dynamic>?> _encryptCallSignal(
+    String peerDeviceId,
+    Map<String, dynamic> innerPayload,
+  ) async {
+    try {
+      final myDeviceId = await KeyStore.getStoredDeviceId();
+      var state = await SessionStore.getState(peerDeviceId);
+      Map<String, dynamic>? initHeader;
+
+      if (state == null) {
+        final token = await Session.getToken();
+        if (token == null || myDeviceId == null) return null;
+        final bundle = await ApiClient().getPrekeyBundle(token, peerDeviceId);
+        await PeerAccountStore.save(
+          peerDeviceId,
+          bundle['account_id'] as String,
+        );
+        await PeerIdentityStore.save(
+          peerDeviceId,
+          bundle['identity_dh_pubkey'] as String,
+        );
+        final outgoing = await establishOutgoingRoot(
+          bundle: bundle,
+          myDeviceId: myDeviceId,
+        );
+        state = await RatchetState.initAsSender(
+          rootKey: outgoing.rootKey,
+          ephemeralKeyPair: outgoing.ephemeralKeyPair,
+        );
+        initHeader = outgoing.initHeader;
+      }
+
+      final next = await state.nextSendingKey();
+      await SessionStore.saveState(peerDeviceId, state);
+      final encrypted = await encryptMessage(
+        next.messageKey,
+        jsonEncode(innerPayload),
+      );
+      return {
+        ...encrypted,
+        ...next.header,
+        'sender_device_id': myDeviceId,
+        if (initHeader != null) ...initHeader,
+      };
+    } catch (e) {
+      DebugLog.log('CallService encrypt-FAILED to=$peerDeviceId error=$e');
+      return null;
+    }
+  }
+
+  /// Обратная сторона _encryptCallSignal. В отличие от MessageRouter (см.
+  /// _onDecryptFailure там) НЕ заводит счётчик неудач/авто-сброс сессии на
+  /// сбойной расшифровке — сигналы звонка терпимы к потере одного кадра
+  /// (WebRTC и так рассчитан на потерю отдельных ICE-кандидатов), а если
+  /// сессия с этим устройством реально рассинхронизировалась — это та же
+  /// самая сессия, что и у обычных сообщений, и её самолечение (3 подряд
+  /// неудачи → session_reset) уже покрыто message_router.dart, отдельно
+  /// дублировать эту логику здесь незачем.
+  Future<Map<String, dynamic>?> _decryptCallSignal(
+    String senderDeviceId,
+    Map<String, dynamic> envelope,
+  ) async {
+    try {
+      var state = await SessionStore.getState(senderDeviceId);
+      if (state == null) {
+        final rootKey = await establishIncomingSessionRaw(envelope);
+        if (rootKey == null) return null;
+        final identityDh = envelope['sender_identity_dh_pubkey'] as String?;
+        if (identityDh != null) {
+          await PeerIdentityStore.save(senderDeviceId, identityDh);
+        }
+        state = await RatchetState.initAsReceiver(
+          rootKey: rootKey,
+          remoteEphemeralPubkey: base64DecodeSafe(
+            envelope['ephemeral_pubkey'] as String,
+          ),
+        );
+      }
+      final messageKey = await state.nextReceivingKey(envelope);
+      final rawInner = await decryptMessage(messageKey, envelope);
+      await SessionStore.saveState(senderDeviceId, state);
+      return jsonDecode(rawInner) as Map<String, dynamic>;
+    } on AlreadyProcessedException catch (e) {
+      DebugLog.log(
+        'CallService duplicate signal from=$senderDeviceId $e — ignored',
+      );
+      return null;
+    } catch (e) {
+      DebugLog.log('CallService decrypt-FAILED from=$senderDeviceId error=$e');
+      return null;
+    }
   }
 
   Future<void> _createPeerConnection() async {
@@ -833,14 +975,75 @@ class CallService {
     await _updateProximityScreenOff();
   }
 
-  Future<void> _handleSignal(Map<String, dynamic> payload) async {
-    final type = payload['type'] as String?;
-    final senderDeviceId = payload['sender_device_id'] as String?;
+  /// Кадры, которые должны относиться к УЖЕ идущему у нас звонку —
+  /// sender_device_id внутри конверта это то, что клиент-отправитель сам о
+  /// себе заявил (сервер маршрутизирует по авторизованному device_id из
+  /// самого WS-соединения, но пересылает этот payload как есть, значение
+  /// внутри него не подменяет — см. websocket.go, релей строки 689/632).
+  /// Значит любой авторизованный пользователь технически может прислать
+  /// call_ice/call_answer/etc. НАПРЯМУЮ на чей угодно device_id, подделав
+  /// в payload чужой sender_device_id, выдавая себя за текущего собеседника
+  /// жертвы. Сверяем с тем, кого мы реально ждём, вместо того чтобы
+  /// доверять полю как есть. call_offer/call_unavailable сюда не входят —
+  /// первый сам решает, новый это звонок или чужой, второй вообще не несёт
+  /// sender_device_id (синтезируется сервером).
+  static const _requiresActivePeerMatch = {
+    'call_answer',
+    'call_ice',
+    'call_video_state',
+    'call_reject',
+    'call_busy',
+    'call_cancel',
+    'call_end',
+  };
+
+  Future<void> _handleSignal(Map<String, dynamic> envelope) async {
+    final type = envelope['type'] as String?;
+
+    // Единственный кадр без собственного конверта вообще (синтезируется
+    // сервером, см. respondCallUnavailable в websocket.go) — нечего
+    // расшифровывать, обрабатываем сразу.
+    if (type == 'call_unavailable') {
+      await _resetLocal(peerWasUnavailable: true);
+      return;
+    }
+
+    final senderDeviceId = envelope['sender_device_id'] as String?;
+    if (senderDeviceId == null) return;
+
+    if (_requiresActivePeerMatch.contains(type) &&
+        senderDeviceId != _peerDeviceId) {
+      DebugLog.log(
+        'CallService IGNORING $type from=$senderDeviceId — does not match active peer=$_peerDeviceId',
+      );
+      return;
+    }
+
+    final payload = await _decryptCallSignal(senderDeviceId, envelope);
+    if (payload == null) {
+      DebugLog.log(
+        'CallService _handleSignal: decrypt returned null for type=$type from=$senderDeviceId, dropping',
+      );
+      return;
+    }
+    // call_id остаётся снаружи конверта в открытом виде (см. _send) — сюда
+    // его переносим, чтобы остальной код ниже читал его из одного места.
+    payload['call_id'] = envelope['call_id'];
 
     switch (type) {
       case 'call_offer':
-        if (senderDeviceId == null) return;
         final isRenegotiation = payload['renegotiation'] == true;
+
+        // renegotiation обязан относиться к УЖЕ идущему звонку с этим же
+        // собеседником — иначе кто-то мог бы прислать "переsогласование"
+        // якобы от другого своего (валидного) сеанса, пока мы разговариваем
+        // с кем-то ещё, и подменить SDP в живом соединении.
+        if (isRenegotiation && senderDeviceId != _peerDeviceId) {
+          DebugLog.log(
+            'CallService IGNORING renegotiation from=$senderDeviceId — does not match active peer=$_peerDeviceId',
+          );
+          return;
+        }
 
         if (isRenegotiation && _peerConnection != null) {
           // Повторное согласование внутри уже идущего звонка (например,
@@ -853,6 +1056,22 @@ class CallService {
           final answer = await _peerConnection!.createAnswer();
           await _peerConnection!.setLocalDescription(answer);
           await _send('call_answer', {'sdp': answer.sdp});
+          return;
+        }
+
+        // Новый (не renegotiation) звонок, пока мы уже разговариваем, сами
+        // кому-то дозваниваемся или отвечаем на другой входящий — авто-отказ
+        // "занято", без показа экрана входящего вызова и без вмешательства в
+        // уже идущий у нас разговор. Симметрично _endWithReason на стороне
+        // ЭТОГО нового звонящего — он увидит "абонент разговаривает" (см.
+        // тот же switch, case 'call_busy').
+        if (_state != CallState.idle) {
+          await _sendTo(
+            senderDeviceId,
+            'call_busy',
+            {},
+            callId: payload['call_id'] as String?,
+          );
           return;
         }
 
@@ -931,20 +1150,38 @@ class CallService {
         }
         break;
 
-      case 'call_unavailable':
-        // Сервер прямо подтвердил: собеседник не в сети, call_offer до
-        // него не дошёл вообще. Единственный случай, когда нужна
-        // подстраховка отдельным сообщением — во всех остальных случаях
-        // ниже собеседник был на связи и уже сам записал звонок локально.
-        await _resetLocal(peerWasUnavailable: true);
+      case 'call_reject':
+        // Собеседник был свободен (idle) и сам нажал "отклонить" — см.
+        // declineCall(). Отличаем от call_busy ниже: разные причины,
+        // разный текст для звонящего.
+        await _endWithReason(tr('call.declined'));
         break;
 
-      case 'call_reject':
       case 'call_busy':
+        // Собеседник уже разговаривает/дозванивается/отвечает на другой
+        // звонок — авто-отказ (см. case 'call_offer' выше), не ручное
+        // действие пользователя.
+        await _endWithReason(tr('call.busy'));
+        break;
+
       case 'call_cancel':
       case 'call_end':
         await _resetLocal();
         break;
     }
+  }
+
+  /// Завершает звонок с коротким объяснением ПРИЧИНЫ для того, кто звонил
+  /// (call_screen.dart показывает его как статус-текст, пока экран
+  /// разговора ещё на виду) — без этого звонок просто мгновенно исчезал
+  /// (см. _resetLocal -> CallState.idle -> CallScreen сразу же
+  /// popUntil(isFirst)), и звонящий не понимал, что вообще произошло.
+  /// Гудок дозвона останавливаем сразу, а сам переход в idle (и закрытие
+  /// экрана) задерживаем — ровно на то время, чтобы текст успели прочитать.
+  Future<void> _endWithReason(String reason) async {
+    SoundService.stopRingback();
+    _setStatus(reason);
+    await Future.delayed(const Duration(milliseconds: 1800));
+    await _resetLocal();
   }
 }
