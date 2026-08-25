@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"server/internal/db"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -81,6 +82,14 @@ func NewGetMediaHandler(queries *db.Queries, minioClient *minio.Client) func(htt
 
 		//заранее закываем соединение с MinIO после того, как функция завершит свою работу
 		defer object.Close()
+
+		//явно указываем размер тела ответа — без этого net/http сам переключается
+		//на chunked-энкодинг (Content-Length неизвестен), и клиент (dio,
+		//onReceiveProgress) физически не может посчитать процент скачивания —
+		//total всегда приходит -1. mediaFile.SizeBytes — тот же самый размер,
+		//что был передан в PutObject при загрузке (см. upload_media.go), так что
+		//он точно совпадает с реальным числом байт, которое отдаст io.Copy.
+		w.Header().Set("Content-Length", strconv.FormatInt(mediaFile.SizeBytes, 10))
 
 		//отправляем файл клиенту
 		io.Copy(w, object)
