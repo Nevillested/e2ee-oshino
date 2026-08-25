@@ -101,6 +101,14 @@ class AppStrings {
       AppLocale.ru: 'Согласование с собеседником…',
       AppLocale.en: 'Negotiating with peer…',
     },
+    'chat.retryFailedPermanently': {
+      AppLocale.ru: 'Не удалось повторить отправку: файл больше недоступен',
+      AppLocale.en: 'Could not retry sending: file is no longer available',
+    },
+    'chat.retryFailedTemporary': {
+      AppLocale.ru: 'Не удалось повторить отправку, попробуйте ещё раз',
+      AppLocale.en: 'Could not retry sending, please try again',
+    },
     'chat.openFileFailed': {
       AppLocale.ru: 'Не удалось открыть файл',
       AppLocale.en: 'Failed to open file',

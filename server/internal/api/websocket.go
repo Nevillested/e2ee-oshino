@@ -204,22 +204,12 @@ func notifyPresenceSubscribers(ctx context.Context, registry *ConnectionRegistry
 	}
 }
 
-func queuePendingMessage(ctx context.Context, queries *db.Queries, toDeviceId string, senderDeviceId string, message []byte, silent bool) {
-	var toDeviceUUID pgtype.UUID
-	if err := toDeviceUUID.Scan(toDeviceId); err != nil {
-		log.Printf("Ошибка конвертации Device ID при постановке в очередь: %v", err)
-		return
-	}
-
-	var params db.SavePendingMessageParams
-	params.ToDeviceID = toDeviceUUID
-	params.Ciphertext = string(message)
-
-	if err := queries.SavePendingMessage(ctx, params); err != nil {
-		log.Printf("Ошибка добавления сообщения в очередь: %v", err)
-		return
-	}
-
+// wakeWithPush — будит получателя push-ом, когда сообщение осталось в
+// durable-очереди (см. SavePendingMessage/tryLiveDeliverOnce) и не было
+// подтверждено живой доставкой прямо сейчас. Сам push не содержит текста
+// сообщения, только сигнал "подключись к серверу" — сообщение уже лежит в
+// pending_messages и придёт по обычному зашифрованному каналу.
+func wakeWithPush(ctx context.Context, queries *db.Queries, toDeviceUUID pgtype.UUID, senderDeviceId string, silent bool) {
 	if silent {
 		return
 	}
@@ -231,15 +221,214 @@ func queuePendingMessage(ctx context.Context, queries *db.Queries, toDeviceId st
 		return
 	}
 
-	// Будим получателя push-ом — сам он не содержит текста сообщения,
-	// только сигнал "подключись к серверу", сообщение уже лежит в
-	// pending_messages и придёт по обычному зашифрованному каналу.
 	if token, err := queries.GetPushTokenByDevice(ctx, toDeviceUUID); err == nil {
 		push.SendDataPush(ctx, token.FcmToken, push.TypeMessage, nil)
 	}
 }
 
+// tryLiveDeliverOnce — одна попытка доставить УЖЕ ГАРАНТИРОВАННО
+// сохранённое (см. SavePendingMessage в readLoop выше) сообщение живьём
+// получателю, если он прямо сейчас числится online. Возвращает true ТОЛЬКО
+// при настоящем подтверждении (ack) от получателя.
+//
+// Важно: таймаут ожидания ack — это НЕ признак мёртвого соединения и
+// никогда не удаляет получателя из реестра "онлайн" (см. разбор
+// пользовательского теста — раньше именно эта путаница выбивала получателя
+// из реестра на весь остаток сессии из-за одного медленного ack, и сервер
+// переставал вообще пытаться живую доставку остальным сообщениям того же
+// всплеска). Единственная настоящая причина считать соединение мёртвым
+// здесь — ошибка самой записи в сокет.
+func tryLiveDeliverOnce(ctx context.Context, registry *ConnectionRegistry, acks *AckRegistry, toDeviceId string, wireMsgType websocket.MessageType, relay WSMsgRelay) bool {
+	conn, online := registry.Get(toDeviceId)
+	if !online {
+		return false
+	}
+
+	relayBytes, err := json.Marshal(relay)
+	if err != nil {
+		return false
+	}
+
+	ackChan := acks.Wait(relay.DeliveryId)
+	if writeErr := conn.Write(ctx, wireMsgType, relayBytes); writeErr != nil {
+		log.Printf("получатель считался онлайн, но запись не удалась (зомби-соединение): %v", writeErr)
+		acks.Cancel(relay.DeliveryId)
+		registry.RemoveIfCurrent(toDeviceId, conn)
+		return false
+	}
+
+	select {
+	case <-ackChan:
+		return true
+	case <-time.After(5 * time.Second):
+		acks.Cancel(relay.DeliveryId)
+		return false
+	}
+}
+
+// flushPendingMessages — доставляет ВСЕ отложенные сообщения устройству
+// deviceID по уже открытому соединению conn. Вызывается в двух местах:
+// сразу при подключении (см. NewWebSocketHandler) и периодически фоновым
+// дожимом для устройств, которые уже online (см. startPendingMessageSweeper)
+// — тот же приём, что и у остальных мессенджеров: очередь разгребается не
+// только в момент подключения, а при любой возможности, пока получатель
+// online, а не ждёт обязательно нового коннекта.
+//
+// Каждое сообщение уходит с собственным DeliveryId и удаляется из очереди
+// ТОЛЬКО после ack от клиента — сбой между "сервер записал в сокет" и
+// "клиент успел расшифровать и сохранить" (обрыв сети сразу после
+// реконнекта, ОС прибила процесс на середине и т.п.) не должен означать
+// безвозвратную потерю сообщения. Неподтверждённые просто остаются в
+// очереди до следующей попытки (следующее подключение или следующий тик
+// дожима) — безопасно: клиент и так умеет игнорировать повторно пришедшее
+// сообщение по message_id.
+func flushPendingMessages(ctx context.Context, queries *db.Queries, acks *AckRegistry, conn *websocket.Conn, deviceUUID pgtype.UUID) {
+	pendingMessages, err := queries.GetPendingMessages(ctx, deviceUUID)
+	if err != nil {
+		log.Printf("flushPendingMessages: ошибка получения сообщений из бд: %v", err)
+		return
+	}
+
+	for _, msg := range pendingMessages {
+		var parsed WSMsgFrom
+		if err := json.Unmarshal([]byte(msg.Ciphertext), &parsed); err != nil {
+			log.Printf("flushPendingMessages: ошибка разбора отложенного сообщения: %v", err)
+			continue
+		}
+
+		msgID := msg.ID
+
+		// Служебный control-сигнал (profile_updated/avatar и т.п., см.
+		// notifyContactsProfileField/account_profile.go) — это НЕ relay
+		// E2EE-конверта от другого устройства (у него нет осмысленного
+		// ToDeviceId), а уже готовый JSON со своими произвольными полями
+		// (AccountId/Field и т.п.). Шлём как есть, без ack-трекинга — это
+		// лёгкий сигнал "перепроверь кэш", а не пользовательские данные,
+		// потерять один при обрыве сети не критично.
+		if parsed.ToDeviceId == "" {
+			writeErr := conn.Write(ctx, websocket.MessageText, []byte(msg.Ciphertext))
+			if writeErr != nil {
+				log.Printf("flushPendingMessages: ошибка отправки отложенного control-сигнала: %v", writeErr)
+				continue
+			}
+			if err := queries.DeletePendingMessage(ctx, msgID); err != nil {
+				log.Printf("flushPendingMessages: ошибка удаления доставленного control-сигнала: %v", err)
+			}
+			continue
+		}
+
+		deliveryID := generateDeliveryID()
+		relay := WSMsgRelay{
+			ToDeviceId: parsed.ToDeviceId,
+			Ciphertext: parsed.Ciphertext,
+			Type:       parsed.Type,
+			DeliveryId: deliveryID,
+		}
+		relayBytes, _ := json.Marshal(relay)
+
+		ackChan := acks.Wait(deliveryID)
+		writeErr := conn.Write(ctx, websocket.MessageText, relayBytes)
+		if writeErr != nil {
+			log.Printf("flushPendingMessages: ошибка отправки отложенного сообщения: %v", writeErr)
+			acks.Cancel(deliveryID)
+			continue
+		}
+
+		// Само чтение ack идёт из readLoop того соединения (он либо уже
+		// запущен — периодический дожим, либо стартует сразу после этого
+		// цикла — подключение с нуля) — ждать здесь синхронно нельзя,
+		// иначе можно заблокировать вход в readLoop. Поэтому ждём в фоне.
+		go func(msgID pgtype.UUID) {
+			select {
+			case <-ackChan:
+				if err := queries.DeletePendingMessage(context.Background(), msgID); err != nil {
+					log.Printf("flushPendingMessages: ошибка удаления доставленного отложенного сообщения: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				acks.Cancel(deliveryID)
+			}
+		}(msgID)
+	}
+}
+
+// Ping-интервал сервера — независимая от клиента проверка "жив ли сокет
+// по-настоящему", а не только по факту записи в него (см.
+// tryLiveDeliverOnce — там таймаут ack больше НЕ считается признаком
+// мёртвого соединения). У клиента уже есть свой pingInterval=20с (см.
+// websocket_service.dart), но полагаться только на клиентскую сторону
+// нельзя: именно сервер должен сам обнаруживать зомби-соединения
+// получателей, которым он пытается писать, а не только своих отправителей.
+const wsPingInterval = 30 * time.Second
+const wsPingTimeout = 10 * time.Second
+
+// startHeartbeat — фоновый ping/pong для ОДНОГО соединения, пока оно живо
+// (ctx — r.Context() вызывающего обработчика, отменяется, когда тот
+// возвращается). coder/websocket сам закрывает соединение при неудачном
+// Ping (см. его doc-комментарий) — это в точности то же самое, что и любой
+// другой обрыв: заблокированный в readLoop Read() вернёт ошибку, и весь
+// обычный путь очистки реестра (см. defer в NewWebSocketHandler) отработает
+// как всегда, отдельно закрывать/чистить реестр отсюда не нужно.
+func startHeartbeat(ctx context.Context, ws_object *websocket.Conn, deviceID string) {
+	go func() {
+		ticker := time.NewTicker(wsPingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				pingCtx, cancel := context.WithTimeout(ctx, wsPingTimeout)
+				err := ws_object.Ping(pingCtx)
+				cancel()
+				if err != nil {
+					log.Printf("heartbeat: устройство %s не ответило на ping вовремя, соединение закрыто как зомби: %v", deviceID, err)
+					return
+				}
+			}
+		}
+	}()
+}
+
+// Как часто фоновый дожим проверяет "застрявшие" отложенные сообщения у
+// уже online устройств — раз в 20 секунд, компромисс между "не заставлять
+// сообщение ждать нового подключения слишком долго" и "не гонять лишние
+// запросы в базу по всем подключённым слишком часто".
+const pendingSweepInterval = 20 * time.Second
+
+// startPendingMessageSweeper — запускается ОДИН раз на весь процесс (см.
+// вызов в NewWebSocketHandler — сам NewWebSocketHandler тоже вызывается
+// один раз при старте, см. main.go). Реализует ту же идею, что и в
+// проверенных мессенджерах: доставка отложенных сообщений не привязана
+// жёстко к моменту подключения — сервер сам, без участия клиента,
+// периодически пытается дожать всё, что скопилось для уже online
+// устройств (например, сообщение, чей единственный ack не успел прийти за
+// 5с при первой попытке — см. tryLiveDeliverOnce).
+func startPendingMessageSweeper(registry *ConnectionRegistry, queries *db.Queries, acks *AckRegistry) {
+	go func() {
+		ticker := time.NewTicker(pendingSweepInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			for _, deviceID := range registry.Snapshot() {
+				conn, online := registry.Get(deviceID)
+				if !online {
+					continue
+				}
+				var deviceUUID pgtype.UUID
+				if err := deviceUUID.Scan(deviceID); err != nil {
+					continue
+				}
+				func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					flushPendingMessages(ctx, queries, acks, conn, deviceUUID)
+				}()
+			}
+		}
+	}()
+}
+
 func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks *AckRegistry, pendingCalls *PendingCallRegistry) func(http.ResponseWriter, *http.Request) {
+	startPendingMessageSweeper(registry, queries, acks)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 
@@ -263,6 +452,10 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 		// подписан на наш статус (например, у него открыт чат с нами и он
 		// был запущен раньше нас).
 		notifyPresenceSubscribers(r.Context(), registry, DeviceID, true, 0)
+		// Собственная (не зависящая от клиентского pingInterval) проверка
+		// живости — см. startHeartbeat. Останавливается сама, когда этот
+		// обработчик вернётся (r.Context() отменяется вместе с ним).
+		startHeartbeat(r.Context(), ws_object, DeviceID)
 		defer func() {
 			// RemoveIfCurrent возвращает false, если это соединение уже не
 			// актуально (устройство успело переподключиться по-новой) —
@@ -352,90 +545,10 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 			}
 		}
 
-		var PendingMessages []db.PendingMessage
-		PendingMessages, SqlErr := queries.GetPendingMessages(r.Context(), ToDeviceIDUUID)
-		if SqlErr != nil {
-			log.Printf("ошибка получения сообщений из бд: %v", SqlErr)
-		} else {
-			// Каждое отложенное сообщение уходит с собственным DeliveryId и
-			// удаляется из очереди ТОЛЬКО после ack от клиента — раньше вся
-			// пачка стиралась из pending_messages сразу после записи в сокет,
-			// не дожидаясь вообще никакого подтверждения (в отличие от живой
-			// доставки чуть ниже, у которой ack уже был). Любой сбой между
-			// "сервер записал в сокет" и "клиент успел расшифровать и
-			// сохранить" (обрыв сети сразу после реконнекта, ОС прибила
-			// процесс на середине и т.п.) означал безвозвратную потерю
-			// сообщения. Теперь неподтверждённые просто остаются в очереди
-			// до следующего подключения — безопасно: клиент и так должен
-			// уметь игнорировать повторно пришедшее сообщение по message_id.
-			for _, msg := range PendingMessages {
-				var parsed WSMsgFrom
-				if err := json.Unmarshal([]byte(msg.Ciphertext), &parsed); err != nil {
-					log.Printf("ошибка разбора отложенного сообщения: %v", err)
-					continue
-				}
-
-				msgID := msg.ID
-
-				// Служебный control-сигнал (profile_updated/avatar и т.п.,
-				// см. notifyContactsProfileField/account_profile.go) — это
-				// НЕ relay E2EE-конверта от другого устройства (у него нет
-				// осмысленного ToDeviceId), а уже готовый JSON со своими
-				// произвольными полями (AccountId/Field и т.п.). Раньше
-				// такой сигнал, попавший в офлайн-очередь, тоже прогонялся
-				// через WSMsgFrom/WSMsgRelay — те заточены именно под
-				// relay и молча теряли всё, кроме Type, при пересборке:
-				// получатель видел profile_updated без AccountId/Field и
-				// тихо его игнорировал (баг — контакт не видел новых
-				// данных профиля, пока не переподключался ПОСЛЕ следующего
-				// изменения). Шлём как есть, без ack-трекинга — это лёгкий
-				// сигнал "перепроверь кэш", а не пользовательские данные,
-				// потерять один при обрыве сети не критично.
-				if parsed.ToDeviceId == "" {
-					writeErr := ws_object.Write(r.Context(), websocket.MessageText, []byte(msg.Ciphertext))
-					if writeErr != nil {
-						log.Printf("ошибка отправки отложенного control-сигнала: %v", writeErr)
-						continue
-					}
-					if err := queries.DeletePendingMessage(r.Context(), msgID); err != nil {
-						log.Printf("ошибка удаления доставленного control-сигнала: %v", err)
-					}
-					continue
-				}
-
-				deliveryID := generateDeliveryID()
-				relay := WSMsgRelay{
-					ToDeviceId: parsed.ToDeviceId,
-					Ciphertext: parsed.Ciphertext,
-					Type:       parsed.Type,
-					DeliveryId: deliveryID,
-				}
-				relayBytes, _ := json.Marshal(relay)
-
-				ackChan := acks.Wait(deliveryID)
-				writeErr := ws_object.Write(r.Context(), websocket.MessageText, relayBytes)
-				if writeErr != nil {
-					log.Printf("ошибка отправки отложенного сообщения: %v", writeErr)
-					acks.Cancel(deliveryID)
-					continue
-				}
-
-				// Само чтение ack идёт из readLoop ниже (он стартует сразу
-				// после этого цикла) — ждать здесь синхронно нельзя, до
-				// readLoop сокет никто не читает, ack физически не может
-				// прийти. Поэтому ждём в фоне, не блокируя вход в readLoop.
-				go func() {
-					select {
-					case <-ackChan:
-						if err := queries.DeletePendingMessage(context.Background(), msgID); err != nil {
-							log.Printf("ошибка удаления доставленного отложенного сообщения: %v", err)
-						}
-					case <-time.After(5 * time.Second):
-						acks.Cancel(deliveryID)
-					}
-				}()
-			}
-		}
+		// Разгребаем всё, что накопилось в durable-очереди, пока устройство
+		// было офлайн — та же функция потом периодически вызывается и для
+		// уже online устройств (см. startPendingMessageSweeper).
+		flushPendingMessages(r.Context(), queries, acks, ws_object, ToDeviceIDUUID)
 
 	readLoop:
 		for {
@@ -510,10 +623,13 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 
 			if MessageType == "message" {
 
-				var toDeviceUUIDForBlockCheck pgtype.UUID
-				ScanErr := toDeviceUUIDForBlockCheck.Scan(NewWSMsgFrom.ToDeviceId)
-				if ScanErr == nil &&
-					isBlockedEitherWay(r.Context(), queries, toDeviceUUIDForBlockCheck, DeviceID) {
+				var toDeviceUUID pgtype.UUID
+				if err := toDeviceUUID.Scan(NewWSMsgFrom.ToDeviceId); err != nil {
+					log.Printf("ошибка конвертации Device ID получателя: %v", err)
+					continue
+				}
+
+				if isBlockedEitherWay(r.Context(), queries, toDeviceUUID, DeviceID) {
 					// Заблокировано в любую сторону — ни доставлять, ни ставить в
 					// очередь: обычный клиент и так не даёт набрать сообщение
 					// (см. композер-заглушку в chat_screen.dart), это подстраховка
@@ -527,66 +643,72 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 				// профиля (уровень "только контакты") и прицельной доставки
 				// profile_updated. ON CONFLICT DO NOTHING — дёшево звать на
 				// каждое сообщение, не только на первое.
-				if ScanErr == nil {
-					if recipientInfo, err := queries.GetLoginByDeviceID(r.Context(), toDeviceUUIDForBlockCheck); err == nil {
-						var senderDeviceUUID pgtype.UUID
-						if err := senderDeviceUUID.Scan(DeviceID); err == nil {
-							if senderInfo, err := queries.GetLoginByDeviceID(r.Context(), senderDeviceUUID); err == nil {
-								if err := queries.UpsertContactsPair(r.Context(), db.UpsertContactsPairParams{
-									AccountID:     senderInfo.AccountID,
-									PeerAccountID: recipientInfo.AccountID,
-								}); err != nil {
-									log.Printf("ошибка записи в contacts: %v", err)
-								}
+				if recipientInfo, err := queries.GetLoginByDeviceID(r.Context(), toDeviceUUID); err == nil {
+					var senderDeviceUUID pgtype.UUID
+					if err := senderDeviceUUID.Scan(DeviceID); err == nil {
+						if senderInfo, err := queries.GetLoginByDeviceID(r.Context(), senderDeviceUUID); err == nil {
+							if err := queries.UpsertContactsPair(r.Context(), db.UpsertContactsPairParams{
+								AccountID:     senderInfo.AccountID,
+								PeerAccountID: recipientInfo.AccountID,
+							}); err != nil {
+								log.Printf("ошибка записи в contacts: %v", err)
 							}
 						}
 					}
 				}
 
-				if Status == true {
-
-					deliveryID := generateDeliveryID()
-					relay := WSMsgRelay{
-						ToDeviceId: NewWSMsgFrom.ToDeviceId,
-						Ciphertext: NewWSMsgFrom.Ciphertext,
-						Type:       NewWSMsgFrom.Type,
-						DeliveryId: deliveryID,
-					}
-					relayBytes, _ := json.Marshal(relay)
-
-					ackChan := acks.Wait(deliveryID)
-					var write_error = ConnReceiver.Write(r.Context(), message_type, relayBytes)
-
-					if write_error != nil {
-						log.Printf("получатель считался онлайн, но запись не удалась (зомби-соединение): %v", write_error)
-						acks.Cancel(deliveryID)
-						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
-						queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, DeviceID, message, NewWSMsgFrom.Silent)
-						ackSender(r.Context(), ws_object, NewWSMsgFrom.DeliveryId)
-						continue
-					}
-
-					select {
-					case <-ackChan:
-
-					case <-time.After(5 * time.Second):
-						log.Printf("получатель не подтвердил доставку за 5с, ставим в очередь")
-						acks.Cancel(deliveryID)
-						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
-						queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, DeviceID, message, NewWSMsgFrom.Silent)
-					}
-					// В обоих случаях (доставлено живьём или поставлено в
-					// очередь) сервер принял на себя ответственность за
-					// сообщение — сообщаем ОТПРАВИТЕЛЮ (см. ackSender): это
-					// основа единой клиентской очереди отправки, раньше
-					// подтверждения в эту сторону не было вообще.
-					ackSender(r.Context(), ws_object, NewWSMsgFrom.DeliveryId)
-
-				} else {
-					log.Printf("Сообщение поставлено в очередь до тех пор, пока устройство не будет в сети")
-					queuePendingMessage(r.Context(), queries, NewWSMsgFrom.ToDeviceId, DeviceID, message, NewWSMsgFrom.Silent)
-					ackSender(r.Context(), ws_object, NewWSMsgFrom.DeliveryId)
+				// Durable-write-first — как в Signal/WhatsApp (store-and-forward):
+				// пишем в очередь ВСЕГДА и СРАЗУ, ещё до какой-либо попытки живой
+				// доставки. С этого момента сообщение гарантированно не потеряется,
+				// что бы ни случилось с соединением получателя дальше — попытка
+				// живой доставки ниже (tryLiveDeliverOnce) это просто оптимизация
+				// задержки поверх уже гарантированной записи, а не альтернативный
+				// путь на её замену (раньше очередь и живая доставка были именно
+				// взаимоисключающими путями — отсюда и баг с registry.RemoveIfCurrent
+				// по таймауту ack, см. разбор пользовательского теста).
+				pendingID, saveErr := queries.SavePendingMessage(r.Context(), db.SavePendingMessageParams{
+					ToDeviceID: toDeviceUUID,
+					Ciphertext: string(message),
+				})
+				if saveErr != nil {
+					log.Printf("Ошибка добавления сообщения в очередь: %v", saveErr)
+					// Не смогли гарантировать сохранность — НЕ подтверждаем
+					// отправителю (см. ackSender ниже): пусть его собственный
+					// SendQueueProcessor повторит попытку сам, как при любой
+					// другой сетевой ошибке, вместо того чтобы соврать "сервер
+					// принял на себя ответственность" за то, что он только что
+					// не смог никуда сохранить.
+					continue
 				}
+
+				deliveryID := generateDeliveryID()
+				relay := WSMsgRelay{
+					ToDeviceId: NewWSMsgFrom.ToDeviceId,
+					Ciphertext: NewWSMsgFrom.Ciphertext,
+					Type:       NewWSMsgFrom.Type,
+					DeliveryId: deliveryID,
+				}
+
+				if tryLiveDeliverOnce(r.Context(), registry, acks, NewWSMsgFrom.ToDeviceId, message_type, relay) {
+					if err := queries.DeletePendingMessage(r.Context(), pendingID); err != nil {
+						log.Printf("ошибка удаления доставленного сообщения: %v", err)
+					}
+				} else {
+					// Не доставлено живьём прямо сейчас (получатель офлайн,
+					// зомби-соединение или просто не успел подтвердить за 5с) —
+					// строка уже надёжно лежит в очереди (см. выше), будим
+					// получателя пушем. Если он на самом деле online, но просто
+					// не успел — периодический дожим (startPendingMessageSweeper)
+					// довезёт это же сообщение ему без ожидания нового коннекта.
+					log.Printf("сообщение получателю %s не доставлено живьём, остаётся в очереди", NewWSMsgFrom.ToDeviceId)
+					wakeWithPush(r.Context(), queries, toDeviceUUID, DeviceID, NewWSMsgFrom.Silent)
+				}
+
+				// В обоих случаях (доставлено живьём или осталось в очереди)
+				// сервер принял на себя ответственность за сообщение с момента
+				// durable-записи выше — сообщаем ОТПРАВИТЕЛЮ (см. ackSender):
+				// это основа единой клиентской очереди отправки.
+				ackSender(r.Context(), ws_object, NewWSMsgFrom.DeliveryId)
 
 			} else if MessageType == "call_offer" {
 

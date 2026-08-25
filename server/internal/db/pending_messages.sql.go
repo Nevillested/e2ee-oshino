@@ -67,9 +67,10 @@ func (q *Queries) GetPendingMessages(ctx context.Context, toDeviceID pgtype.UUID
 	return items, nil
 }
 
-const savePendingMessage = `-- name: SavePendingMessage :exec
+const savePendingMessage = `-- name: SavePendingMessage :one
 INSERT INTO pending_messages (to_device_id, ciphertext)
 VALUES ($1, $2)
+RETURNING id
 `
 
 type SavePendingMessageParams struct {
@@ -77,7 +78,9 @@ type SavePendingMessageParams struct {
 	Ciphertext string
 }
 
-func (q *Queries) SavePendingMessage(ctx context.Context, arg SavePendingMessageParams) error {
-	_, err := q.db.Exec(ctx, savePendingMessage, arg.ToDeviceID, arg.Ciphertext)
-	return err
+func (q *Queries) SavePendingMessage(ctx context.Context, arg SavePendingMessageParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, savePendingMessage, arg.ToDeviceID, arg.Ciphertext)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }

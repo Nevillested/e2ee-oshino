@@ -1,6 +1,7 @@
--- name: SavePendingMessage :exec
+-- name: SavePendingMessage :one
 INSERT INTO pending_messages (to_device_id, ciphertext)
-VALUES ($1, $2);
+VALUES ($1, $2)
+RETURNING id;
 
 -- name: GetPendingMessages :many
 SELECT * FROM pending_messages WHERE to_device_id = $1 ORDER BY created_at;

@@ -9,7 +9,25 @@ import '../storage/pending_send_store.dart';
 import 'debug_log.dart';
 import 'media_upload.dart';
 import 'message_resend.dart';
+import 'upload_progress_bus.dart';
 import 'websocket_service.dart';
+
+/// Отличает "файла больше нет, повторять бессмысленно" (задание убираем
+/// насовсем) от обычного сетевого сбоя (задание остаётся, повторится само
+/// на следующем реконнекте) — раньше оба случая тихо схлопывались в один
+/// и тот же "успех" в _attempt (см. разбор пользовательских логов: кнопка
+/// "Повторить отправку" выглядела нерабочей именно поэтому — задание уже
+/// было удалено первым же фоновым sweep'ом).
+class _PermanentRetryFailure implements Exception {
+  final String message;
+  _PermanentRetryFailure(this.message);
+  @override
+  String toString() => message;
+}
+
+/// Итог одной попытки — нужен вызывающей стороне (см. ChatScreen._retrySend),
+/// чтобы дать пользователю честную обратную связь вместо тишины.
+enum RetryOutcome { sent, permanentlyFailed, willRetryLater, notFound }
 
 /// Досылает сообщения, которые не удалось даже поставить в
 /// SendQueueProcessor — сбой сети ДО готового конверта (загрузка медиа/
@@ -59,7 +77,7 @@ class PendingSendRetrier {
   /// одиночного сообщения или groupId группы (см. PendingSendStore.add в
   /// ChatScreen — job['id'] всегда один из этих двух). Тихий no-op, если
   /// задания уже нет (например, фоновый sweep успел забрать его первым).
-  Future<void> retryNow(String id) async {
+  Future<RetryOutcome> retryNow(String id) async {
     final jobs = await PendingSendStore.getAll();
     Map<String, dynamic>? job;
     for (final j in jobs) {
@@ -68,16 +86,16 @@ class PendingSendRetrier {
         break;
       }
     }
-    if (job == null) return;
-    await _attempt(job);
+    if (job == null) return RetryOutcome.notFound;
+    return await _attempt(job);
   }
 
-  Future<void> _attempt(Map<String, dynamic> job) async {
+  Future<RetryOutcome> _attempt(Map<String, dynamic> job) async {
     final id = job['id'] as String;
     // Тот же приём, что и в SendQueueProcessor._inFlight — не даём двум
     // конкурентным sweep'ам запустить вторую параллельную попытку поверх
     // уже идущей для одного и того же id.
-    if (_inFlight.contains(id)) return;
+    if (_inFlight.contains(id)) return RetryOutcome.willRetryLater;
     _inFlight.add(id);
     try {
       final kind = job['kind'] as String;
@@ -100,16 +118,20 @@ class PendingSendRetrier {
             'PendingSendRetrier id=$id unknown job kind=$kind — dropping',
           );
           await PendingSendStore.remove(id);
-          return;
+          return RetryOutcome.permanentlyFailed;
       }
       await PendingSendStore.remove(id);
-      DebugLog.log(
-        'PendingSendRetrier id=$id handed off to SendQueueProcessor',
-      );
+      DebugLog.log('PendingSendRetrier id=$id sent successfully');
+      return RetryOutcome.sent;
+    } on _PermanentRetryFailure catch (e) {
+      await PendingSendStore.remove(id);
+      DebugLog.log('PendingSendRetrier id=$id permanently abandoned: $e');
+      return RetryOutcome.permanentlyFailed;
     } catch (e) {
       DebugLog.log(
         'PendingSendRetrier id=$id retry-FAILED error=$e — will retry on next reconnect',
       );
+      return RetryOutcome.willRetryLater;
     } finally {
       _inFlight.remove(id);
     }
@@ -146,13 +168,14 @@ class PendingSendRetrier {
     final id = job['id'] as String;
     final file = File(job['file_path'] as String);
     if (!await file.exists()) {
-      // Файл не пережил сбой (например, систему выгрузила приложение из
-      // памяти между попытками и подчистила temp) — переотправить нечем,
-      // это уже окончательная неудача, а не повод ретраить бесконечно.
+      // Файл не пережил сбой (например, устойчивая копия была снята до
+      // введения PendingSendStore.persistFile, или её стёр сам пользователь
+      // очисткой хранилища приложения) — переотправить нечем, это уже
+      // окончательная неудача, а не повод ретраить бесконечно.
       DebugLog.log(
         'PendingSendRetrier id=$id local file missing, giving up permanently',
       );
-      return;
+      throw _PermanentRetryFailure('local file missing');
     }
     final peerLogin = job['peer_login'] as String;
     final peerDeviceId = await MessageResend.resolvePeerDeviceId(
@@ -197,6 +220,7 @@ class PendingSendRetrier {
       fileName: fileName,
       token: token,
       peerAccountIdForUpload: peerAccountId,
+      onProgress: (percent) => UploadProgressBus.emit(id, percent),
     );
 
     final InnerMessage inner;
@@ -246,16 +270,11 @@ class PendingSendRetrier {
       peerLogin: peerLogin,
       inner: inner,
     );
-    // Только voice/video_note — это временные записи, которые само
-    // приложение и создало (см. _sendRecordedMessage). 'media' — файл из
-    // галереи пользователя, выбранный им самим через пикер: удалять его
-    // отсюда нельзя, тот же принцип, что и в _processQueuedMedia (там его
-    // тоже никогда не трогают, ни при успехе, ни при неудаче).
-    if (isVoiceOrVideoNote) {
-      try {
-        await file.delete();
-      } catch (_) {}
-    }
+    // file здесь всегда наша собственная устойчивая копия (см.
+    // PendingSendStore.persistFile в ChatScreen), не оригинал пользователя
+    // — удалять безопасно и для 'media' тоже, в отличие от прежней логики,
+    // где 'media' нарочно не трогали.
+    await PendingSendStore.deletePersistedFile(file.path);
   }
 
   /// Группа файлов (см. ChatScreen._sendGroupNetwork) — если ЛЮБОЙ из
@@ -273,7 +292,7 @@ class PendingSendRetrier {
           'PendingSendRetrier id=$id media_group missing file=${file.path}, '
           'giving up on the whole group permanently',
         );
-        return;
+        throw _PermanentRetryFailure('local file missing in group');
       }
       files.add(file);
     }
@@ -307,6 +326,8 @@ class PendingSendRetrier {
         fileName: item['file_name'] as String,
         token: token,
         peerAccountIdForUpload: peerAccountId,
+        onProgress: (percent) =>
+            UploadProgressBus.emit(item['message_id'] as String, percent),
       );
       uploaded.add(desc);
     }
@@ -337,5 +358,10 @@ class PendingSendRetrier {
         }
       },
     );
+    // Все files здесь — наши собственные устойчивые копии (см.
+    // PendingSendStore.persistFile в ChatScreen), не оригиналы пользователя.
+    for (final file in files) {
+      await PendingSendStore.deletePersistedFile(file.path);
+    }
   }
 }

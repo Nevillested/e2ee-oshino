@@ -393,7 +393,7 @@ func notifyContactsProfileField(ctx context.Context, queries *db.Queries, regist
 				}
 			}
 			if !online {
-				if saveErr := queries.SavePendingMessage(ctx, db.SavePendingMessageParams{
+				if _, saveErr := queries.SavePendingMessage(ctx, db.SavePendingMessageParams{
 					ToDeviceID: device.ID,
 					Ciphertext: string(msgBytes),
 				}); saveErr != nil {

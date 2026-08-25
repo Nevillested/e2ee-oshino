@@ -52,6 +52,7 @@ import '../services/peer_profile_cache.dart';
 import '../services/pending_send_retrier.dart';
 import '../services/send_lock.dart';
 import '../services/send_queue_processor.dart';
+import '../services/upload_progress_bus.dart';
 import '../services/video_thumbnail_helper.dart';
 import '../services/websocket_service.dart';
 import '../session.dart';
@@ -474,6 +475,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   _incomingReactionSub;
   StreamSubscription<({String peerLogin, List<String> targetIds})>?
   _incomingDeleteSub;
+  StreamSubscription<(String messageId, double percent)>? _uploadProgressSub;
   Timer? _presenceTickTimer;
   DateTime? _lastTypingSentAt;
 
@@ -711,6 +713,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (event.peerLogin == widget.peerLogin) {
         unawaited(_playIncomingDeleteEffect(event.targetIds));
       }
+    });
+    // Процент загрузки для сообщений, которые PendingSendRetrier повторно
+    // грузит в фоне (реконнект/ручной "Повторить отправку") — сам ретраер
+    // не привязан к тому, открыт ли сейчас этот экран, поэтому только так
+    // (см. UploadProgressBus) число вообще может сюда попасть.
+    _uploadProgressSub = UploadProgressBus.stream.listen((event) {
+      if (!mounted) return;
+      setState(() => _uploadProgress[event.$1] = event.$2);
     });
     if (!_isNotes) {
       unawaited(_loadPeerDisplayName());
@@ -1611,8 +1621,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// знак): просто прямо сейчас запускаем ТОТ ЖЕ повтор, который иначе
   /// сработал бы сам при следующем реконнекте (см. PendingSendRetrier).
   Future<void> _retrySend(String jobId) async {
-    await PendingSendRetrier.instance.retryNow(jobId);
+    final outcome = await PendingSendRetrier.instance.retryNow(jobId);
     await _loadHistory();
+    if (!mounted) return;
+    // Раньше при неудаче кнопка просто ничего не делала (см. разбор
+    // пользовательских логов — "ощущение, что кнопка вообще не рабочая"):
+    // задание к этому моменту уже мог забрать фоновый sweep и удалить как
+    // окончательно неудавшееся, а UI об этом никак не сообщал.
+    switch (outcome) {
+      case RetryOutcome.sent:
+        break;
+      case RetryOutcome.notFound:
+      case RetryOutcome.permanentlyFailed:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr('chat.retryFailedPermanently'))),
+        );
+        break;
+      case RetryOutcome.willRetryLater:
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(tr('chat.retryFailedTemporary'))));
+        break;
+    }
   }
 
   /// "Сбросить шифрование" из меню чата (ТЗ пользователя) — ручной аналог
@@ -2437,16 +2467,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         messageId,
         'failed',
       );
-      // Файл НЕ удаляем (см. отличие от notes-ветки выше) — он нужен
-      // PendingSendRetrier для повторной загрузки, как только вернётся
-      // связь; удалит его сам ретрай, после успешной пересылки.
+      // Устойчивая копия вместо temp-записи (см. PendingSendStore.persistFile
+      // — ту ОС вправе стереть, пока приложение не запущено, что и
+      // случилось у пользователя с голосовым сообщением); оригинал больше
+      // не нужен, удаляем сразу.
+      final persistedPath = await PendingSendStore.persistFile(
+        file,
+        messageId,
+      );
+      try {
+        await file.delete();
+      } catch (_) {}
       await PendingSendStore.add({
         'id': messageId,
         'kind': isVideo ? 'video_note' : 'voice',
         'peer_login': widget.peerLogin,
         'peer_device_id': _currentPeerDeviceId,
         'peer_account_id': widget.peerAccountId,
-        'file_path': file.path,
+        'file_path': persistedPath,
         'size': size,
         'duration_ms': duration.inMilliseconds,
       });
@@ -3176,15 +3214,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         messageId,
         'failed',
       );
-      // Файл НЕ удаляем — нужен PendingSendRetrier для повторной загрузки
-      // (см. тот же приём в _sendRecordedMessage выше).
+      // Оригинал пользователя (галерея/пикер) не трогаем — снимаем
+      // отдельную устойчивую копию для PendingSendRetrier (см. тот же
+      // приём в _sendRecordedMessage выше и PendingSendStore.persistFile).
+      final persistedPath = await PendingSendStore.persistFile(
+        item.file,
+        messageId,
+      );
       await PendingSendStore.add({
         'id': messageId,
         'kind': 'media',
         'peer_login': widget.peerLogin,
         'peer_device_id': _currentPeerDeviceId,
         'peer_account_id': widget.peerAccountId,
-        'file_path': item.file.path,
+        'file_path': persistedPath,
         'size': size,
         'file_name': fileName,
         'is_file': item.isFile,
@@ -3397,8 +3440,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           'failed',
         );
       }
-      // Файлы НЕ удаляем — нужны PendingSendRetrier для повторной загрузки
-      // (тот же приём, что и для одиночного медиа/голосового выше).
+      // Оригиналы пользователя не трогаем — снимаем устойчивую копию
+      // каждого файла группы для PendingSendRetrier (тот же приём, что и
+      // для одиночного медиа/голосового выше, см. PendingSendStore.persistFile).
+      final persistedItems = <Map<String, dynamic>>[];
+      for (final q in items) {
+        final persistedPath = await PendingSendStore.persistFile(
+          q.item.file,
+          q.messageId,
+        );
+        persistedItems.add({
+          'message_id': q.messageId,
+          'file_path': persistedPath,
+          'size': q.size,
+          'file_name': q.fileName,
+          'is_file': q.item.isFile,
+          'is_video': q.item.isVideo,
+          'is_spoiler': q.item.isSpoiler,
+        });
+      }
       await PendingSendStore.add({
         'id': groupId,
         'kind': 'media_group',
@@ -3407,19 +3467,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         'peer_account_id': widget.peerAccountId,
         'caption': caption,
         'text_message_id': textMessageId,
-        'items': items
-            .map(
-              (q) => {
-                'message_id': q.messageId,
-                'file_path': q.item.file.path,
-                'size': q.size,
-                'file_name': q.fileName,
-                'is_file': q.item.isFile,
-                'is_video': q.item.isVideo,
-                'is_spoiler': q.item.isSpoiler,
-              },
-            )
-            .toList(),
+        'items': persistedItems,
       });
     } finally {
       await _loadHistory();
@@ -5185,6 +5233,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _blockStatusSub?.cancel();
     _incomingReactionSub?.cancel();
     _incomingDeleteSub?.cancel();
+    _uploadProgressSub?.cancel();
     _peerProfileSub?.cancel();
     for (final timer in _justReactedTimers.values) {
       timer.cancel();

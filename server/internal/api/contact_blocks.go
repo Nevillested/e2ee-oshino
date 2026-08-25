@@ -51,7 +51,7 @@ func notifyBlockStatusChanged(ctx context.Context, queries *db.Queries, registry
 			}
 		}
 		if !online {
-			if saveErr := queries.SavePendingMessage(ctx, db.SavePendingMessageParams{
+			if _, saveErr := queries.SavePendingMessage(ctx, db.SavePendingMessageParams{
 				ToDeviceID: device.ID,
 				Ciphertext: string(msgBytes),
 			}); saveErr != nil {

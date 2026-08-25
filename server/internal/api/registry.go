@@ -106,6 +106,22 @@ func (reg *ConnectionRegistry) IsOnline(deviceID string) bool {
 	return ok
 }
 
+// Snapshot — копия device_id всех сейчас подключённых устройств, без
+// самих соединений (см. фоновый дожим отложенных сообщений в websocket.go —
+// ему нужен просто список "кого стоит попробовать сейчас", а актуальное
+// соединение каждого берётся заново через Get в момент использования:
+// между снятием снимка и его обработкой устройство вполне может успеть
+// отключиться, и вызывающая сторона обязана быть к этому готова).
+func (reg *ConnectionRegistry) Snapshot() []string {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	ids := make([]string, 0, len(reg.conns))
+	for id := range reg.conns {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // SubscribePresence — subscriberID хочет живые обновления о статусе
 // targetID (открыл экран чата с ним). Возвращает true, если targetID
 // сейчас в сети — этим значением вызывающая сторона сразу отвечает
