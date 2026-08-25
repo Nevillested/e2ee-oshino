@@ -15,6 +15,8 @@ enum MessageMenuAction {
   select,
   delete,
   report,
+  cancelSend,
+  retrySend,
 }
 
 /// Результат закрытия контекстного меню сообщения — либо выбранное
@@ -53,19 +55,28 @@ Future<ChatMenuSelection?> showMessageContextMenu(
   required bool showEdit,
   required bool isPinned,
   required String? currentMyReaction,
+  // Сообщение ещё не ушло (часики) или не смогло уйти (восклицательный
+  // знак) — см. ТЗ пользователя: меню в обоих случаях состоит РОВНО из
+  // одного пункта (отменить/повторить), реакции недоступны — реагировать
+  // ещё не на что, собеседник этого сообщения даже не видел.
+  bool isPending = false,
+  bool isFailed = false,
   // Вызывается один раз сразу после открытия меню с функцией его
   // анимированного закрытия — нужно вызывающей стороне (ChatScreen), чтобы
   // системная кнопка "назад" сначала закрывала меню, а не сразу уходила
   // из чата (само меню больше не Navigator route и на back не реагирует).
   void Function(VoidCallback closeMenu)? onOpened,
 }) {
+  final singleAction = isPending || isFailed;
   // Точной высоты меню заранее не знаем (зависит от того, раскрыта ли
   // панель реакций — но раскрывается она уже ПОСЛЕ открытия, без смены
   // позиции), но количество пунктов действий известно уже сейчас — оценка
   // по нему заметно точнее старой фиксированной константы.
-  final actionItemCount =
-      5 + (showCopy ? 1 : 0) + (showEdit ? 1 : 0) + (isMine ? 0 : 1);
-  final estimatedHeight = _kMenuCellSize + actionItemCount * _kActionItemHeight;
+  final actionItemCount = singleAction
+      ? 1
+      : 5 + (showCopy ? 1 : 0) + (showEdit ? 1 : 0) + (isMine ? 0 : 1);
+  final reactionsHeight = singleAction ? 0.0 : _kMenuCellSize;
+  final estimatedHeight = reactionsHeight + actionItemCount * _kActionItemHeight;
 
   final mq = MediaQuery.of(context);
   final size = mq.size;
@@ -110,6 +121,8 @@ Future<ChatMenuSelection?> showMessageContextMenu(
       showEdit: showEdit,
       isPinned: isPinned,
       currentMyReaction: currentMyReaction,
+      isPending: isPending,
+      isFailed: isFailed,
       onOpened: onOpened,
       onClose: (result) {
         if (!completer.isCompleted) completer.complete(result);
@@ -143,6 +156,8 @@ class _MessageContextMenuOverlay extends StatefulWidget {
   final bool showEdit;
   final bool isPinned;
   final String? currentMyReaction;
+  final bool isPending;
+  final bool isFailed;
   final void Function(VoidCallback closeMenu)? onOpened;
   final void Function(ChatMenuSelection? result) onClose;
 
@@ -154,6 +169,8 @@ class _MessageContextMenuOverlay extends StatefulWidget {
     required this.showEdit,
     required this.isPinned,
     required this.currentMyReaction,
+    required this.isPending,
+    required this.isFailed,
     required this.onOpened,
     required this.onClose,
   });
@@ -166,10 +183,10 @@ class _MessageContextMenuOverlay extends StatefulWidget {
 class _MessageContextMenuOverlayState
     extends State<_MessageContextMenuOverlay>
     with SingleTickerProviderStateMixin {
-  // Вдвое быстрее предыдущего показа (было 700мс).
+  // Было 350мс — ещё на 30% быстрее по прямому ТЗ пользователя (350 * 0.7).
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 350),
+    duration: const Duration(milliseconds: 245),
   );
   bool _closing = false;
 
@@ -238,6 +255,8 @@ class _MessageContextMenuOverlayState
                 showEdit: widget.showEdit,
                 isPinned: widget.isPinned,
                 currentMyReaction: widget.currentMyReaction,
+                isPending: widget.isPending,
+                isFailed: widget.isFailed,
                 onSelect: _close,
               ),
             ),
@@ -254,6 +273,8 @@ class _MessageContextMenuContent extends StatefulWidget {
   final bool showEdit;
   final bool isPinned;
   final String? currentMyReaction;
+  final bool isPending;
+  final bool isFailed;
   final void Function(ChatMenuSelection selection) onSelect;
 
   const _MessageContextMenuContent({
@@ -262,6 +283,8 @@ class _MessageContextMenuContent extends StatefulWidget {
     required this.showEdit,
     required this.isPinned,
     required this.currentMyReaction,
+    required this.isPending,
+    required this.isFailed,
     required this.onSelect,
   });
 
@@ -319,20 +342,26 @@ class _MessageContextMenuContentState
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _ReactionsPanel(
-                  emojis: _emojis,
-                  expanded: _expanded,
-                  currentMyReaction: widget.currentMyReaction,
-                  onToggleExpanded: () =>
-                      setState(() => _expanded = !_expanded),
-                  onEmojiTap: _pickReaction,
-                ),
+                // Реакции недоступны, пока сообщение ещё не ушло/не
+                // смогло уйти — реагировать не на что, собеседник его даже
+                // не видел (см. isPending/isFailed выше).
+                if (!widget.isPending && !widget.isFailed)
+                  _ReactionsPanel(
+                    emojis: _emojis,
+                    expanded: _expanded,
+                    currentMyReaction: widget.currentMyReaction,
+                    onToggleExpanded: () =>
+                        setState(() => _expanded = !_expanded),
+                    onEmojiTap: _pickReaction,
+                  ),
                 if (!_expanded)
                   _ActionsList(
                     isMine: widget.isMine,
                     showCopy: widget.showCopy,
                     showEdit: widget.showEdit,
                     isPinned: widget.isPinned,
+                    isPending: widget.isPending,
+                    isFailed: widget.isFailed,
                     onSelect: widget.onSelect,
                   ),
               ],
@@ -438,6 +467,8 @@ class _ActionsList extends StatelessWidget {
   final bool showCopy;
   final bool showEdit;
   final bool isPinned;
+  final bool isPending;
+  final bool isFailed;
   final void Function(ChatMenuSelection selection) onSelect;
 
   const _ActionsList({
@@ -445,11 +476,37 @@ class _ActionsList extends StatelessWidget {
     required this.showCopy,
     required this.showEdit,
     required this.isPinned,
+    required this.isPending,
+    required this.isFailed,
     required this.onSelect,
   });
 
   @override
   Widget build(BuildContext context) {
+    // Сообщение ещё в очереди или не смогло уйти — единственное осмысленное
+    // действие с ним (см. ТЗ пользователя): либо отменить, либо повторить.
+    // Ничего из обычного меню (ответить/переслать/закрепить и т.д.) для
+    // него пока не имеет смысла — собеседник его ещё даже не получил.
+    if (isPending) {
+      return _buildSingleAction(
+        _ActionItem(
+          Icons.close,
+          tr('action.cancelSend'),
+          MessageMenuAction.cancelSend,
+          color: Colors.redAccent,
+        ),
+      );
+    }
+    if (isFailed) {
+      return _buildSingleAction(
+        _ActionItem(
+          Icons.refresh,
+          tr('action.retrySend'),
+          MessageMenuAction.retrySend,
+        ),
+      );
+    }
+
     final items = <_ActionItem>[
       _ActionItem(Icons.reply, tr('action.reply'), MessageMenuAction.reply),
       if (showCopy)
@@ -503,36 +560,33 @@ class _ActionsList extends StatelessWidget {
 
     return Column(
       mainAxisSize: MainAxisSize.min,
-      children: items
-          .map(
-            (item) => InkWell(
-              onTap: () => onSelect(ChatMenuSelection.action(item.action)),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      item.icon,
-                      size: 22,
-                      color: item.color ?? AppColors.textMuted,
-                    ),
-                    const SizedBox(width: 13),
-                    Text(
-                      item.label,
-                      style: TextStyle(
-                        color: item.color ?? AppColors.textPrimary,
-                        fontSize: 17,
-                      ),
-                    ),
-                  ],
-                ),
+      children: items.map((item) => _actionRow(item)).toList(),
+    );
+  }
+
+  Widget _buildSingleAction(_ActionItem item) {
+    return Column(mainAxisSize: MainAxisSize.min, children: [_actionRow(item)]);
+  }
+
+  Widget _actionRow(_ActionItem item) {
+    return InkWell(
+      onTap: () => onSelect(ChatMenuSelection.action(item.action)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          children: [
+            Icon(item.icon, size: 22, color: item.color ?? AppColors.textMuted),
+            const SizedBox(width: 13),
+            Text(
+              item.label,
+              style: TextStyle(
+                color: item.color ?? AppColors.textPrimary,
+                fontSize: 17,
               ),
             ),
-          )
-          .toList(),
+          ],
+        ),
+      ),
     );
   }
 }

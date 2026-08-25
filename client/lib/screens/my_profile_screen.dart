@@ -9,6 +9,7 @@ import '../services/my_profile_store.dart';
 import '../services/retry_until_success.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/avatar_settings_tile.dart';
 import '../widgets/bottom_action_bar.dart';
 import '../widgets/photo_viewer_screen.dart';
@@ -118,7 +119,7 @@ class _MyProfileContentState extends State<MyProfileContent> {
         valueListenable: MyProfileStore.notifier,
         builder: (context, profile, _) {
           if (profile == null) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(child: AppLoadingIndicator());
           }
           return ListView(
             // Раньше тут был MediaQuery.padding.top + 24 — компенсация за
@@ -140,7 +141,7 @@ class _MyProfileContentState extends State<MyProfileContent> {
                     width: avatarDiameter,
                     height: avatarDiameter,
                     child: _uploading
-                        ? const Center(child: CircularProgressIndicator())
+                        ? const Center(child: AppLoadingIndicator())
                         : ValueListenableBuilder<Uint8List?>(
                             valueListenable: MyAvatarStore.notifier,
                             builder: (context, bytes, _) => AvatarThumbnail(
@@ -164,10 +165,7 @@ class _MyProfileContentState extends State<MyProfileContent> {
                 ),
               ),
               ListTile(
-                leading: Icon(
-                  Icons.badge_outlined,
-                  color: AppColors.textMuted,
-                ),
+                leading: Icon(Icons.badge_outlined, color: AppColors.textMuted),
                 title: Text(
                   tr('profile.displayName'),
                   style: TextStyle(color: AppColors.textPrimary),

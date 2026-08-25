@@ -6,6 +6,7 @@ import '../services/my_avatar_store.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/avatar_settings_tile.dart';
 import '../widgets/cached_avatar_image.dart';
 import '../widgets/peer_name_text.dart';
@@ -87,7 +88,7 @@ class _ForwardScreenState extends State<ForwardScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(tr('forward.title'))),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: AppLoadingIndicator())
           : ListView.builder(
               itemCount: _peers.length,
               itemBuilder: (context, index) {

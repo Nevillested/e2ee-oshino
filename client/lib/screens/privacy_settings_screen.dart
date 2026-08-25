@@ -6,6 +6,7 @@ import '../services/my_profile_store.dart';
 import '../services/retry_until_success.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/frosted_dialog.dart';
 import '../widgets/theme_reactive.dart';
 
@@ -219,14 +220,7 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
             child: FilledButton(
               onPressed: _saving ? null : _save,
               child: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
+                  ? const AppLoadingIndicator(size: 18, color: Colors.white)
                   : Text(tr('common.save')),
             ),
           ),

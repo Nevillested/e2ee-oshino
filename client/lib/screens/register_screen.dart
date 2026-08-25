@@ -7,6 +7,7 @@ import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/login_validator.dart';
 import '../utils/password_validator.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/theme_reactive.dart';
 import 'verify_totp_screen.dart';
@@ -161,14 +162,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ElevatedButton(
                 onPressed: _isLoading ? null : _handleRegister,
                 child: _isLoading
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
+                    ? const AppLoadingIndicator(size: 22, color: Colors.white)
                     : Text(tr('common.next')),
               ),
               const SizedBox(height: 16),

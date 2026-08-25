@@ -7,6 +7,7 @@ import '../l10n/app_strings.dart';
 import '../services/my_email_store.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
+import 'app_loading_indicator.dart';
 import 'frosted_dialog.dart';
 
 // Код подтверждения уже отправлен, диалог ждёт его ввода — пользователь
@@ -50,8 +51,7 @@ Future<void> showEmailDialog(BuildContext context) async {
     // быть mounted одновременно с самим хабом, просто с небольшой
     // задержкой на анимацию закрытия). screenContext переживает закрытие
     // ЛЮБОГО количества дочерних диалогов — на нём и держим сеть/снекбар.
-    builder: (context) =>
-        _EmailHubDialog(token: token, screenContext: context),
+    builder: (context) => _EmailHubDialog(token: token, screenContext: context),
   );
 }
 
@@ -314,11 +314,7 @@ class _AddEmailDialogState extends State<_AddEmailDialog> {
                     ? _handleSendCode
                     : _handleConfirmCode),
           child: _isLoading
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+              ? const AppLoadingIndicator(size: 18)
               : Text(
                   _step == _Step.enterEmail
                       ? tr('email.sendCode')

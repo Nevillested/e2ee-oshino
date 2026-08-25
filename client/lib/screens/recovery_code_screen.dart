@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/theme_reactive.dart';
 import 'recovery_purpose.dart';
@@ -100,14 +101,7 @@ class _RecoveryCodeScreenState extends State<RecoveryCodeScreen> {
               ElevatedButton(
                 onPressed: _isLoading ? null : _handleVerify,
                 child: _isLoading
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
+                    ? const AppLoadingIndicator(size: 22, color: Colors.white)
                     : Text(tr('recovery.confirmCode')),
               ),
             ],

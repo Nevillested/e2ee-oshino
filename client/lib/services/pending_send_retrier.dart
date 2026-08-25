@@ -53,6 +53,25 @@ class PendingSendRetrier {
     }
   }
 
+  /// Ручной повтор ОДНОГО конкретного задания прямо сейчас — по нажатию
+  /// "Повторить отправку" в контекстном меню сообщения (см. ТЗ
+  /// пользователя), а не по ожиданию следующего реконнекта. id — messageId
+  /// одиночного сообщения или groupId группы (см. PendingSendStore.add в
+  /// ChatScreen — job['id'] всегда один из этих двух). Тихий no-op, если
+  /// задания уже нет (например, фоновый sweep успел забрать его первым).
+  Future<void> retryNow(String id) async {
+    final jobs = await PendingSendStore.getAll();
+    Map<String, dynamic>? job;
+    for (final j in jobs) {
+      if (j['id'] == id) {
+        job = j;
+        break;
+      }
+    }
+    if (job == null) return;
+    await _attempt(job);
+  }
+
   Future<void> _attempt(Map<String, dynamic> job) async {
     final id = job['id'] as String;
     // Тот же приём, что и в SendQueueProcessor._inFlight — не даём двум
@@ -84,7 +103,9 @@ class PendingSendRetrier {
           return;
       }
       await PendingSendStore.remove(id);
-      DebugLog.log('PendingSendRetrier id=$id handed off to SendQueueProcessor');
+      DebugLog.log(
+        'PendingSendRetrier id=$id handed off to SendQueueProcessor',
+      );
     } catch (e) {
       DebugLog.log(
         'PendingSendRetrier id=$id retry-FAILED error=$e — will retry on next reconnect',
@@ -211,6 +232,7 @@ class PendingSendRetrier {
         macBase64: desc['mac'] as String?,
         fileName: fileName,
         isFile: isFile,
+        isVideo: isVideo,
         fileSize: size,
         chunked: desc['chunked'] as bool,
         spoiler: isSpoiler,
@@ -291,6 +313,7 @@ class PendingSendRetrier {
 
     final inner = InnerMessage.mediaGroup(
       groupId: id,
+      messageId: id,
       caption: job['caption'] as String?,
       textMessageId: job['text_message_id'] as String?,
       files: uploaded,

@@ -903,8 +903,19 @@ class CallService {
 
           if (peerWasUnavailable && _isOutgoingCall) {
             try {
+              // ВАЖНО: ключ блокировки — peerDeviceId, а НЕ owner.login. Раньше
+              // здесь стоял login, хотя sendPeerMessage читает/пишет
+              // SessionStore по device_id, как и ВСЕ остальные пути отправки
+              // в приложении (chat_screen.dart, message_router.dart,
+              // control_message_sender.dart, message_resend.dart) — то есть
+              // эта блокировка на деле НЕ серилизовалась ни с чем: если в
+              // момент отправки уведомления о пропущенном звонке параллельно
+              // шло обычное сообщение этому же собеседнику, оба потока читали
+              // и продвигали состояние Double Ratchet независимо, и
+              // последняя запись тихо затирала работу первой — ровно тот
+              // рассинхрон ratchet-цепочки, который просил найти пользователь.
               await SendLock.run(
-                owner.login,
+                peerDeviceId,
                 () => sendPeerMessage(
                   peerDeviceId,
                   InnerMessage.missedCall(
@@ -1020,7 +1031,21 @@ class CallService {
       return;
     }
 
-    final payload = await _decryptCallSignal(senderDeviceId, envelope);
+    // ВАЖНО: расшифровка сигнала звонка читает/продвигает/сохраняет ТО ЖЕ
+    // состояние Double Ratchet (SessionStore, по device_id), что и обычная
+    // отправка/приём сообщений — раньше этот вызов не был обёрнут вообще
+    // никакой блокировкой. Если сигнал звонка (offer/answer/ICE) приходил
+    // одновременно с отправкой/приёмом обычного сообщения этому же
+    // собеседнику — оба потока читали и продвигали состояние независимо,
+    // и та запись, что сохранялась последней, тихо затирала работу первой:
+    // ратчет-цепочка на одной из сторон "убегала вперёд", а другая сторона
+    // навсегда переставала расшифровывать (ровно рассинхрон, который просил
+    // найти пользователь). SendLock(senderDeviceId) — тот же ключ, что и у
+    // всех остальных путей отправки/приёма в приложении.
+    final payload = await SendLock.run(
+      senderDeviceId,
+      () => _decryptCallSignal(senderDeviceId, envelope),
+    );
     if (payload == null) {
       DebugLog.log(
         'CallService _handleSignal: decrypt returned null for type=$type from=$senderDeviceId, dropping',

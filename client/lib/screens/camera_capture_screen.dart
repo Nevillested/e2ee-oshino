@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/caption_input_bar.dart';
 
 class CameraCaptureResult {
@@ -127,7 +128,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
     if (!_ready || _controller == null) {
       return const Scaffold(
         backgroundColor: Colors.black,
-        body: Center(child: CircularProgressIndicator(color: Colors.white)),
+        body: Center(child: AppLoadingIndicator(color: Colors.white)),
       );
     }
 

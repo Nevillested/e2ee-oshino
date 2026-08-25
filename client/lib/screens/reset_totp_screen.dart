@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/theme_reactive.dart';
 import 'verify_totp_screen.dart';
 
@@ -62,7 +63,7 @@ class _ResetTotpScreenState extends State<ResetTotpScreen> {
       body: SafeArea(
         child: Center(
           child: _errorText == null
-              ? const CircularProgressIndicator()
+              ? const AppLoadingIndicator()
               : Padding(
                   padding: const EdgeInsets.all(24),
                   child: Column(

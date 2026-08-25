@@ -9,6 +9,7 @@ import 'package:video_player/video_player.dart';
 import '../l10n/app_strings.dart';
 import '../services/media_asset_cache.dart';
 import '../theme/app_theme.dart';
+import 'app_loading_indicator.dart';
 import 'caption_input_bar.dart';
 import 'spoiler_overlay.dart';
 import 'vertical_dismiss_detector.dart';
@@ -532,32 +533,40 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
                                 style: TextStyle(
                                   color: AppColors.textPrimary,
                                   fontWeight: FontWeight.w600,
+                                  fontSize: 18,
                                 ),
                               ),
                             ),
                             const Spacer(),
-                            PopupMenuButton<void>(
-                              icon: Icon(
-                                Icons.more_vert,
-                                color: AppColors.textPrimary,
+                            // Theme оборачивает ВЕСЬ PopupMenuButton, а не
+                            // только child одного его пункта — PopupMenuItem
+                            // рисует свой тап-хайлайт через InkWell, которым
+                            // Flutter оборачивает пункт СНАРУЖИ переданного
+                            // child, так что более узкая обёртка (только
+                            // вокруг content) на этот InkWell не действовала:
+                            // пользователь по-прежнему видел резкий
+                            // квадратный прямоугольник подсветки при каждом
+                            // тапе на "Hide with spoiler" (ТЗ пользователя —
+                            // "глаз режет"). showMenu() перехватывает
+                            // ambient Theme через InheritedTheme.capture,
+                            // поэтому обёртка снаружи кнопки корректно
+                            // доходит и до самого меню.
+                            Theme(
+                              data: Theme.of(context).copyWith(
+                                splashFactory: NoSplash.splashFactory,
+                                highlightColor: Colors.transparent,
+                                splashColor: Colors.transparent,
                               ),
-                              color: AppColors.surface,
-                              itemBuilder: (context) => [
-                                PopupMenuItem<void>(
-                                  // Гасим стандартную квадратную рябь/highlight
-                                  // Flutter SDK на этом пункте (у стокового
-                                  // PopupMenuItem нет параметра shape/customBorder
-                                  // в этой версии) — меняется только чекбокс,
-                                  // тап не должен выглядеть отдельной "системной"
-                                  // анимацией поверх скруглённого меню.
-                                  onTap: () => setState(
-                                    () => _spoilerEnabled = !_spoilerEnabled,
-                                  ),
-                                  child: Theme(
-                                    data: Theme.of(context).copyWith(
-                                      splashFactory: NoSplash.splashFactory,
-                                      highlightColor: Colors.transparent,
-                                      splashColor: Colors.transparent,
+                              child: PopupMenuButton<void>(
+                                icon: Icon(
+                                  Icons.more_vert,
+                                  color: AppColors.textPrimary,
+                                ),
+                                color: AppColors.surface,
+                                itemBuilder: (context) => [
+                                  PopupMenuItem<void>(
+                                    onTap: () => setState(
+                                      () => _spoilerEnabled = !_spoilerEnabled,
                                     ),
                                     child: Row(
                                       children: [
@@ -578,8 +587,8 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
                                       ],
                                     ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ],
                         ),
@@ -619,9 +628,7 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
                             if (_loading)
                               const SliverFillRemaining(
                                 hasScrollBody: false,
-                                child: Center(
-                                  child: CircularProgressIndicator(),
-                                ),
+                                child: Center(child: AppLoadingIndicator()),
                               )
                             else
                               SliverGrid(
@@ -962,9 +969,7 @@ class _AssetPreviewPageState extends State<_AssetPreviewPage> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Center(
-        child: CircularProgressIndicator(color: Colors.white),
-      );
+      return const Center(child: AppLoadingIndicator(color: Colors.white));
     }
     if (_videoController != null) {
       // Таймлайн вынесен ОТДЕЛЬНО от _VideoPreview и прижат к нижнему краю
@@ -1007,7 +1012,7 @@ class _VideoPreview extends StatelessWidget {
       future: initFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const CircularProgressIndicator(color: Colors.white);
+          return const AppLoadingIndicator(color: Colors.white);
         }
         return GestureDetector(
           onTap: () => controller.value.isPlaying

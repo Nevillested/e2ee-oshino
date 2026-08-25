@@ -3,6 +3,7 @@ import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/password_validator.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/theme_reactive.dart';
 import 'login_screen.dart';
@@ -64,9 +65,9 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen> {
         password,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr('recovery.success'))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(tr('recovery.success'))));
       // Убираем со стека весь путь восстановления (логин → код → этот
       // экран) — назад из LoginScreen должно попадать сразу на самый
       // первый экран (регистрация/вход), как и обычно.
@@ -134,14 +135,7 @@ class _SetNewPasswordScreenState extends State<SetNewPasswordScreen> {
               ElevatedButton(
                 onPressed: _isLoading ? null : _handleSave,
                 child: _isLoading
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
+                    ? const AppLoadingIndicator(size: 22, color: Colors.white)
                     : Text(tr('recovery.save')),
               ),
             ],

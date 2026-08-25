@@ -22,7 +22,8 @@ class VoiceMessagePlayer extends StatefulWidget {
   // проигрывается (см. resolveFile), поэтому воспроизведение не блокируем
   // — просто заменяем строку с длительностью на текущий статус.
   final String? processingStep;
-  final Future<File> Function() resolveFile;
+  final Future<File> Function({void Function(double percent)? onProgress})
+  resolveFile;
   final MediaPlaybackCoordinator? coordinator;
   final String? messageId;
 
@@ -49,6 +50,7 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
   Duration? _duration;
   bool _playing = false;
   bool _loading = false;
+  double _downloadPercent = 0;
   File? _file;
 
   @override
@@ -70,7 +72,13 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
           _position = Duration.zero;
         });
       }
-      _reportPlayingState(false);
+      // Естественное завершение (доиграло до конца) — в отличие от
+      // обычной паузы, верхняя панель управления должна не просто
+      // переключить иконку на play, а исчезнуть целиком (ТЗ пользователя).
+      final id = widget.messageId;
+      if (widget.coordinator != null && id != null) {
+        widget.coordinator!.deactivate(id);
+      }
     });
   }
 
@@ -114,9 +122,16 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
 
   Future<void> _doResume() async {
     if (_file == null) {
-      setState(() => _loading = true);
+      setState(() {
+        _loading = true;
+        _downloadPercent = 0;
+      });
       try {
-        _file = await widget.resolveFile();
+        _file = await widget.resolveFile(
+          onProgress: (percent) {
+            if (mounted) setState(() => _downloadPercent = percent);
+          },
+        );
       } catch (_) {
         if (mounted) setState(() => _loading = false);
         return;
@@ -189,12 +204,12 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
               ),
               alignment: Alignment.center,
               child: _loading
-                  ? SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
+                  ? Text(
+                      '${_downloadPercent.round()}%',
+                      style: TextStyle(
                         color: accent,
+                        fontSize: 8,
+                        fontWeight: FontWeight.w700,
                       ),
                     )
                   : Icon(

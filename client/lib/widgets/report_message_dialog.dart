@@ -3,6 +3,7 @@ import '../api/api_client.dart';
 import '../l10n/app_strings.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
+import 'app_loading_indicator.dart';
 
 /// Жалоба на сообщение — переписка E2E-зашифрована, сервер физически не
 /// видит текст, поэтому reportedMessageText отправляется добровольно, тем
@@ -101,11 +102,7 @@ class _ReportMessageDialogState extends State<_ReportMessageDialog> {
         TextButton(
           onPressed: _isLoading ? null : _handleSend,
           child: _isLoading
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+              ? const AppLoadingIndicator(size: 18)
               : Text(
                   tr('common.send'),
                   style: const TextStyle(color: Colors.redAccent),

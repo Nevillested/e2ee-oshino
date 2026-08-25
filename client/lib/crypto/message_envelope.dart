@@ -48,6 +48,7 @@ class InnerMessage {
     String? macBase64,
     required String fileName,
     bool isFile = false,
+    bool isVideo = false,
     int fileSize = 0,
     bool chunked = false,
     bool spoiler = false,
@@ -61,6 +62,7 @@ class InnerMessage {
       'mac': macBase64,
       'file_name': fileName,
       'is_file': isFile,
+      'is_video': isVideo,
       'file_size': fileSize,
       'chunked': chunked,
       'spoiler': spoiler,
@@ -148,6 +150,7 @@ class InnerMessage {
   /// а не по одному сообщению по мере загрузки каждого файла.
   factory InnerMessage.mediaGroup({
     required String groupId,
+    String? messageId,
     String? caption,
     String? textMessageId,
     required List<Map<String, dynamic>> files,
@@ -158,7 +161,14 @@ class InnerMessage {
       'files': files,
     });
     return InnerMessage(
-      messageId: _uuid.v4(),
+      // По умолчанию отдельный случайный id, как и раньше — но вызывающая
+      // сторона (см. ChatScreen._sendGroupNetwork/PendingSendRetrier) может
+      // явно передать groupId и сюда же: тогда deliveryId в
+      // SendQueueProcessor совпадает с groupId, и отмену/повтор отправки
+      // группы (см. ТЗ пользователя про контекстное меню) можно найти по
+      // одному и тому же ключу везде — в PendingSendStore и в
+      // SendQueueStore, а не только в одном из них.
+      messageId: messageId ?? _uuid.v4(),
       type: 'media_group',
       sentAt: DateTime.now().millisecondsSinceEpoch,
       body: body,

@@ -5,6 +5,7 @@ import '../l10n/app_strings.dart';
 import '../session.dart';
 import '../storage/locale_store.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/auth_text_field.dart';
 import '../widgets/theme_reactive.dart';
 import 'home_placeholder_screen.dart';
@@ -133,14 +134,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ElevatedButton(
                 onPressed: _isLoading ? null : _handleLogin,
                 child: _isLoading
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
+                    ? const AppLoadingIndicator(size: 22, color: Colors.white)
                     : Text(tr('welcome.login')),
               ),
               const SizedBox(height: 10),

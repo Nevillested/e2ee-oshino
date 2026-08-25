@@ -8,6 +8,7 @@ import '../l10n/app_strings.dart';
 import '../services/debug_log.dart';
 import '../session.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/frosted_dialog.dart';
 import '../widgets/theme_reactive.dart';
 
@@ -85,6 +86,17 @@ class _AboutScreenState extends State<AboutScreen> {
     await Share.shareXFiles([XFile(file.path)], text: 'Oshinobu debug log');
   }
 
+  /// "Очистить лог" (ТЗ пользователя — "если разросся, пользователь мог
+  /// его сам сбросить") — без подтверждения: сам лог диагностический, его
+  /// потеря ничего не ломает и никак не влияет на переписку.
+  Future<void> _clearDebugLog() async {
+    await DebugLog.clear();
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(tr('about.logCleared'))));
+  }
+
   @override
   Widget build(BuildContext context) {
     return ThemeReactive(builder: (context) => _build(context));
@@ -139,6 +151,17 @@ class _AboutScreenState extends State<AboutScreen> {
             style: TextStyle(color: AppColors.textPrimary),
           ),
           onTap: _shareDebugLog,
+        ),
+        ListTile(
+          leading: Icon(
+            Icons.delete_sweep_outlined,
+            color: AppColors.textMuted,
+          ),
+          title: Text(
+            tr('about.clearLog'),
+            style: TextStyle(color: AppColors.textPrimary),
+          ),
+          onTap: _clearDebugLog,
         ),
       ],
     );
@@ -217,11 +240,7 @@ class _FeedbackDialogState extends State<_FeedbackDialog> {
         TextButton(
           onPressed: _isLoading ? null : _handleSend,
           child: _isLoading
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
+              ? const AppLoadingIndicator(size: 18)
               : Text(tr('common.send')),
         ),
       ],

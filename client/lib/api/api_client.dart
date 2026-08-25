@@ -212,51 +212,6 @@ class ApiClient {
     }
   }
 
-  /// То же самое, что uploadEncryptedMedia, но с колбэком прогресса —
-  /// обычный http-клиент такого колбэка не даёт, поэтому здесь используется
-  /// dio, только внутри этого одного метода.
-  Future<String> uploadEncryptedMediaWithProgress(
-    String token,
-    Uint8List ciphertext,
-    String recipientAccountId, {
-    required void Function(double percent) onProgress,
-    dio.CancelToken? cancelToken,
-  }) async {
-    final client = dio.Dio();
-    final formData = dio.FormData.fromMap({
-      'recipient_account_id': recipientAccountId,
-      'file': dio.MultipartFile.fromBytes(
-        ciphertext,
-        filename: 'encrypted.bin',
-      ),
-    });
-
-    try {
-      final response = await client.post<String>(
-        '${ApiConfig.baseUrl}/upload-media',
-        data: formData,
-        options: dio.Options(
-          headers: {'Authorization': 'Bearer $token'},
-          responseType: dio.ResponseType.plain,
-        ),
-        cancelToken: cancelToken,
-        onSendProgress: (sent, total) {
-          if (total > 0) onProgress(sent / total * 100);
-        },
-      );
-
-      if (response.statusCode != 200 || response.data == null) {
-        throw ApiException(tr('error.uploadFailed'));
-      }
-      return response.data!;
-    } on dio.DioException catch (e) {
-      if (e.type == dio.DioExceptionType.cancel) {
-        throw ApiException(tr('error.cancelledByUser'));
-      }
-      throw ApiException(tr('error.uploadFailed'));
-    }
-  }
-
   /// POST /login — вход. Возвращает токен сессии и текущий язык, сохранённый
   /// на сервере (см. LocaleStore — вызывающая сторона применяет его сразу).
   Future<({String token, String language})> login(
@@ -746,15 +701,37 @@ class ApiClient {
     return response.body;
   }
 
-  Future<Uint8List> downloadEncryptedMedia(String token, String mediaId) async {
-    final response = await http.get(
-      Uri.parse('${ApiConfig.baseUrl}/media/$mediaId'),
-      headers: {'Authorization': 'Bearer $token'},
-    );
-    if (response.statusCode != 200) {
+  /// dio вместо обычного http — только он даёт onReceiveProgress, нужный
+  /// для процента скачивания в реальном времени (см. ТЗ пользователя:
+  /// чат должен показывать "сколько уже скачано", а не декоративный
+  /// спиннер). Тот же приём, что уже используется в
+  /// downloadEncryptedMediaToFile ниже.
+  Future<Uint8List> downloadEncryptedMedia(
+    String token,
+    String mediaId, {
+    void Function(double percent)? onProgress,
+  }) async {
+    final client = dio.Dio();
+    try {
+      final response = await client.get<List<int>>(
+        '${ApiConfig.baseUrl}/media/$mediaId',
+        options: dio.Options(
+          headers: {'Authorization': 'Bearer $token'},
+          responseType: dio.ResponseType.bytes,
+        ),
+        onReceiveProgress: (received, total) {
+          if (total > 0 && onProgress != null) {
+            onProgress(received / total * 100);
+          }
+        },
+      );
+      if (response.statusCode != 200 || response.data == null) {
+        throw ApiException(tr('error.downloadFailed'));
+      }
+      return Uint8List.fromList(response.data!);
+    } on dio.DioException {
       throw ApiException(tr('error.downloadFailed'));
     }
-    return response.bodyBytes;
   }
 
   Future<({String accountId, String login, String displayName})?>
@@ -1067,7 +1044,9 @@ class ApiClient {
         )
         .timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) {
-      throw ApiException('${tr('error.reportFailed')} (${response.statusCode})');
+      throw ApiException(
+        '${tr('error.reportFailed')} (${response.statusCode})',
+      );
     }
   }
 

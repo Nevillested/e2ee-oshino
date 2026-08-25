@@ -29,6 +29,7 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
   required String fileName,
   required String token,
   required String peerAccountIdForUpload,
+  void Function(double percent)? onProgress,
 }) async {
   final apiClient = ApiClient();
   final chunked = size > streamingThresholdBytes;
@@ -37,7 +38,11 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
   String? nonceBase64;
   String? macBase64;
 
-  await ChatStore.updateProcessingStep(peerLogin, messageId, tr('chat.encrypting'));
+  await ChatStore.updateProcessingStep(
+    peerLogin,
+    messageId,
+    tr('chat.encrypting'),
+  );
 
   if (chunked) {
     final tempDir = await getTemporaryDirectory();
@@ -55,12 +60,16 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
       await File(keyPath).delete();
     } catch (_) {}
 
-    await ChatStore.updateProcessingStep(peerLogin, messageId, tr('chat.uploading'));
+    await ChatStore.updateProcessingStep(
+      peerLogin,
+      messageId,
+      tr('chat.uploading'),
+    );
     mediaId = await apiClient.uploadEncryptedMediaFileWithProgress(
       token,
       encTempFile.path,
       peerAccountIdForUpload,
-      onProgress: (_) {},
+      onProgress: (p) => onProgress?.call(p),
     );
     try {
       await encTempFile.delete();
@@ -70,13 +79,33 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
   } else {
     final bytes = await item.file.readAsBytes();
     final encrypted = await encryptFileBytes(bytes);
-    await ChatStore.updateProcessingStep(peerLogin, messageId, tr('chat.uploading'));
-    mediaId = await apiClient.uploadEncryptedMediaWithProgress(
-      token,
-      encrypted.ciphertext,
-      peerAccountIdForUpload,
-      onProgress: (_) {},
+    await ChatStore.updateProcessingStep(
+      peerLogin,
+      messageId,
+      tr('chat.uploading'),
     );
+    // uploadEncryptedMediaWithProgress (байты целиком через
+    // MultipartFile.fromBytes) отдаёт dio ОДНИМ куском — прогресс из-за
+    // этого не дробится на промежуточные тики, только 0% и сразу 100%
+    // (жалоба пользователя: "должно быть постепенное изменение"). Пишем
+    // шифротекст во временный файл и грузим тем же файловым методом, что
+    // и "тяжёлый" путь ниже — MultipartFile.fromFile читает файл потоком
+    // и репортит прогресс по-настоящему постепенно.
+    final tempDir = await getTemporaryDirectory();
+    final encTempFile = File('${tempDir.path}/enc_$messageId.bin');
+    await encTempFile.writeAsBytes(encrypted.ciphertext);
+    try {
+      mediaId = await apiClient.uploadEncryptedMediaFileWithProgress(
+        token,
+        encTempFile.path,
+        peerAccountIdForUpload,
+        onProgress: (p) => onProgress?.call(p),
+      );
+    } finally {
+      try {
+        await encTempFile.delete();
+      } catch (_) {}
+    }
     await MediaCache.write(mediaId, bytes);
     keyBase64 = base64Encode(encrypted.key);
     nonceBase64 = base64Encode(encrypted.nonce);
@@ -99,7 +128,8 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
     'nonce': nonceBase64,
     'mac': macBase64,
     'file_name': fileName,
-    'is_file': item.isFile || item.isVideo,
+    'is_file': item.isFile,
+    'is_video': item.isVideo,
     'file_size': size,
     'chunked': chunked,
     'spoiler': item.isSpoiler,

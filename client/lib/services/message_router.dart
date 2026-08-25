@@ -17,6 +17,7 @@ import '../storage/peer_account_store.dart';
 import '../storage/peer_identity_store.dart';
 import 'active_chat_tracker.dart';
 import 'debug_log.dart';
+import 'message_cleanup.dart';
 import 'send_lock.dart';
 import 'send_queue_processor.dart';
 import 'sound_service.dart';
@@ -270,6 +271,7 @@ class MessageRouter {
       } else if (inner.type == 'media') {
         final mediaInfo = jsonDecode(inner.body) as Map<String, dynamic>;
         final isFile = mediaInfo['is_file'] as bool? ?? false;
+        final isVideo = mediaInfo['is_video'] as bool? ?? false;
         final fileName = mediaInfo['file_name'] as String;
         final fileSize = mediaInfo['file_size'] as int? ?? 0;
         final chunked = mediaInfo['chunked'] as bool? ?? false;
@@ -279,11 +281,12 @@ class MessageRouter {
           ownerInfo.login,
           StoredMessage(
             inner.messageId,
-            isFile ? fileName : '📷 Фото',
+            isFile ? fileName : (isVideo ? '🎬 Видео' : '📷 Фото'),
             false,
             inner.sentAt,
             isMedia: true,
             isFile: isFile,
+            isVideo: isVideo,
             fileSize: fileSize,
             chunked: chunked,
             isSpoiler: spoiler,
@@ -347,15 +350,17 @@ class MessageRouter {
         }
         for (final f in filesRaw) {
           final isFile = f['is_file'] as bool? ?? false;
+          final isVideo = f['is_video'] as bool? ?? false;
           final fileName = f['file_name'] as String;
           newMessages.add(
             StoredMessage(
               f['message_id'] as String,
-              isFile ? fileName : '📷 Фото',
+              isFile ? fileName : (isVideo ? '🎬 Видео' : '📷 Фото'),
               false,
               inner.sentAt,
               isMedia: true,
               isFile: isFile,
+              isVideo: isVideo,
               fileSize: f['file_size'] as int? ?? 0,
               chunked: f['chunked'] as bool? ?? false,
               isSpoiler: f['spoiler'] as bool? ?? false,
@@ -440,17 +445,30 @@ class MessageRouter {
             targetIds: targetIds,
           ));
         }
+        // Снимок ДО удаления — та же логика, что и у локального удаления в
+        // ChatScreen (см. purgeMessageArtifacts, ТЗ пользователя: удаление —
+        // полный сброс, без следов в кэше/очередях), просто здесь источник
+        // удаления — собеседник, а не сам пользователь.
+        final allMessages = await ChatStore.getMessages(ownerInfo.login);
+        final toPurge = allMessages
+            .where((m) => targetIds.contains(m.messageId))
+            .toList();
         await ChatStore.deleteMessages(ownerInfo.login, targetIds);
+        await purgeAllMessageArtifacts(toPurge);
       } else if (inner.type == 'clear_chat') {
         // Собеседник нажал "очистить историю" — безусловная команда стереть
         // у себя абсолютно всё содержимое чата (см. InnerMessage.clearChat),
         // без сверки по id. Сам чат в списке остаётся, просто пустым.
+        final allMessages = await ChatStore.getMessages(ownerInfo.login);
         await ChatStore.clearHistory(ownerInfo.login);
+        await purgeAllMessageArtifacts(allMessages);
       } else if (inner.type == 'delete_chat') {
         // Собеседник удалил у себя весь диалог с галочкой "у обоих" — у нас
         // тоже убираем сам чат из списка (см. InnerMessage.deleteChat), а не
         // просто оставляем его пустым, как после обычной очистки истории.
+        final allMessages = await ChatStore.getMessages(ownerInfo.login);
         await ChatStore.removeChat(ownerInfo.login);
+        await purgeAllMessageArtifacts(allMessages);
       } else if (inner.type == 'read_receipt') {
         // Собеседник подтверждает, что реально увидел перечисленные — это
         // НАШИ сообщения (targetIds всегда ссылаются на сообщения автора
@@ -601,8 +619,29 @@ class MessageRouter {
     DebugLog.log(
       'Router auto session-reset triggered for=$senderDeviceId after $count consecutive decrypt failures',
     );
-    await SessionStore.clearState(senderDeviceId);
-    await _sendSessionReset(senderDeviceId);
+    await resetSessionWith(
+      senderDeviceId,
+      reason: 'auto ($count decrypt failures)',
+    );
+  }
+
+  /// Стирает локальную сессию Double Ratchet с этим устройством и просит
+  /// собеседника сделать то же самое — единая точка и для автоматического
+  /// самолечения (см. _onDecryptFailure выше — 3 подряд неудачи
+  /// расшифровки), и для ручного действия пользователя ("Сбросить
+  /// шифрование" в меню чата, см. chat_screen.dart), и для полной очистки
+  /// истории/чата "у обоих" (см. ChatScreen._deleteMessages/
+  /// HomePlaceholderScreen — ТЗ пользователя: раз уже стираем всё
+  /// содержимое с обеих сторон, разумно заодно гарантированно начать и
+  /// шифрование с чистого листа, а не полагаться на то, что старая сессия
+  /// и так была здорова).
+  static Future<void> resetSessionWith(
+    String deviceId, {
+    required String reason,
+  }) async {
+    DebugLog.log('Router resetSessionWith device=$deviceId reason=$reason');
+    await SessionStore.clearState(deviceId);
+    await _sendSessionReset(deviceId);
   }
 
   static Future<void> _clearFailureCount(String senderDeviceId) async {
@@ -661,7 +700,10 @@ class MessageRouter {
   // перезапуска), затем на диске через PeerAccountStore (device_id →
   // account_id, уже используется в других местах) + известный логин из
   // списка чатов — и только если ни то, ни другое не помогло, идём в сеть.
-  static final Map<String, ({String accountId, String login, String displayName})>
+  static final Map<
+    String,
+    ({String accountId, String login, String displayName})
+  >
   _ownerCache = {};
 
   static Future<({String accountId, String login, String displayName})?>

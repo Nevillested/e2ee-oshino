@@ -8,6 +8,7 @@ import '../services/avatar_cache.dart';
 import '../services/call_service.dart';
 import '../services/pip_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/avatar_settings_tile.dart';
 import '../widgets/peer_name_text.dart';
 import '../widgets/theme_reactive.dart';
@@ -198,9 +199,7 @@ class _CallScreenState extends State<CallScreen> {
     if (!_renderersReady) {
       return Scaffold(
         backgroundColor: AppColors.background,
-        body: Center(
-          child: CircularProgressIndicator(color: AppColors.textPrimary),
-        ),
+        body: Center(child: AppLoadingIndicator(color: AppColors.textPrimary)),
       );
     }
 
@@ -355,7 +354,10 @@ class _CallScreenState extends State<CallScreen> {
               top: 8,
               right: 8,
               child: IconButton(
-                icon: Icon(Icons.close_fullscreen, color: AppColors.textPrimary),
+                icon: Icon(
+                  Icons.close_fullscreen,
+                  color: AppColors.textPrimary,
+                ),
                 iconSize: 20,
                 onPressed: () => PipService.enterPipNow(),
               ),
@@ -429,7 +431,10 @@ class _CallScreenState extends State<CallScreen> {
         // белая иконка корректна в обеих темах. На остальных фон теперь
         // AppColors.surface (белый в светлой теме) — там нужен цвет текста
         // самой темы, иначе снова белым по белому.
-        child: Icon(icon, color: background != null ? Colors.white : AppColors.textPrimary),
+        child: Icon(
+          icon,
+          color: background != null ? Colors.white : AppColors.textPrimary,
+        ),
       ),
     );
   }

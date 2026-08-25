@@ -1,6 +1,17 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:photo_manager/photo_manager.dart';
+import 'package:video_player/video_player.dart';
+import '../l10n/app_strings.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/vertical_dismiss_detector.dart';
+
+/// Папка в галерее устройства, куда сохраняются медиа через "Сохранить в
+/// галерею" (см. _MediaViewerScreenState._saveCurrentToGallery) — общая для
+/// фото (Pictures/Oshinobu) и видео (Movies/Oshinobu), чтобы обе категории
+/// были узнаваемо сгруппированы под одним и тем же именем приложения.
+const _kSaveFolderName = 'Oshinobu';
 
 /// Полноэкранный просмотрщик медиафайлов: горизонтальный свайп листает все
 /// фото чата по порядку, вертикальный свайп (вверх или вниз) закрывает
@@ -16,13 +27,34 @@ import '../widgets/vertical_dismiss_detector.dart';
 class MediaViewerScreen<T> extends StatefulWidget {
   final List<T> items;
   final int initialIndex;
-  final Future<Uint8List> Function(T item) resolveBytes;
+  // Для фото — сами байты (см. _MediaViewerPage.build). Для видео —
+  // тоже используется, но только в _saveCurrentToGallery как фолбэк, если
+  // resolveVideoFile не задан; основной путь воспроизведения видео —
+  // resolveVideoFile ниже, который отдаёт реальный файл, а не кадр-превью.
+  final Future<Uint8List> Function(
+    T item, {
+    void Function(double percent)? onProgress,
+  })
+  resolveBytes;
+  final bool Function(T item)? isVideo;
+  // Отдаёт СКАЧАННЫЙ/расшифрованный видеофайл целиком (не байты!) — нужен
+  // отдельно от resolveBytes, потому что у видео-сообщений в чате byte-байты
+  // (см. ChatScreen._resolvePhotoBytes) — это уже кадр-превью, а не сам
+  // видеофайл (см. ТЗ пользователя: превью должно быть у видео тоже, но
+  // воспроизводить в просмотрщике нужно настоящее видео).
+  final Future<File> Function(
+    T item, {
+    void Function(double percent)? onProgress,
+  })?
+  resolveVideoFile;
 
   const MediaViewerScreen({
     super.key,
     required this.items,
     required this.initialIndex,
     required this.resolveBytes,
+    this.isVideo,
+    this.resolveVideoFile,
   });
 
   @override
@@ -47,9 +79,13 @@ class _MediaViewerScreenState<T> extends State<MediaViewerScreen<T>> {
 
   bool get _blockSiblingGestures => _zoomed || _activePointers >= 2;
 
+  late int _currentIndex;
+  bool _saving = false;
+
   @override
   void initState() {
     super.initState();
+    _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: widget.initialIndex);
   }
 
@@ -73,33 +109,156 @@ class _MediaViewerScreenState<T> extends State<MediaViewerScreen<T>> {
     setState(() => _activePointers--);
   }
 
+  void _onPageChanged(int index) {
+    _currentIndex = index;
+    _handleZoomChanged(false);
+  }
+
+  /// Сохраняет байты ТЕКУЩЕЙ открытой страницы в системную галерею, в папку
+  /// [_kSaveFolderName] — через PhotoManager (уже используется в проекте для
+  /// чтения галереи, см. MediaAssetCache), просто в режиме записи. На
+  /// Android relativePath работает только с версии 10 (API 29) и выше —
+  /// ниже PhotoManager сам сохраняет файл без вложенной папки, и это
+  /// приемлемый деградейшн, а не ошибка.
+  Future<void> _saveCurrentToGallery() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final item = widget.items[_currentIndex];
+      final permission = await PhotoManager.requestPermissionExtend();
+      if (!permission.hasAccess) {
+        if (!mounted) return;
+        _showSnackBar(
+          tr('mediaViewer.savePermissionDenied'),
+          action: SnackBarAction(
+            label: tr('mediaViewer.openSettings'),
+            onPressed: PhotoManager.openSetting,
+          ),
+        );
+        return;
+      }
+
+      final isVideoItem = widget.isVideo?.call(item) ?? false;
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      if (isVideoItem && widget.resolveVideoFile != null) {
+        // Настоящий видеофайл (не кадр-превью из resolveBytes) — уже лежит
+        // расшифрованным в MediaCache к этому моменту, saveVideo сам его
+        // просто копирует, оригинал не трогает.
+        final file = await widget.resolveVideoFile!(item);
+        await PhotoManager.editor.saveVideo(
+          file,
+          title: 'oshinobu_$stamp.mp4',
+          relativePath: 'Movies/$_kSaveFolderName',
+        );
+      } else {
+        final bytes = await widget.resolveBytes(item);
+        await PhotoManager.editor.saveImage(
+          bytes,
+          filename: 'oshinobu_$stamp.jpg',
+          relativePath: 'Pictures/$_kSaveFolderName',
+        );
+      }
+
+      if (!mounted) return;
+      _showSnackBar(tr('mediaViewer.saved'));
+    } catch (_) {
+      if (!mounted) return;
+      _showSnackBar(tr('mediaViewer.saveFailed'));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _showSnackBar(String message, {SnackBarAction? action}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: action,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Widget _buildOverflowMenu() {
+    return SafeArea(
+      child: Align(
+        alignment: Alignment.topRight,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 4, right: 4),
+          child: Material(
+            color: Colors.transparent,
+            child: PopupMenuButton<String>(
+              tooltip: '',
+              color: const Color(0xFF1C1C1E),
+              icon: _saving
+                  ? const AppLoadingIndicator(size: 20, color: Colors.white)
+                  : const Icon(Icons.more_vert, color: Colors.white),
+              onSelected: (_) => _saveCurrentToGallery(),
+              itemBuilder: (context) => [
+                PopupMenuItem<String>(
+                  value: 'save',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.download_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        tr('mediaViewer.saveToGallery'),
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Listener(
-        onPointerDown: _incrementPointers,
-        onPointerUp: _decrementPointers,
-        onPointerCancel: _decrementPointers,
-        child: VerticalDismissDetector(
-          enabled: !_blockSiblingGestures,
-          child: PageView.builder(
-            controller: _pageController,
-            physics: _blockSiblingGestures
-                ? const NeverScrollableScrollPhysics()
-                : const PageScrollPhysics(),
-            // Новая открытая страница всегда стартует неувеличенной — даже
-            // если Flutter почему-то не пересоздал widget соседней страницы,
-            // явно сбрасываем состояние при каждом перелистывании.
-            onPageChanged: (_) => _handleZoomChanged(false),
-            itemCount: widget.items.length,
-            itemBuilder: (context, index) => _MediaViewerPage<T>(
-              item: widget.items[index],
-              resolveBytes: widget.resolveBytes,
-              onZoomChanged: _handleZoomChanged,
+      body: Stack(
+        children: [
+          Listener(
+            onPointerDown: _incrementPointers,
+            onPointerUp: _decrementPointers,
+            onPointerCancel: _decrementPointers,
+            child: VerticalDismissDetector(
+              enabled: !_blockSiblingGestures,
+              child: PageView.builder(
+                controller: _pageController,
+                physics: _blockSiblingGestures
+                    ? const NeverScrollableScrollPhysics()
+                    : const PageScrollPhysics(),
+                // Новая открытая страница всегда стартует неувеличенной —
+                // даже если Flutter почему-то не пересоздал widget соседней
+                // страницы, явно сбрасываем состояние при каждом
+                // перелистывании.
+                onPageChanged: _onPageChanged,
+                itemCount: widget.items.length,
+                itemBuilder: (context, index) {
+                  final item = widget.items[index];
+                  return _MediaViewerPage<T>(
+                    item: item,
+                    resolveBytes: widget.resolveBytes,
+                    isVideo: widget.isVideo?.call(item) ?? false,
+                    resolveVideoFile: widget.resolveVideoFile,
+                    onZoomChanged: _handleZoomChanged,
+                  );
+                },
+              ),
             ),
           ),
-        ),
+          _buildOverflowMenu(),
+        ],
       ),
     );
   }
@@ -107,12 +266,24 @@ class _MediaViewerScreenState<T> extends State<MediaViewerScreen<T>> {
 
 class _MediaViewerPage<T> extends StatefulWidget {
   final T item;
-  final Future<Uint8List> Function(T item) resolveBytes;
+  final Future<Uint8List> Function(
+    T item, {
+    void Function(double percent)? onProgress,
+  })
+  resolveBytes;
+  final bool isVideo;
+  final Future<File> Function(
+    T item, {
+    void Function(double percent)? onProgress,
+  })?
+  resolveVideoFile;
   final ValueChanged<bool> onZoomChanged;
 
   const _MediaViewerPage({
     required this.item,
     required this.resolveBytes,
+    required this.isVideo,
+    required this.resolveVideoFile,
     required this.onZoomChanged,
   });
 
@@ -122,18 +293,37 @@ class _MediaViewerPage<T> extends StatefulWidget {
 
 class _MediaViewerPageState<T> extends State<_MediaViewerPage<T>>
     with SingleTickerProviderStateMixin {
-  late final Future<Uint8List> _future;
+  // Ровно один из двух реально используется — какой именно, решает
+  // widget.isVideo (см. initState): для видео нужен настоящий файл (чтобы
+  // проиграть его), для фото — байты кадра (Image.memory).
+  Future<Uint8List>? _bytesFuture;
+  Future<File>? _videoFuture;
   final _transformationController = TransformationController();
   late final AnimationController _zoomAnimController;
   Animation<Matrix4>? _zoomAnim;
   Offset? _lastDoubleTapPosition;
+  // Живой процент скачивания — те же байты, что и в чате (см.
+  // ChatScreen._resolvePhotoBytes), поэтому и индикация та же: число
+  // в %, а не декоративный спиннер (ТЗ пользователя).
+  double _downloadPercent = 0;
 
   static const double _doubleTapZoom = 2.75;
 
   @override
   void initState() {
     super.initState();
-    _future = widget.resolveBytes(widget.item);
+    void onProgress(double percent) {
+      if (mounted) setState(() => _downloadPercent = percent);
+    }
+
+    if (widget.isVideo && widget.resolveVideoFile != null) {
+      _videoFuture = widget.resolveVideoFile!(
+        widget.item,
+        onProgress: onProgress,
+      );
+    } else {
+      _bytesFuture = widget.resolveBytes(widget.item, onProgress: onProgress);
+    }
     _transformationController.addListener(_onTransformChanged);
     _zoomAnimController =
         AnimationController(
@@ -163,10 +353,13 @@ class _MediaViewerPageState<T> extends State<_MediaViewerPage<T>>
   }
 
   void _animateTo(Matrix4 target) {
-    _zoomAnim = Matrix4Tween(
-      begin: _transformationController.value,
-      end: target,
-    ).animate(CurvedAnimation(parent: _zoomAnimController, curve: Curves.easeOut));
+    _zoomAnim =
+        Matrix4Tween(
+          begin: _transformationController.value,
+          end: target,
+        ).animate(
+          CurvedAnimation(parent: _zoomAnimController, curve: Curves.easeOut),
+        );
     _zoomAnimController.forward(from: 0);
   }
 
@@ -190,15 +383,42 @@ class _MediaViewerPageState<T> extends State<_MediaViewerPage<T>>
     _animateTo(target);
   }
 
+  Widget _percentIndicator() {
+    return Center(
+      child: Text(
+        '${_downloadPercent.round()}%',
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_videoFuture != null) {
+      return FutureBuilder<File>(
+        future: _videoFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return _percentIndicator();
+          }
+          if (snapshot.hasError || snapshot.data == null) {
+            return const Center(
+              child: Icon(Icons.broken_image, color: Colors.white54, size: 64),
+            );
+          }
+          return _FullScreenVideo(file: snapshot.data!);
+        },
+      );
+    }
     return FutureBuilder<Uint8List>(
-      future: _future,
+      future: _bytesFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const Center(
-            child: CircularProgressIndicator(color: Colors.white),
-          );
+          return _percentIndicator();
         }
         if (snapshot.hasError || snapshot.data == null) {
           return const Center(
@@ -218,6 +438,92 @@ class _MediaViewerPageState<T> extends State<_MediaViewerPage<T>>
           ),
         );
       },
+    );
+  }
+}
+
+/// Проигрыватель видео на всю страницу просмотрщика — тап ставит на
+/// паузу/возобновляет, поверх паузы виден полупрозрачный треугольник play
+/// (тот же язык, что и у VideoNotePlayer в чате). Без щипка-зума и
+/// двойного тапа — в отличие от фото, они тут конфликтовали бы с обычным
+/// прогрессом воспроизведения и не являются ожидаемым поведением для видео.
+class _FullScreenVideo extends StatefulWidget {
+  final File file;
+  const _FullScreenVideo({required this.file});
+
+  @override
+  State<_FullScreenVideo> createState() => _FullScreenVideoState();
+}
+
+class _FullScreenVideoState extends State<_FullScreenVideo> {
+  late final VideoPlayerController _controller;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.file(widget.file)
+      ..initialize().then((_) {
+        if (!mounted) return;
+        setState(() => _ready = true);
+        _controller.play();
+      });
+    _controller.addListener(_onTick);
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_onTick);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onTick() {
+    // Только чтобы иконка play/pause отражала реальное состояние — тик
+    // видеопозиции сам по себе не важен, отдельный прогресс-бар не нужен
+    // (это просмотрщик, а не плеер с таймлайном).
+    if (mounted) setState(() {});
+  }
+
+  void _toggle() {
+    if (_controller.value.isPlaying) {
+      _controller.pause();
+    } else {
+      _controller.play();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready) {
+      return const Center(child: AppLoadingIndicator(color: Colors.white));
+    }
+    return GestureDetector(
+      onTap: _toggle,
+      child: Center(
+        child: AspectRatio(
+          aspectRatio: _controller.value.aspectRatio,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              VideoPlayer(_controller),
+              if (!_controller.value.isPlaying)
+                Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.black38,
+                    shape: BoxShape.circle,
+                  ),
+                  padding: const EdgeInsets.all(16),
+                  child: const Icon(
+                    Icons.play_arrow,
+                    color: Colors.white,
+                    size: 48,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

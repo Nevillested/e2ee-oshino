@@ -12,6 +12,7 @@ import '../services/avatar_cache.dart';
 import '../services/call_service.dart';
 import '../services/control_message_sender.dart';
 import '../services/local_notifications.dart';
+import '../services/message_cleanup.dart';
 import '../services/message_router.dart';
 import '../services/my_avatar_store.dart';
 import '../services/my_email_store.dart';
@@ -28,6 +29,7 @@ import '../storage/chat_store.dart';
 import '../storage/peer_account_store.dart';
 import '../theme/app_theme.dart';
 import '../utils/time_format.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/avatar_settings_tile.dart';
 import '../widgets/bottom_action_bar.dart';
 import '../widgets/cached_avatar_image.dart';
@@ -151,6 +153,13 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // didChangeAppLifecycleState(resumed) ниже ловит только переход
+    // фон → передний план у УЖЕ живого приложения. Холодный старт (совсем
+    // закрытое приложение, открытое тапом по пушу ИЛИ просто по иконке) —
+    // это не переход состояния, а создание этого экрана с нуля, так что
+    // observer его не увидит: без явного вызова здесь пуш так и остаётся
+    // висеть в шторке после открытия приложения этим путём.
+    localNotifications.cancelAll();
     _connect();
   }
 
@@ -451,13 +460,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     if (_searchLoading) {
       content = const Padding(
         padding: EdgeInsets.symmetric(vertical: 16),
-        child: Center(
-          child: SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
+        child: Center(child: AppLoadingIndicator(size: 20)),
       );
     } else if (_searchFoundLogin != null) {
       content = Material(
@@ -863,6 +866,19 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
       // откатываемся только если сам запрос не удался (например, нет сети).
       final deviceId = await _resolveCurrentDeviceId(entry);
       if (deviceId != null && deviceId.isNotEmpty) {
+        // Раз уже стираем ВСЁ содержимое переписки с обеих сторон — заодно
+        // гарантированно начинаем и шифрование с чистого листа (ТЗ
+        // пользователя), а не полагаемся на то, что старая сессия и так
+        // была здорова. Обязательно ДО отправки самого control-сообщения
+        // ниже: локальная сессия уже стёрта, значит clearChat/deleteChat
+        // сам поднимет свежий X3DH-хендшейк, а не уйдёт по старой (возможно
+        // как раз проблемной) цепочке.
+        await MessageRouter.resetSessionWith(
+          deviceId,
+          reason: alsoDeleteChat
+              ? 'delete chat (both sides)'
+              : 'clear history (both sides)',
+        );
         // Раньше здесь слался список СВОИХ id (InnerMessage.delete) — но
         // записи о звонках и подобное могли не совпасть 1:1 с тем, что
         // реально есть у собеседника, и часть истории у него оставалась
@@ -889,11 +905,17 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
       }
     }
 
+    // Снимок ДО удаления — та же логика, что у обычного удаления сообщений
+    // в ChatScreen (см. purgeMessageArtifacts, ТЗ пользователя: удаление —
+    // полный сброс, без следов в кэше/очередях), просто на уровне целого
+    // чата, а не отдельных сообщений.
+    final allMessages = await ChatStore.getMessages(entry.peerLogin);
     if (alsoDeleteChat) {
       await ChatStore.removeChat(entry.peerLogin);
     } else {
       await ChatStore.clearHistory(entry.peerLogin);
     }
+    await purgeAllMessageArtifacts(allMessages);
   }
 
   Future<void> _refreshChats() async {
@@ -1098,7 +1120,10 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                   isNotes: isNotes,
                   accountId: entry.lastKnownAccountId,
                 ),
-                title: isNotes || entry.isDeleted || entry.lastKnownAccountId == null
+                title:
+                    isNotes ||
+                        entry.isDeleted ||
+                        entry.lastKnownAccountId == null
                     ? Text(
                         isNotes
                             ? tr('home.notes')

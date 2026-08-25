@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import 'app_loading_indicator.dart';
 
 OverlayEntry? _currentEntry;
 
@@ -22,7 +23,7 @@ void showLoadingOverlay(BuildContext context, String message) {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const CircularProgressIndicator(),
+                  const AppLoadingIndicator(),
                   const SizedBox(height: 12),
                   Text(
                     message,

@@ -6,6 +6,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
   connectivity_plus
   emoji_picker_flutter
+  fc_native_video_thumbnail
   file_selector_windows
   firebase_core
   flutter_secure_storage_windows

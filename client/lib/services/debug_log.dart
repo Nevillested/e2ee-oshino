@@ -82,4 +82,13 @@ class DebugLog {
       // Не критично — максимум лог останется прежнего размера ещё раз.
     }
   }
+
+  /// Ручная очистка по кнопке в настройках (см. about_screen.dart, ТЗ
+  /// пользователя — "если разросся, пользователь мог его сам сбросить"),
+  /// в отличие от resetOnceIfNeeded выше — не разовая миграция, а
+  /// действие, доступное в любой момент.
+  static Future<void> clear() async {
+    final file = await _getFile();
+    if (await file.exists()) await file.delete();
+  }
 }

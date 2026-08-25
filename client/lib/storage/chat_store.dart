@@ -16,6 +16,11 @@ class StoredMessage {
   final int timestamp;
   final bool isMedia;
   final bool isFile;
+  // Видео, выбранное через плитку медиа (галерея), а не через плитку
+  // "файл" — в отличие от isFile, у него ЕСТЬ превью (кадр из видео, см.
+  // generateVideoThumbnail) и оно открывается во встроенном просмотрщике,
+  // как фото, а не иконкой+именем (ТЗ пользователя).
+  final bool isVideo;
   final int fileSize;
   final bool chunked;
   final String? mediaId;
@@ -82,6 +87,7 @@ class StoredMessage {
     this.timestamp, {
     this.isMedia = false,
     this.isFile = false,
+    this.isVideo = false,
     this.fileSize = 0,
     this.chunked = false,
     this.mediaId,
@@ -142,6 +148,7 @@ class StoredMessage {
       timestamp,
       isMedia: isMedia,
       isFile: isFile,
+      isVideo: isVideo,
       fileSize: fileSize,
       chunked: chunked,
       mediaId: mediaId ?? this.mediaId,
@@ -181,6 +188,7 @@ class StoredMessage {
     'ts': timestamp,
     'is_media': isMedia,
     'is_file': isFile,
+    'is_video': isVideo,
     'file_size': fileSize,
     'chunked': chunked,
     'media_id': mediaId,
@@ -215,6 +223,7 @@ class StoredMessage {
     j['ts'] as int,
     isMedia: j['is_media'] as bool? ?? false,
     isFile: j['is_file'] as bool? ?? false,
+    isVideo: j['is_video'] as bool? ?? false,
     fileSize: j['file_size'] as int? ?? 0,
     chunked: j['chunked'] as bool? ?? false,
     mediaId: j['media_id'] as String?,
@@ -517,7 +526,9 @@ class ChatStore {
           : last.isVideoNote
           ? '🎥 ${tr('media.videoNote')}'
           : last.isMedia
-          ? (last.isFile ? (last.fileName ?? '📎 ${tr('media.file')}') : '📷 ${tr('media.photo')}')
+          ? (last.isFile
+                ? (last.fileName ?? '📎 ${tr('media.file')}')
+                : '📷 ${tr('media.photo')}')
           : last.text,
       last.timestamp,
       accountId: accountId,
@@ -715,9 +726,7 @@ class ChatStore {
       );
       await _withPeersLock(() async {
         final peers = await getKnownPeers();
-        final existing = peers
-            .where((p) => p.peerLogin == peerLogin)
-            .toList();
+        final existing = peers.where((p) => p.peerLogin == peerLogin).toList();
         if (existing.isNotEmpty &&
             (existing.first.lastMessageIsMine != last.isMine ||
                 existing.first.lastMessageIsRead !=

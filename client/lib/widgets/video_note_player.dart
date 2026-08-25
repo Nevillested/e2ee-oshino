@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import '../l10n/app_strings.dart';
 import '../services/debug_log.dart';
 import '../services/media_playback_coordinator.dart';
+import 'media_status_overlay.dart';
 
 /// Проигрыватель видео-сообщения — квадрат со скруглёнными углами (у нас
 /// не кружок, как в Телеге, а именно квадрат). Тап запускает/ставит на
@@ -15,22 +18,43 @@ import '../services/media_playback_coordinator.dart';
 /// оба опциональны, чтобы не ломать использование плеера где-то ещё без
 /// панели, но ChatScreen их всегда передаёт.
 class VideoNotePlayer extends StatefulWidget {
-  final Future<File> Function() resolveFile;
+  final Future<File> Function({void Function(double percent)? onProgress})
+  resolveFile;
+  // Кадр-превью — ОТДЕЛЬНО от resolveFile: там байты, тут сам файл для
+  // проигрывания. Раньше, пока не тапнули play, был просто чёрный квадрат
+  // (ТЗ пользователя) — теперь виден реальный кадр, как у обычного видео
+  // из галереи (см. ChatScreen._resolveVideoThumbnailBytes).
+  final Future<Uint8List> Function({void Function(double percent)? onProgress})?
+  resolveThumbnail;
+  // Локальный файл кадра-превью — только у СВОИХ ещё не отправленных (или
+  // уже отправленных, но не перезагруженных с нуля) сообщений, см.
+  // ChatScreen._sendRecordedMessage/_writeLocalVideoThumbnail. Пока он есть,
+  // resolveThumbnail вообще не вызывается — у своего сообщения mediaId
+  // может ещё не существовать (см. тот же приём для обычного видео).
+  final String? localPreviewPath;
   final int? durationMs;
   final double compactSize;
   final double expandedSize;
-  // См. VoiceMessagePlayer.processingStep — тот же смысл, для видео-кружка.
+  // Фаза отправки ("Шифрование…", "В очереди…" и т.п.) — не null, пока
+  // свой файл ещё не отправлен целиком, см. StoredMessage.processingStep.
   final String? processingStep;
+  // Живой процент ИСХОДЯЩЕЙ загрузки на сервер — см.
+  // ChatScreen._uploadProgress. null, если сейчас не идёт реальная
+  // передача байт (другая фаза, например шифрование).
+  final double? uploadPercent;
   final MediaPlaybackCoordinator? coordinator;
   final String? messageId;
 
   const VideoNotePlayer({
     super.key,
     required this.resolveFile,
+    this.resolveThumbnail,
+    this.localPreviewPath,
     required this.durationMs,
     this.compactSize = 200,
     required this.expandedSize,
     this.processingStep,
+    this.uploadPercent,
     this.coordinator,
     this.messageId,
   });
@@ -42,7 +66,12 @@ class VideoNotePlayer extends StatefulWidget {
 class _VideoNotePlayerState extends State<VideoNotePlayer> {
   VideoPlayerController? _controller;
   bool _loading = false;
+  double _downloadPercent = 0;
   bool _playing = false;
+
+  Uint8List? _thumbnailBytes;
+  bool _thumbnailLoading = false;
+  double _thumbnailPercent = 0;
 
   // Защита от повторного входа в обработку "конец видео" (см. _onTick):
   // addListener у video_player может выстрелить несколько раз подряд, пока
@@ -57,6 +86,36 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
   void initState() {
     super.initState();
     DebugLog.log('VideoNote initState messageId=${widget.messageId}');
+    // Свой кадр-превью грузить не нужно — у своих сообщений он либо уже
+    // есть локально (localPreviewPath), либо появится после отправки
+    // (тогда виджет пересоберётся с новым localPreviewPath). Чужие —
+    // качаем кадр сразу, автоматически, тем же способом, что и обычное
+    // видео из галереи (ТЗ пользователя: "когда пользователю присылают
+    // видеосообщения... надо писать текстовый статус и сколько скачано").
+    if (widget.localPreviewPath == null && widget.resolveThumbnail != null) {
+      unawaited(_loadThumbnail());
+    }
+  }
+
+  Future<void> _loadThumbnail() async {
+    setState(() {
+      _thumbnailLoading = true;
+      _thumbnailPercent = 0;
+    });
+    try {
+      final bytes = await widget.resolveThumbnail!(
+        onProgress: (percent) {
+          if (mounted) setState(() => _thumbnailPercent = percent);
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _thumbnailBytes = bytes;
+        _thumbnailLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _thumbnailLoading = false);
+    }
   }
 
   @override
@@ -67,6 +126,18 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
         'VideoNote didUpdateWidget messageId changed '
         '${oldWidget.messageId} -> ${widget.messageId}',
       );
+    }
+    // Своё сообщение только что отправилось — localPreviewPath пропал
+    // из null? нет, наоборот: он был null → появился (или наоборот, редкий
+    // случай) не наш кейс. Актуальный переход — было "нет resolveThumbnail
+    // ещё не пробовали" → mediaId уже есть. Проще всего: если кадра до сих
+    // пор нет и теперь можно попробовать — пробуем.
+    if (_thumbnailBytes == null &&
+        !_thumbnailLoading &&
+        widget.localPreviewPath == null &&
+        widget.resolveThumbnail != null &&
+        oldWidget.resolveThumbnail == null) {
+      unawaited(_loadThumbnail());
     }
   }
 
@@ -136,9 +207,7 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       await _startFresh();
       return;
     }
-    DebugLog.log(
-      'VideoNote _doResume() start ${_stateSnapshot(controller)}',
-    );
+    DebugLog.log('VideoNote _doResume() start ${_stateSnapshot(controller)}');
     await controller.play();
     DebugLog.log(
       'VideoNote _doResume() play() returned ${_stateSnapshot(controller)}',
@@ -239,9 +308,16 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
   /// _doResume() (повторный тап/панель управления — после того, как
   /// предыдущий контроллер уже уничтожен).
   Future<void> _startFresh() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _downloadPercent = 0;
+    });
     try {
-      final file = await widget.resolveFile();
+      final file = await widget.resolveFile(
+        onProgress: (percent) {
+          if (mounted) setState(() => _downloadPercent = percent);
+        },
+      );
       final newController = VideoPlayerController.file(file);
       await newController.initialize();
       await newController.setLooping(false);
@@ -308,7 +384,13 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
             _playing = false;
           });
         }
-        _reportPlayingState(false);
+        // Естественное завершение — в отличие от обычной паузы, верхняя
+        // панель управления должна исчезнуть целиком, а не просто
+        // переключить иконку на play (ТЗ пользователя).
+        final id = widget.messageId;
+        if (widget.coordinator != null && id != null) {
+          widget.coordinator!.deactivate(id);
+        }
       } finally {
         _handlingEnd = false;
       }
@@ -323,12 +405,52 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
     return '$m:$s';
   }
 
+  Widget _buildThumbnail() {
+    if (widget.localPreviewPath != null) {
+      return Image.file(File(widget.localPreviewPath!), fit: BoxFit.cover);
+    }
+    if (_thumbnailBytes != null) {
+      return Image.memory(_thumbnailBytes!, fit: BoxFit.cover);
+    }
+    return Container(color: Colors.black);
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = _playing ? widget.expandedSize : widget.compactSize;
     final controller = _controller;
+    // Ровно один из трёх — своя отправка, чужое скачивание кадра, либо
+    // догрузка самого файла по тапу play (см. ТЗ пользователя: везде на
+    // миниатюре нужен текстовый статус и, если сейчас реальная передача
+    // байт — процент).
+    final sendingOverlay = widget.processingStep != null
+        ? MediaStatusOverlay(
+            statusText: widget.processingStep!,
+            percent: widget.uploadPercent,
+            size: size,
+            borderRadius: BorderRadius.circular(18),
+          )
+        : null;
+    final receivingOverlay = sendingOverlay == null && _thumbnailLoading
+        ? MediaStatusOverlay(
+            statusText: tr('media.downloading'),
+            percent: _thumbnailPercent,
+            size: size,
+            borderRadius: BorderRadius.circular(18),
+          )
+        : null;
+    final playTapOverlay =
+        sendingOverlay == null && receivingOverlay == null && _loading
+        ? MediaStatusOverlay(
+            statusText: tr('media.downloading'),
+            percent: _downloadPercent,
+            size: size,
+            borderRadius: BorderRadius.circular(18),
+          )
+        : null;
+
     return GestureDetector(
-      onTap: _loading ? null : _toggle,
+      onTap: (_loading || sendingOverlay != null) ? null : _toggle,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOut,
@@ -339,7 +461,7 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Container(color: Colors.black),
+              _buildThumbnail(),
               if (controller != null && controller.value.isInitialized)
                 FittedBox(
                   fit: BoxFit.cover,
@@ -349,23 +471,24 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
                     child: VideoPlayer(controller),
                   ),
                 ),
-              if (!_playing)
+              if (!_playing &&
+                  sendingOverlay == null &&
+                  receivingOverlay == null &&
+                  playTapOverlay == null)
                 Center(
-                  child: _loading
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : Container(
-                          width: 46,
-                          height: 46,
-                          decoration: const BoxDecoration(
-                            color: Colors.black45,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.play_arrow,
-                            color: Colors.white,
-                            size: 28,
-                          ),
-                        ),
+                  child: Container(
+                    width: 46,
+                    height: 46,
+                    decoration: const BoxDecoration(
+                      color: Colors.black45,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                  ),
                 ),
               if (widget.durationMs != null)
                 Positioned(
@@ -386,46 +509,9 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
                     ),
                   ),
                 ),
-              if (widget.processingStep != null)
-                Positioned(
-                  left: 8,
-                  right: 8,
-                  bottom: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const SizedBox(
-                          width: 10,
-                          height: 10,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 1.5,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(width: 5),
-                        Flexible(
-                          child: Text(
-                            widget.processingStep!,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+              if (sendingOverlay != null) sendingOverlay,
+              if (receivingOverlay != null) receivingOverlay,
+              if (playTapOverlay != null) playTapOverlay,
             ],
           ),
         ),

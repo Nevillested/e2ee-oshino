@@ -45,11 +45,14 @@ import '../services/keyboard_height_store.dart';
 import '../services/media_asset_cache.dart';
 import '../services/media_playback_coordinator.dart';
 import '../services/media_upload.dart' as media_upload;
+import '../services/message_cleanup.dart';
 import '../services/message_router.dart';
 import '../services/my_avatar_store.dart';
 import '../services/peer_profile_cache.dart';
+import '../services/pending_send_retrier.dart';
 import '../services/send_lock.dart';
 import '../services/send_queue_processor.dart';
+import '../services/video_thumbnail_helper.dart';
 import '../services/websocket_service.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
@@ -58,14 +61,17 @@ import '../storage/peer_account_store.dart';
 import '../storage/peer_identity_store.dart';
 import '../storage/pending_send_store.dart';
 import '../theme/app_theme.dart';
+import '../utils/file_size_format.dart';
 import '../utils/presence_format.dart';
 import '../utils/time_format.dart';
 import '../storage/default_reaction_store.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/attach_launcher_overlay.dart';
 import '../widgets/avatar_settings_tile.dart' show AvatarThumbnail;
 import '../widgets/delete_message_dialog.dart';
 import '../widgets/full_emoji_picker.dart';
 import '../widgets/media_picker_sheet.dart';
+import '../widgets/media_status_overlay.dart';
 import '../widgets/message_context_menu.dart';
 import '../widgets/ongoing_call_banner.dart';
 import '../widgets/particle_shatter_overlay.dart';
@@ -124,7 +130,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // Общий с PendingSendRetrier порог (см. media_upload.dart) — единый
   // источник истины, чтобы автоматический повтор после сбоя сети грузил
   // файл тем же способом (потоково/целиком), что и обычная отправка.
-  static const int _streamingThresholdBytes = media_upload.streamingThresholdBytes;
+  static const int _streamingThresholdBytes =
+      media_upload.streamingThresholdBytes;
   static const int _maxAttachmentSizeBytes = 500 * 1024 * 1024; // 500 МБ
   // Голосовые — без ограничения по времени, только видео-кружочки: у них
   // заметно тяжелее байт на секунду (видео+аудио), и на них же завязан
@@ -147,6 +154,130 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final Map<String, Uint8List> _resolvedMedia = {};
   final Map<String, Future<bool>> _existsChecks = {};
   final Map<String, Future<void>> _chunkedDownloads = {};
+  // Живой процент скачивания (0..100) для фото/видео/аудио/видео-сообщений
+  // прямо в чате — см. ТЗ пользователя: во время скачивания медиа вместо
+  // спиннера-заглушки должно быть видно, сколько уже реально скачано.
+  // Ключ — mediaId, значение обновляется через onProgress-колбэк,
+  // передаваемый в _loadAndCacheMedia/_downloadAndDecryptChunked.
+  final Map<String, double> _downloadProgress = {};
+
+  void Function(double percent) _progressUpdater(String mediaId) {
+    return (percent) {
+      if (!mounted) return;
+      setState(() => _downloadProgress[mediaId] = percent);
+    };
+  }
+
+  // Очередь автоскачивания фото/медиа (см. ТЗ пользователя: "группа из
+  // фото должна загружаться по очереди") — без неё КАЖДАЯ плитка сетки
+  // (см. _photoPreview) сама стартовала своё скачивание сразу при
+  // отрисовке, независимо от соседних: вся группа каталась в сеть ПАРАЛЛЕЛЬНО,
+  // делила канал между собой, и проценты скакали вразнобой (жалоба
+  // пользователя со скриншотом). _enqueueDownload оборачивает задачу так,
+  // что каждая следующая стартует только после того, как предыдущая
+  // (успешно или нет) уже завершилась — простая цепочка Future, без
+  // отдельного пакета. Пока задача ждёт своей очереди, у неё просто нет
+  // записи в _downloadProgress — виджет-плейсхолдер (уже зарезервированное
+  // место в сетке) сам показывает дефолтные "0%" (см. ТЗ пользователя:
+  // "под каждым фото уже должно быть зарезервировано пустое место с
+  // процентом"), пока очередь не дойдёт до него по-настоящему.
+  Future<void> _downloadQueueTail = Future<void>.value();
+
+  // Ждёт ли ещё элемент своей очереди ("В очереди…", ТЗ пользователя) или
+  // уже реально качается (тогда видно число %) — ключ mediaId. Заполняется
+  // и очищается самим _enqueueDownload вокруг вызова задачи.
+  final Set<String> _activeDownloadMediaIds = {};
+
+  Future<T> _enqueueDownload<T>(String mediaId, Future<T> Function() task) {
+    final result = _downloadQueueTail.then((_) async {
+      if (mounted) setState(() => _activeDownloadMediaIds.add(mediaId));
+      try {
+        return await task();
+      } finally {
+        if (mounted) setState(() => _activeDownloadMediaIds.remove(mediaId));
+      }
+    });
+    // Хвост очереди не должен оборваться при ошибке одной из задач —
+    // иначе все СЛЕДУЮЩИЕ в очереди зависли бы навсегда, ожидая future,
+    // которая уже никогда не завершится.
+    _downloadQueueTail = result.then((_) {}, onError: (_) {});
+    return result;
+  }
+
+  // То же самое, но для ИСХОДЯЩЕЙ загрузки на сервер (см. ТЗ пользователя:
+  // "а когда я отправляю файл?") — ключ здесь messageId, не mediaId (у
+  // ещё не отправленного сообщения mediaId просто пока не существует).
+  // Живёт только в памяти, НЕ пишется в ChatStore/processingStep —
+  // processingStep остаётся простой фазовой меткой ("Загрузка на
+  // сервер…"), а число берётся отсюда и приклеивается к ней уже при
+  // отрисовке (см. _processingStepDisplay), иначе пришлось бы
+  // перезаписывать ВЕСЬ список сообщений чата в secure storage на каждый
+  // тик прогресса — см. ChatStore._replace.
+  final Map<String, double> _uploadProgress = {};
+
+  void Function(double percent) _uploadProgressUpdater(String messageId) {
+    return (percent) {
+      if (!mounted) return;
+      setState(() => _uploadProgress[messageId] = percent);
+    };
+  }
+
+  /// Текст фазы + процент отправки С УЧЁТОМ известного ограничения: dio
+  /// onSendProgress считает только "клиент → сервер", а сервер после этого
+  /// ЕЩЁ сохраняет файл в MinIO — второй, отдельный шаг, о котором клиент
+  /// вообще не получает никакого сигнала (см. разбор с пользователем).
+  /// Без этой подмены процент утыкался бы в 100% и молча висел там 5-10
+  /// секунд, выглядя как зависание — поэтому как только клиент физически
+  /// дослал все байты, показываем отдельную фазу вместо "100%".
+  ({String text, double? percent}) _uploadPhaseFor(StoredMessage msg) {
+    final percent = _uploadProgress[msg.messageId];
+    if (percent != null && percent >= 100) {
+      return (text: tr('chat.savingOnServer'), percent: null);
+    }
+    return (text: msg.processingStep ?? '', percent: percent);
+  }
+
+  /// processingStep + живой процент загрузки, если он сейчас есть для
+  /// этого сообщения (только во время реальной сетевой отправки байт —
+  /// на этапе шифрования числа нет, что и правильно, см. _uploadProgress).
+  String? _processingStepDisplay(StoredMessage msg) {
+    if (msg.processingStep == null) return null;
+    final phase = _uploadPhaseFor(msg);
+    // Только процент, БЕЗ фразы вроде "Загрузка на сервер…" — вместе они
+    // не помещаются в маленькой плитке группы (см. ТЗ пользователя со
+    // скриншотом: длинная фраза сама съедала всю ширину, а число после неё
+    // просто обрезалось многоточием и было не видно). Голый процент
+    // гарантированно влезает и однозначно читается.
+    if (phase.percent == null) return phase.text;
+    return '${phase.percent!.round()}%';
+  }
+
+  /// Только для лога (см. purgeMessageArtifacts/DebugLog — НИКОГДА
+  /// содержимого/имени файла, только тип) — чтобы в debug_log.txt было
+  /// видно, что именно не отправилось: фото, видео или произвольный файл.
+  String _mediaKindLabel(PickedMedia item) {
+    if (item.isFile) return 'file';
+    if (item.isVideo) return 'video';
+    return 'photo';
+  }
+
+  /// Экранные (только в памяти этого ChatScreen, не в ChatStore) следы
+  /// одного сообщения — живой процент, кэш уже расшифрованных байт/видео-
+  /// превью, отметки "качается прямо сейчас". Часть полной зачистки при
+  /// удалении (см. purgeMessageArtifacts — та часть про диск/очереди,
+  /// эта — про то, что держит сам открытый экран чата).
+  void _purgeInMemoryTracking(StoredMessage msg) {
+    _uploadProgress.remove(msg.messageId);
+    final mediaId = msg.mediaId;
+    if (mediaId == null) return;
+    _downloadProgress.remove(mediaId);
+    _mediaFutures.remove(mediaId);
+    _resolvedMedia.remove(mediaId);
+    _existsChecks.remove(mediaId);
+    _chunkedDownloads.remove(mediaId);
+    _videoThumbCache.remove(mediaId);
+    _activeDownloadMediaIds.remove(mediaId);
+  }
 
   String _currentPeerDeviceId = '';
   Map<String, dynamic>? _pendingInitHeader;
@@ -202,8 +333,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_composerBlocked || _recPhase != _RecPhase.idle) {
       return _composerBaseHeight;
     }
-    return _composerBaseHeight +
-        (_composerLineCount - 1) * _composerLineDelta;
+    return _composerBaseHeight + (_composerLineCount - 1) * _composerLineDelta;
   }
 
   // Баннер реплая/редактирования/пересылки (см. _bannerRow) занимает
@@ -1120,12 +1250,29 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// освободившееся место, а не раньше.
   Future<void> _deleteMessages(List<String> ids) async {
     if (ids.isEmpty) return;
+    // Снимок ДО удаления — mediaId/groupId/localPreviewPath после
+    // ChatStore.deleteMessages взять будет уже неоткуда (см.
+    // purgeMessageArtifacts, ТЗ пользователя: удаление — полный сброс, без
+    // следов в кэше/очередях).
+    final messagesToPurge = _messages
+        .where((m) => ids.contains(m.messageId))
+        .toList();
+    // Сообщение, которое не отправилось (или ещё в процессе — 'sending'/
+    // 'queued', подтверждения от сервера ещё не было), физически не могло
+    // дойти до собеседника — удалять там попросту нечего, чекбокс "у
+    // собеседника тоже" в этом случае не показываем (ТЗ пользователя).
+    // При массовом удалении показываем, если хотя бы ОДНО из выбранных
+    // реально дошло (status 'sent'/'read') — тогда сигнал имеет смысл
+    // хотя бы для части сообщений.
+    final anyDelivered = messagesToPurge.any(
+      (m) => m.status == 'sent' || m.status == 'read',
+    );
 
     final result = await showDeleteMessagesDialog(
       context,
       peerName: widget.peerLogin,
       peerAccountId: _isNotes ? null : widget.peerAccountId,
-      showPeerCheckbox: !_isNotes,
+      showPeerCheckbox: !_isNotes && anyDelivered,
     );
     if (result == null || !mounted) return;
 
@@ -1164,6 +1311,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (effectFutures.isNotEmpty) await Future.wait(effectFutures);
 
     await ChatStore.deleteMessages(widget.peerLogin, ids);
+    await purgeAllMessageArtifacts(messagesToPurge);
+    for (final m in messagesToPurge) {
+      _purgeInMemoryTracking(m);
+    }
     if (_selectionMode) _exitSelectionMode();
     await _loadHistory();
 
@@ -1347,6 +1498,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final showCopy = !msg.isMedia && !msg.isCallLog;
     final isPinned = _pinnedMessageId == msg.messageId;
 
+    // Статус для меню считаем по ВСЕЙ группе (если это группа), а не только
+    // по репрезентативному msg — та же логика агрегации, что и у
+    // _buildGroupBubble's aggregateStatus: если хоть один файл в группе не
+    // смог уйти, вся группа считается "failed" для целей меню (отменить/
+    // повторить действует на неё целиком).
+    final statusGroup = groupMessageIds == null
+        ? [msg]
+        : _messages.where((m) => groupMessageIds.contains(m.messageId));
+    final isFailed = msg.isMine && statusGroup.any((m) => m.status == 'failed');
+    final isPending =
+        msg.isMine &&
+        !isFailed &&
+        statusGroup.any((m) => m.status == 'sending' || m.status == 'queued');
+
     HapticFeedback.mediumImpact();
     final selection = await showMessageContextMenu(
       context,
@@ -1356,6 +1521,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       showEdit: showEdit,
       isPinned: isPinned,
       currentMyReaction: msg.myReaction,
+      isPending: isPending,
+      isFailed: isFailed,
       // onOpened стреляет из initState виджета оверлея — это происходит
       // ВНУТРИ активной фазы построения дерева (просто в другой, не
       // родительской для ChatScreen ветке — у Overlay), и в эту секунду
@@ -1410,7 +1577,94 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           messageText: msg.text,
         );
         break;
+      case MessageMenuAction.cancelSend:
+        await _cancelSend(groupMessageIds ?? [msg.messageId], msg.groupId);
+        break;
+      case MessageMenuAction.retrySend:
+        await _retrySend(msg.groupId ?? msg.messageId);
+        break;
     }
+  }
+
+  /// "Отменить отправку" (ТЗ пользователя) — сообщение(я) ещё не ушли
+  /// (часики): убираем локальный пузырь и всю проделанную на клиенте
+  /// работу — задание из PendingSendStore (если ещё не начало грузиться) и
+  /// из SendQueueStore (если уже зашифровано и ждёт подтверждения сервера).
+  /// Активную ПРЯМО СЕЙЧАС загрузку файла на сервер это не прерывает (нет
+  /// готового механизма отмены на середине сетевого запроса) — тогда
+  /// сообщение просто исчезает из чата, а фоновая загрузка донашивает себя
+  /// молча и результат никуда не попадает (enqueue всё равно случится, но
+  /// без видимого пузыря это уже не наблюдаемо пользователем как проблема).
+  Future<void> _cancelSend(List<String> messageIds, String? groupId) async {
+    final messagesToPurge = _messages
+        .where((m) => messageIds.contains(m.messageId))
+        .toList();
+    await ChatStore.deleteMessages(widget.peerLogin, messageIds);
+    await purgeAllMessageArtifacts(messagesToPurge);
+    for (final m in messagesToPurge) {
+      _purgeInMemoryTracking(m);
+    }
+    await _loadHistory();
+  }
+
+  /// "Повторить отправку" — сообщение(я) не смогли уйти (восклицательный
+  /// знак): просто прямо сейчас запускаем ТОТ ЖЕ повтор, который иначе
+  /// сработал бы сам при следующем реконнекте (см. PendingSendRetrier).
+  Future<void> _retrySend(String jobId) async {
+    await PendingSendRetrier.instance.retryNow(jobId);
+    await _loadHistory();
+  }
+
+  /// "Сбросить шифрование" из меню чата (ТЗ пользователя) — ручной аналог
+  /// автоматического самолечения (см. MessageRouter._onDecryptFailure: то
+  /// же самое, но только после 3 подряд неудачных расшифровок). Стирает
+  /// локальную сессию Double Ratchet и просит собеседника сделать то же —
+  /// следующее сообщение в любую сторону само поднимет свежий X3DH.
+  Future<void> _confirmAndResetSession() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text(
+          tr('chat.resetSessionTitle'),
+          style: TextStyle(color: AppColors.textPrimary),
+        ),
+        content: Text(
+          tr('chat.resetSessionBody'),
+          style: TextStyle(color: AppColors.textMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(
+              tr('common.cancel'),
+              style: TextStyle(color: AppColors.primary),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(
+              tr('chat.resetSessionConfirm'),
+              style: TextStyle(color: AppColors.primary),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    DebugLog.log(
+      'ChatScreen manual session reset requested by user for=$_currentPeerDeviceId',
+    );
+    await MessageRouter.resetSessionWith(
+      _currentPeerDeviceId,
+      reason: 'manual (chat menu)',
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(tr('chat.resetSessionDone'))));
   }
 
   Future<RatchetState> _ensureSessionForSending() async {
@@ -1537,8 +1791,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         );
       });
       return true;
-    } catch (e) {
-      debugPrint('Ошибка отправки служебного сообщения: $e');
+    } catch (e, stackTrace) {
+      DebugLog.log(
+        'ChatScreen control message send FAILED type=${inner.type} '
+        'to=$_currentPeerDeviceId error=$e\n$stackTrace',
+      );
       return false;
     }
   }
@@ -1639,7 +1896,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           peerLogin: widget.peerLogin,
         );
       });
-    } catch (_) {
+      DebugLog.log(
+        'ChatScreen send OK (text messageId=$messageId) to=$_currentPeerDeviceId',
+      );
+    } catch (e, stackTrace) {
+      DebugLog.log(
+        'ChatScreen send FAILED (text messageId=$messageId) '
+        'to=$_currentPeerDeviceId error=$e\n$stackTrace',
+      );
       await ChatStore.updateMessageStatus(
         widget.peerLogin,
         messageId,
@@ -2001,6 +2265,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final size = await file.length();
     final messageId =
         '${DateTime.now().microsecondsSinceEpoch}_${isVideo ? 'vnote' : 'voice'}';
+    // Кадр-превью видео-сообщения (кружка/квадрата) до отправки — тот же
+    // приём, что и для обычного видео из галереи (см. _writeLocalVideoThumbnail),
+    // чтобы вместо чёрного квадрата сразу было видно содержимое (ТЗ пользователя).
+    final localPreviewPath = isVideo
+        ? await _writeLocalVideoThumbnail(file.path)
+        : null;
 
     await ChatStore.addMessage(
       widget.peerLogin,
@@ -2017,6 +2287,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         durationMs: duration.inMilliseconds,
         status: 'sending',
         processingStep: tr('chat.queued'),
+        localPreviewPath: localPreviewPath,
       ),
       accountId: widget.peerAccountId,
     );
@@ -2040,9 +2311,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           messageId,
           'sent',
         );
+        DebugLog.log(
+          'ChatScreen send OK (${isVideo ? 'video_note' : 'voice'} '
+          'messageId=$messageId, notes) size=$size',
+        );
       } catch (e, stackTrace) {
-        debugPrint(
-          'Ошибка загрузки голосового/видео в заметки: $e\n$stackTrace',
+        DebugLog.log(
+          'ChatScreen send FAILED (${isVideo ? 'video_note' : 'voice'} '
+          'messageId=$messageId, notes) size=$size error=$e\n$stackTrace',
         );
         await ChatStore.updateMessageStatus(
           widget.peerLogin,
@@ -2146,8 +2422,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           );
         }),
       );
+      DebugLog.log(
+        'ChatScreen send OK (${isVideo ? 'video_note' : 'voice'} '
+        'messageId=$messageId) to=$_currentPeerDeviceId size=$size',
+      );
     } catch (e, stackTrace) {
-      debugPrint('Ошибка отправки голосового/видео сообщения: $e\n$stackTrace');
+      DebugLog.log(
+        'ChatScreen send FAILED (${isVideo ? 'video_note' : 'voice'} '
+        'messageId=$messageId) to=$_currentPeerDeviceId size=$size '
+        'error=$e\n$stackTrace',
+      );
       await ChatStore.updateMessageStatus(
         widget.peerLogin,
         messageId,
@@ -2638,7 +2922,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                '${tr('chat.fileTooLarge')} (${_formatFileSize(size)})',
+                '${tr('chat.fileTooLarge')} (${formatFileSize(size)})',
               ),
             ),
           );
@@ -2648,6 +2932,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
       final messageId = '${DateTime.now().microsecondsSinceEpoch}_$i';
       final fileName = item.file.path.split('/').last;
+      // Видео (в отличие от произвольного файла) — тоже медиа: своё
+      // превью (кадр из видео) и открывается во встроенном просмотрщике,
+      // как фото, а не иконкой+именем (ТЗ пользователя). Генерируем кадр
+      // ДО первой отрисовки пузыря — иначе первый кадр показал бы плейсхолдер
+      // "нет превью", который через миг сменился бы на настоящий, заметный скачок.
+      final localPreviewPath = item.isFile
+          ? null
+          : item.isVideo
+          ? await _writeLocalVideoThumbnail(item.file.path)
+          : item.file.path;
 
       await ChatStore.addMessage(
         widget.peerLogin,
@@ -2661,16 +2955,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           true,
           DateTime.now().millisecondsSinceEpoch,
           isMedia: true,
-          isFile: item.isFile || item.isVideo,
+          isFile: item.isFile,
+          isVideo: item.isVideo,
           fileSize: size,
           chunked: size > _streamingThresholdBytes,
           fileName: fileName,
           isSpoiler: item.isSpoiler,
           status: 'sending',
           processingStep: tr('chat.queued'),
-          localPreviewPath: (item.isVideo || item.isFile)
-              ? null
-              : item.file.path,
+          localPreviewPath: localPreviewPath,
           groupId: groupId,
         ),
         accountId: widget.peerAccountId,
@@ -2704,6 +2997,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Кадр-превью локально выбранного (ещё не отправленного) видео — пишется
+  /// во временный файл рядом, чтобы localPreviewPath мог указывать на него
+  /// точно так же, как на оригинал у обычного фото (см. _photoPreview,
+  /// Image.file). null, если генерация не удалась (повреждённый файл,
+  /// неподдерживаемый кодек и т.п.) — тогда просто нет превью, не ошибка.
+  Future<String?> _writeLocalVideoThumbnail(String videoPath) async {
+    try {
+      final bytes = await generateVideoThumbnail(videoPath);
+      if (bytes == null) return null;
+      final tempDir = await getTemporaryDirectory();
+      final thumbFile = File(
+        '${tempDir.path}/vthumb_${DateTime.now().microsecondsSinceEpoch}.jpg',
+      );
+      await thumbFile.writeAsBytes(bytes);
+      return thumbFile.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Шифрует и грузит один файл на сервер — тонкая обёртка над общей
   /// логикой из media_upload.dart (переиспользуется и PendingSendRetrier
   /// для автоматического повтора после сбоя сети, см. ТЗ пользователя).
@@ -2723,6 +3036,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       fileName: fileName,
       token: token,
       peerAccountIdForUpload: peerAccountIdForUpload,
+      onProgress: _uploadProgressUpdater(messageId),
     );
   }
 
@@ -2749,9 +3063,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           messageId,
           'sent',
         );
+        DebugLog.log(
+          'ChatScreen send OK (media messageId=$messageId, notes) '
+          'kind=${_mediaKindLabel(item)} size=$size',
+        );
       } catch (e, stackTrace) {
-        debugPrint(
-          'Ошибка загрузки медиа в заметки $messageId: $e\n$stackTrace',
+        DebugLog.log(
+          'ChatScreen send FAILED (media messageId=$messageId, notes) '
+          'kind=${_mediaKindLabel(item)} size=$size error=$e\n$stackTrace',
         );
         await ChatStore.updateMessageStatus(
           widget.peerLogin,
@@ -2799,7 +3118,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             nonceBase64: desc['nonce'] as String?,
             macBase64: desc['mac'] as String?,
             fileName: fileName,
-            isFile: item.isFile || item.isVideo,
+            isFile: item.isFile,
+            isVideo: item.isVideo,
             fileSize: size,
             chunked: desc['chunked'] as bool,
             spoiler: item.isSpoiler,
@@ -2841,8 +3161,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           );
         }),
       );
+      DebugLog.log(
+        'ChatScreen send OK (media messageId=$messageId) '
+        'to=$_currentPeerDeviceId kind=${_mediaKindLabel(item)} size=$size',
+      );
     } catch (e, stackTrace) {
-      debugPrint('Ошибка отправки медиа $messageId: $e\n$stackTrace');
+      DebugLog.log(
+        'ChatScreen send FAILED (media messageId=$messageId) '
+        'to=$_currentPeerDeviceId kind=${_mediaKindLabel(item)} size=$size '
+        'error=$e\n$stackTrace',
+      );
       await ChatStore.updateMessageStatus(
         widget.peerLogin,
         messageId,
@@ -2885,6 +3213,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final token = await Session.getToken();
         final myAccountId = await Session.getAccountId() ?? '';
         for (final q in items) {
+          DebugLog.log(
+            'ChatScreen group upload attempt (notes) groupId=$groupId '
+            'messageId=${q.messageId} kind=${_mediaKindLabel(q.item)} '
+            'size=${q.size}',
+          );
           await _uploadAndDescribeMedia(
             q.item,
             q.messageId,
@@ -2908,8 +3241,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             'sent',
           );
         }
+        DebugLog.log(
+          'ChatScreen group send OK (notes) groupId=$groupId count=${items.length}',
+        );
       } catch (e, stackTrace) {
-        debugPrint('Ошибка загрузки группы в заметки: $e\n$stackTrace');
+        DebugLog.log(
+          'ChatScreen group send FAILED (notes) groupId=$groupId '
+          'count=${items.length} error=$e\n$stackTrace',
+        );
         if (textMessageId != null) {
           await ChatStore.updateMessageStatus(
             widget.peerLogin,
@@ -2945,6 +3284,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
           final files = <Map<String, dynamic>>[];
           for (final q in items) {
+            DebugLog.log(
+              'ChatScreen group upload attempt groupId=$groupId '
+              'messageId=${q.messageId} kind=${_mediaKindLabel(q.item)} '
+              'size=${q.size}',
+            );
             files.add(
               await _uploadAndDescribeMedia(
                 q.item,
@@ -2967,6 +3311,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
           final inner = InnerMessage.mediaGroup(
             groupId: groupId,
+            messageId: groupId,
             caption: caption,
             textMessageId: textMessageId,
             files: files,
@@ -3029,8 +3374,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           );
         }),
       );
+      DebugLog.log(
+        'ChatScreen group send OK (enqueued, awaiting ack) groupId=$groupId '
+        'to=$_currentPeerDeviceId count=${items.length}',
+      );
     } catch (e, stackTrace) {
-      debugPrint('Ошибка отправки группы: $e\n$stackTrace');
+      DebugLog.log(
+        'ChatScreen group send FAILED groupId=$groupId '
+        'to=$_currentPeerDeviceId count=${items.length} error=$e\n$stackTrace',
+      );
       if (textMessageId != null) {
         await ChatStore.updateMessageStatus(
           widget.peerLogin,
@@ -3074,26 +3426,72 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<Uint8List> _loadAndCacheMedia(StoredMessage msg) async {
+  Future<Uint8List> _loadAndCacheMedia(
+    StoredMessage msg, {
+    void Function(double percent)? onProgress,
+  }) async {
     final cached = await MediaCache.read(msg.mediaId!);
     if (cached != null) return cached;
 
-    final token = await Session.getToken();
-    final ciphertext = await _apiClient.downloadEncryptedMedia(
-      token!,
-      msg.mediaId!,
+    DebugLog.log(
+      'ChatScreen download attempt (non-chunked) mediaId=${msg.mediaId} '
+      'messageId=${msg.messageId} size=${msg.fileSize}',
     );
-    final plainBytes = await decryptFileBytes(
-      key: base64Decode(msg.mediaKeyBase64!),
-      nonce: base64Decode(msg.mediaNonceBase64!),
-      mac: base64Decode(msg.mediaMacBase64!),
-      ciphertext: ciphertext,
-    );
-    await MediaCache.write(msg.mediaId!, plainBytes);
-    return plainBytes;
+    try {
+      final token = await Session.getToken();
+      final ciphertext = await _apiClient.downloadEncryptedMedia(
+        token!,
+        msg.mediaId!,
+        onProgress: onProgress,
+      );
+      final plainBytes = await decryptFileBytes(
+        key: base64Decode(msg.mediaKeyBase64!),
+        nonce: base64Decode(msg.mediaNonceBase64!),
+        mac: base64Decode(msg.mediaMacBase64!),
+        ciphertext: ciphertext,
+      );
+      await MediaCache.write(msg.mediaId!, plainBytes);
+      DebugLog.log(
+        'ChatScreen download+decrypt OK mediaId=${msg.mediaId} '
+        'messageId=${msg.messageId}',
+      );
+      return plainBytes;
+    } catch (e, stackTrace) {
+      DebugLog.log(
+        'ChatScreen download/decrypt FAILED mediaId=${msg.mediaId} '
+        'messageId=${msg.messageId} error=$e\n$stackTrace',
+      );
+      rethrow;
+    }
   }
 
-  Future<void> _downloadAndDecryptChunked(StoredMessage msg) async {
+  Future<void> _downloadAndDecryptChunked(
+    StoredMessage msg, {
+    void Function(double percent)? onProgress,
+  }) async {
+    DebugLog.log(
+      'ChatScreen download attempt (chunked) mediaId=${msg.mediaId} '
+      'messageId=${msg.messageId} size=${msg.fileSize}',
+    );
+    try {
+      await _downloadAndDecryptChunkedInner(msg, onProgress: onProgress);
+      DebugLog.log(
+        'ChatScreen download+decrypt OK (chunked) mediaId=${msg.mediaId} '
+        'messageId=${msg.messageId}',
+      );
+    } catch (e, stackTrace) {
+      DebugLog.log(
+        'ChatScreen download/decrypt FAILED (chunked) mediaId=${msg.mediaId} '
+        'messageId=${msg.messageId} error=$e\n$stackTrace',
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _downloadAndDecryptChunkedInner(
+    StoredMessage msg, {
+    void Function(double percent)? onProgress,
+  }) async {
     final token = await Session.getToken();
     final tempDir = await getTemporaryDirectory();
     final cipherTempFile = File('${tempDir.path}/dl_${msg.mediaId}.enc');
@@ -3102,6 +3500,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       token!,
       msg.mediaId!,
       cipherTempFile,
+      onProgress: onProgress,
     );
 
     final destFile = await MediaCache.fileFor(msg.mediaId!);
@@ -3119,12 +3518,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// Готовит расшифрованный файл голосового/видео-сообщения для плеера —
   /// та же логика выбора "чанковано/не чанковано", что и у остального
   /// медиа, просто отдаёт готовый File, а не байты.
-  Future<File> _resolveRecordedMediaFile(StoredMessage msg) async {
+  Future<File> _resolveRecordedMediaFile(
+    StoredMessage msg, {
+    void Function(double percent)? onProgress,
+  }) async {
     if (!(await MediaCache.exists(msg.mediaId!))) {
       if (msg.chunked) {
-        await _downloadAndDecryptChunked(msg);
+        await _downloadAndDecryptChunked(msg, onProgress: onProgress);
       } else {
-        await _loadAndCacheMedia(msg);
+        await _loadAndCacheMedia(msg, onProgress: onProgress);
       }
     }
     return MediaCache.fileFor(msg.mediaId!);
@@ -3177,44 +3579,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return _clickableFileRow(msg, size: size);
     }
     if (msg.isMine && (msg.status == 'sending' || msg.status == 'failed')) {
-      if (msg.status == 'failed') {
-        return Stack(
-          children: [
-            if (msg.localPreviewPath != null)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: SizedBox(
-                  width: size,
-                  height: size,
-                  child: Opacity(
-                    opacity: 0.5,
-                    child: Image.file(
-                      File(msg.localPreviewPath!),
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                ),
-              )
-            else
-              Container(
-                width: size,
-                height: size,
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-            const Center(
-              child: Icon(
-                Icons.error_outline,
-                color: Colors.redAccent,
-                size: 40,
-              ),
-            ),
-          ],
-        );
-      }
-
+      // Пузырь выглядит РОВНО так же, как уже отправленное фото — статус
+      // (часики / маленький восклицательный знак) показывает только строка
+      // времени под пузырём (см. _buildStatusIconFor), не сам превью. Раньше
+      // 'failed' затемняло превью и рисовало поверх огромную (40px) красную
+      // иконку — из-за неё отправленная разом группа фото визуально
+      // переставала читаться как единый альбом (ТЗ пользователя: "все
+      // сообщения в чате, вне зависимости от их статуса, всегда должны
+      // отображаться одинаково").
+      final uploadPhase = msg.processingStep != null
+          ? _uploadPhaseFor(msg)
+          : null;
       return Stack(
         children: [
           if (msg.localPreviewPath != null)
@@ -3223,9 +3598,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               child: SizedBox(
                 width: size,
                 height: size,
-                child: Image.file(
-                  File(msg.localPreviewPath!),
-                  fit: BoxFit.cover,
+                child: _withVideoPlayBadge(
+                  Image.file(File(msg.localPreviewPath!), fit: BoxFit.cover),
+                  show: msg.isVideo,
                 ),
               ),
             )
@@ -3244,49 +3619,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 size: 40,
               ),
             ),
-          if (msg.processingStep != null)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: EdgeInsets.symmetric(
-                  horizontal: size < 150 ? 4 : 8,
-                  vertical: size < 150 ? 3 : 6,
-                ),
-                decoration: const BoxDecoration(
-                  borderRadius: BorderRadius.only(
-                    bottomLeft: Radius.circular(14),
-                    bottomRight: Radius.circular(14),
-                  ),
-                  color: Colors.black54,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: size < 150 ? 9 : 12,
-                      height: size < 150 ? 9 : 12,
-                      child: const CircularProgressIndicator(
-                        strokeWidth: 1.5,
-                        color: Colors.white,
-                      ),
-                    ),
-                    SizedBox(width: size < 150 ? 4 : 6),
-                    Flexible(
-                      child: Text(
-                        msg.processingStep!,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: size < 150 ? 9 : 12,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+          if (uploadPhase != null)
+            MediaStatusOverlay(
+              statusText: uploadPhase.text,
+              percent: uploadPhase.percent,
+              size: size,
             ),
         ],
       );
@@ -3311,7 +3648,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         if (existsSnapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
             height: 40,
-            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            child: Center(child: AppLoadingIndicator(size: 22)),
           );
         }
 
@@ -3336,8 +3673,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             : () {
                 setState(() {
                   _existsChecks.remove(msg.mediaId!);
-                  _chunkedDownloads[msg.mediaId!] = _downloadAndDecryptChunked(
-                    msg,
+                  _downloadProgress[msg.mediaId!] = 0;
+                  _chunkedDownloads[msg.mediaId!] = _enqueueDownload(
+                    msg.mediaId!,
+                    () => _downloadAndDecryptChunked(
+                      msg,
+                      onProgress: _progressUpdater(msg.mediaId!),
+                    ),
                   );
                 });
               },
@@ -3352,9 +3694,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     return SizedBox(
                       width: 28,
                       height: 28,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.textPrimary,
+                      child: Center(
+                        child: Text(
+                          '${(_downloadProgress[msg.mediaId!] ?? 0).round()}%',
+                          style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
                     );
                   }
@@ -3384,7 +3732,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   ),
                 ),
                 Text(
-                  _formatFileSize(msg.fileSize),
+                  formatFileSize(msg.fileSize),
                   style: TextStyle(color: AppColors.textMuted, fontSize: 11),
                 ),
               ],
@@ -3402,7 +3750,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           : () {
               setState(() {
                 _existsChecks.remove(msg.mediaId!);
-                _mediaFutures[msg.mediaId!] = _loadAndCacheMedia(msg);
+                _downloadProgress[msg.mediaId!] = 0;
+                _mediaFutures[msg.mediaId!] = _enqueueDownload(
+                  msg.mediaId!,
+                  () => _loadAndCacheMedia(
+                    msg,
+                    onProgress: _progressUpdater(msg.mediaId!),
+                  ),
+                );
               });
             },
       child: Row(
@@ -3416,9 +3771,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   return SizedBox(
                     width: 28,
                     height: 28,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppColors.textPrimary,
+                    child: Center(
+                      child: Text(
+                        '${(_downloadProgress[msg.mediaId!] ?? 0).round()}%',
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                   );
                 }
@@ -3450,7 +3811,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ),
               ),
               Text(
-                _formatFileSize(msg.fileSize),
+                formatFileSize(msg.fileSize),
                 style: TextStyle(color: AppColors.textMuted, fontSize: 11),
               ),
             ],
@@ -3584,7 +3945,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ),
               if (sending)
                 Text(
-                  msg.processingStep!,
+                  _processingStepDisplay(msg)!,
                   style: TextStyle(
                     color: _bubbleTextColor(msg.isMine).withValues(alpha: 0.7),
                     fontSize: 11,
@@ -3605,8 +3966,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// Список всех фото текущего чата (то, что реально может показать
   /// просмотрщик) в порядке появления в чате — используется и для
   /// определения стартового индекса, и как набор страниц для листания.
-  List<StoredMessage> _viewablePhotos() =>
-      _messages.where((m) => m.isMedia && !m.isFile).toList();
+  List<StoredMessage> _viewablePhotos() => _messages
+      .where((m) => m.isMedia && !m.isFile && !m.isVoice && !m.isVideoNote)
+      .toList();
 
   void _openMediaViewer(StoredMessage msg) {
     final photos = _viewablePhotos();
@@ -3619,6 +3981,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           items: photos,
           initialIndex: index,
           resolveBytes: _resolvePhotoBytes,
+          isVideo: (m) => m.isVideo,
+          resolveVideoFile: (m, {onProgress}) =>
+              _resolveRecordedMediaFile(m, onProgress: onProgress),
         ),
       ),
     );
@@ -3665,13 +4030,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           child: SizedBox(
             width: side,
             height: side,
-            child: isHiddenSpoiler
-                ? _spoilerOverlayImage(cached, side)
-                : Image.memory(
-                    cached,
-                    fit: BoxFit.cover,
-                    cacheWidth: (side * 2).round(),
-                  ),
+            child: _withVideoPlayBadge(
+              isHiddenSpoiler
+                  ? _spoilerOverlayImage(cached, side)
+                  : Image.memory(
+                      cached,
+                      fit: BoxFit.cover,
+                      cacheWidth: (side * 2).round(),
+                    ),
+              show: msg.isVideo,
+            ),
           ),
         ),
       );
@@ -3679,17 +4047,42 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     final future = _mediaFutures.putIfAbsent(
       msg.mediaId!,
-      () => _resolvePhotoBytes(msg),
+      () => _enqueueDownload(
+        msg.mediaId!,
+        () =>
+            _resolvePhotoBytes(msg, onProgress: _progressUpdater(msg.mediaId!)),
+      ),
     );
 
     return FutureBuilder<Uint8List>(
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return SizedBox(
+          final isActive = _activeDownloadMediaIds.contains(msg.mediaId);
+          return Container(
             width: side,
             height: side,
-            child: const Center(child: CircularProgressIndicator()),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: AppColors.textMuted.withValues(alpha: 0.35),
+              ),
+            ),
+            child: Stack(
+              children: [
+                MediaStatusOverlay(
+                  statusText: isActive
+                      ? tr('media.downloading')
+                      : tr('chat.queued'),
+                  percent: isActive
+                      ? (_downloadProgress[msg.mediaId!] ?? 0)
+                      : null,
+                  size: side,
+                  borderRadius: BorderRadius.circular(13),
+                ),
+              ],
+            ),
           );
         }
         if (snapshot.hasError || snapshot.data == null) {
@@ -3711,13 +4104,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             child: SizedBox(
               width: side,
               height: side,
-              child: isHiddenSpoiler
-                  ? _spoilerOverlayImage(snapshot.data!, side)
-                  : Image.memory(
-                      snapshot.data!,
-                      fit: BoxFit.cover,
-                      cacheWidth: (side * 2).round(),
-                    ),
+              child: _withVideoPlayBadge(
+                isHiddenSpoiler
+                    ? _spoilerOverlayImage(snapshot.data!, side)
+                    : Image.memory(
+                        snapshot.data!,
+                        fit: BoxFit.cover,
+                        cacheWidth: (side * 2).round(),
+                      ),
+                show: msg.isVideo,
+              ),
             ),
           ),
         );
@@ -3725,21 +4121,73 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<Uint8List> _resolvePhotoBytes(StoredMessage msg) async {
+  /// Полупрозрачный треугольник play поверх кадра-превью — единственный
+  /// способ отличить видео от фото в сетке/пузыре, пока не тапнули (сам
+  /// _photoPreview показывает и то, и другое одинаково, см. ТЗ пользователя
+  /// — оба типа получили общее превью).
+  Widget _withVideoPlayBadge(Widget child, {required bool show}) {
+    if (!show) return child;
+    return Stack(
+      fit: StackFit.expand,
+      alignment: Alignment.center,
+      children: [
+        child,
+        Container(
+          decoration: const BoxDecoration(
+            color: Colors.black38,
+            shape: BoxShape.circle,
+          ),
+          padding: const EdgeInsets.all(8),
+          child: const Icon(Icons.play_arrow, color: Colors.white, size: 22),
+        ),
+      ],
+    );
+  }
+
+  Future<Uint8List> _resolvePhotoBytes(
+    StoredMessage msg, {
+    void Function(double percent)? onProgress,
+  }) async {
+    if (msg.isVideo) {
+      return _resolveVideoThumbnailBytes(msg, onProgress: onProgress);
+    }
     if (msg.chunked) {
       if (!(await MediaCache.exists(msg.mediaId!))) {
-        await _downloadAndDecryptChunked(msg);
+        await _downloadAndDecryptChunked(msg, onProgress: onProgress);
       }
       final file = await MediaCache.fileFor(msg.mediaId!);
       return file.readAsBytes();
     }
-    return _loadAndCacheMedia(msg);
+    return _loadAndCacheMedia(msg, onProgress: onProgress);
   }
 
-  String _formatFileSize(int bytes) {
-    if (bytes < 1024) return '$bytes Б';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} КБ';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} МБ';
+  // Кадр-превью видео (для пузыря в чате и как fallback-картинка при
+  // "Сохранить в галерею", если полноценный файл почему-то недоступен) —
+  // отдельный кэш от _resolvedMedia, потому что там лежит РЕАЛЬНЫЙ файл
+  // видео (нужен просмотрщику для проигрывания), а тут — маленький JPEG.
+  final Map<String, Uint8List> _videoThumbCache = {};
+
+  Future<Uint8List> _resolveVideoThumbnailBytes(
+    StoredMessage msg, {
+    void Function(double percent)? onProgress,
+  }) async {
+    final cachedThumb = _videoThumbCache[msg.mediaId!];
+    if (cachedThumb != null) return cachedThumb;
+
+    if (!(await MediaCache.exists(msg.mediaId!))) {
+      if (msg.chunked) {
+        await _downloadAndDecryptChunked(msg, onProgress: onProgress);
+      } else {
+        await _loadAndCacheMedia(msg, onProgress: onProgress);
+      }
+    }
+    final file = await MediaCache.fileFor(msg.mediaId!);
+    final thumbBytes = await generateVideoThumbnail(file.path);
+    if (thumbBytes == null) {
+      throw Exception('Не удалось сгенерировать превью видео');
+    }
+    _videoThumbCache[msg.mediaId!] = thumbBytes;
+    return thumbBytes;
   }
 
   String _formatCallDuration(int seconds) {
@@ -4044,7 +4492,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _ReactionChip(emoji: myReaction, mine: true, justChanged: justChanged),
+          _ReactionChip(
+            emoji: myReaction,
+            mine: true,
+            justChanged: justChanged,
+          ),
           if (myReaction != null && peerReaction != null)
             const SizedBox(width: 4),
           _ReactionChip(
@@ -4223,8 +4675,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       }
 
       if (_swipeIsBackNavigation!) {
-        final backSwipeEnabled =
-            !_emojiMode && !_selectionMode && !_searchMode;
+        final backSwipeEnabled = !_emojiMode && !_selectionMode && !_searchMode;
         if (!backSwipeEnabled) return;
         var route = _swipeBackRoute;
         if (route == null) {
@@ -4248,8 +4699,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       final width = MediaQuery.of(context).size.width;
       final maxOffset = -width * 0.10;
       final next = _swipeCumulativeDx.clamp(maxOffset, 0.0);
-      if (_swipeReplyTargetId != targetMsg.messageId ||
-          next != _swipeReplyDx) {
+      if (_swipeReplyTargetId != targetMsg.messageId || next != _swipeReplyDx) {
         setState(() {
           _swipeReplyTargetId = targetMsg.messageId;
           _swipeReplyDx = next;
@@ -4493,6 +4943,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// при проигрывании, не воюя с паддингами фиксированного пузыря.
   Widget _buildVideoNoteBubble(StoredMessage msg) {
     final expandedSize = MediaQuery.of(context).size.width - 32;
+    final uploadPhase = msg.processingStep != null
+        ? _uploadPhaseFor(msg)
+        : null;
     return Column(
       crossAxisAlignment: msg.isMine
           ? CrossAxisAlignment.end
@@ -4500,10 +4953,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       mainAxisSize: MainAxisSize.min,
       children: [
         VideoNotePlayer(
-          resolveFile: () => _resolveRecordedMediaFile(msg),
+          resolveFile: ({onProgress}) =>
+              _resolveRecordedMediaFile(msg, onProgress: onProgress),
+          resolveThumbnail: ({onProgress}) =>
+              _resolveVideoThumbnailBytes(msg, onProgress: onProgress),
+          localPreviewPath: msg.localPreviewPath,
           durationMs: msg.durationMs,
           expandedSize: expandedSize,
-          processingStep: msg.processingStep,
+          processingStep: uploadPhase?.text,
+          uploadPercent: uploadPhase?.percent,
           coordinator: _mediaCoordinator,
           messageId: msg.messageId,
         ),
@@ -4566,8 +5024,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   VoiceMessagePlayer(
                     isMine: msg.isMine,
                     durationMs: msg.durationMs,
-                    processingStep: msg.processingStep,
-                    resolveFile: () => _resolveRecordedMediaFile(msg),
+                    processingStep: _processingStepDisplay(msg),
+                    resolveFile: ({onProgress}) =>
+                        _resolveRecordedMediaFile(msg, onProgress: onProgress),
                     coordinator: _mediaCoordinator,
                     messageId: msg.messageId,
                   ),
@@ -4642,8 +5101,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // моменту возврата в приложение корректно равны нулю.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
+    // ВАЖНО: реагируем только на paused, не на inactive. inactive
+    // наступает не только при реальном уходе в фон, но и при ЛЮБОМ
+    // системном оверлее поверх ещё видимого приложения — например, при
+    // долгом нажатии на пробел на клавиатуре всплывает системное окошко
+    // "сменить клавиатуру ввода", и Android на это время тоже переводит
+    // приложение в inactive (ТЗ пользователя: окошко появлялось на долю
+    // секунды и сразу пропадало вместе с клавиатурой). Снимая фокус уже
+    // здесь, мы просили Flutter закрыть клавиатуру — а вместе с ней
+    // закрывалось и системное окошко, которое от неё зависит. Настоящий
+    // уход в фон всё равно проходит через inactive → paused по цепочке,
+    // так что реагировать только на paused по-прежнему ловит его вовремя.
+    if (state == AppLifecycleState.paused) {
       if (_textFocusNode.hasFocus) {
         _textFocusNode.unfocus();
       }
@@ -4824,6 +5293,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     icon: Icon(Icons.more_vert, color: AppColors.textPrimary),
                     onSelected: (value) {
                       if (value == 'search') _enterSearchMode();
+                      if (value == 'reset_session') {
+                        unawaited(_confirmAndResetSession());
+                      }
                     },
                     itemBuilder: (context) => [
                       PopupMenuItem(
@@ -4839,6 +5311,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           ],
                         ),
                       ),
+                      if (!_isNotes)
+                        PopupMenuItem(
+                          value: 'reset_session',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.lock_reset,
+                                color: AppColors.textMuted,
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                tr('chat.resetSessionAction'),
+                                style: TextStyle(color: AppColors.textPrimary),
+                              ),
+                            ],
+                          ),
+                        ),
                     ],
                   ),
                 ],
@@ -5600,7 +6089,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   28 +
                                       64 +
                                       reserved -
-                                      (anyPanelOpen ? 5 + systemBottomInset : 0) +
+                                      (anyPanelOpen
+                                          ? 5 + systemBottomInset
+                                          : 0) +
                                       (_composerBannerVisible
                                           ? _composerBannerHeight
                                           : 0),
@@ -6300,10 +6791,7 @@ class _ReactionChipState extends State<_ReactionChip>
             ? const SizedBox.shrink(key: ValueKey('_empty'))
             : Container(
                 key: ValueKey('${widget.mine}_${widget.emoji}'),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 6,
-                  vertical: 3,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                 decoration: BoxDecoration(
                   color: AppColors.surface,
                   borderRadius: BorderRadius.circular(30),
@@ -6316,7 +6804,10 @@ class _ReactionChipState extends State<_ReactionChip>
                     ),
                   ],
                 ),
-                child: Text(widget.emoji!, style: const TextStyle(fontSize: 13)),
+                child: Text(
+                  widget.emoji!,
+                  style: const TextStyle(fontSize: 13),
+                ),
               ),
       ),
     );

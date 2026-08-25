@@ -31,4 +31,61 @@ class MediaCache {
     final dest = await fileFor(mediaId);
     await source.copy(dest.path);
   }
+
+  /// Стирает расшифрованный кэш одного файла — часть полной зачистки
+  /// удалённого сообщения (см. purgeMessageArtifacts, ТЗ пользователя:
+  /// удаление должно быть полным сбросом, а не просто исчезновением из
+  /// списка). Тихий no-op, если файла и так уже нет.
+  static Future<void> delete(String mediaId) async {
+    final file = await fileFor(mediaId);
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
+  /// "Очистить кэш медиа" в настройках (ТЗ пользователя) — стирает ВСЕ
+  /// расшифрованные файлы разом, только по префиксу media_cache_ (во
+  /// временной папке лежат и другие, не относящиеся к этому кэшу файлы —
+  /// временные файлы шифрования при отправке, кадры-превью и т.п., их
+  /// трогать нельзя). Сама переписка (ChatStore — mediaId/ключи/nonce/mac)
+  /// не трогается вообще, поэтому любой файл после этого просто скачается
+  /// и расшифруется заново по обычному пути (см. _resolvePhotoBytes/
+  /// _resolveRecordedMediaFile в chat_screen.dart — они уже сами проверяют
+  /// MediaCache.exists и докачивают, если файла нет).
+  static Future<int> clearAll() async {
+    final dir = await getTemporaryDirectory();
+    var count = 0;
+    try {
+      await for (final entity in dir.list()) {
+        if (entity is! File) continue;
+        final name = entity.path.split(Platform.pathSeparator).last;
+        if (!name.startsWith('media_cache_')) continue;
+        try {
+          await entity.delete();
+          count++;
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return count;
+  }
+
+  /// Суммарный размер кэша в байтах — для подтверждения перед очисткой
+  /// (ТЗ пользователя: "нужно выводить, сколько места будет освобождено").
+  /// Тот же префиксный фильтр, что и в clearAll — считаем ровно то, что
+  /// потом реально удалится, не больше.
+  static Future<int> totalSize() async {
+    final dir = await getTemporaryDirectory();
+    var total = 0;
+    try {
+      await for (final entity in dir.list()) {
+        if (entity is! File) continue;
+        final name = entity.path.split(Platform.pathSeparator).last;
+        if (!name.startsWith('media_cache_')) continue;
+        try {
+          total += await entity.length();
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return total;
+  }
 }

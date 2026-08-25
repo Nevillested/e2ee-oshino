@@ -19,10 +19,14 @@ import 'send_queue_processor.dart';
 /// можно установить, даже если собеседник сейчас офлайн.
 ///
 /// Вызывающий код должен сам обернуть вызов в
-/// `SendLock.run(peerLogin, () => sendPeerMessage(...))`, используя тот
-/// же ключ блокировки (логин собеседника), что и ChatScreen — иначе
-/// параллельные операции с состоянием Double Ratchet одного и того же
-/// собеседника могут затереть друг друга.
+/// `SendLock.run(peerDeviceId, () => sendPeerMessage(...))`, используя тот
+/// же ключ блокировки (device_id собеседника — НЕ login: раньше здесь по
+/// ошибке стоял login, из-за чего блокировка не серилизовалась ни с одним
+/// другим путём отправки в приложении, все они ключуются по device_id, см.
+/// ChatScreen/MessageRouter/control_message_sender.dart/message_resend.dart),
+/// что и остальные пути отправки — иначе параллельные операции с
+/// состоянием Double Ratchet одного и того же собеседника могут затереть
+/// друг друга.
 Future<void> sendPeerMessage(String peerDeviceId, InnerMessage inner) async {
   final token = await Session.getToken();
   final myDeviceId = await KeyStore.getStoredDeviceId();

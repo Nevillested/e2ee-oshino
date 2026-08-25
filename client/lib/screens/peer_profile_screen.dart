@@ -3,6 +3,7 @@ import '../l10n/app_strings.dart';
 import '../services/avatar_cache.dart';
 import '../services/peer_profile_cache.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_loading_indicator.dart';
 import '../widgets/cached_avatar_image.dart';
 import '../widgets/photo_viewer_screen.dart';
 import '../widgets/theme_reactive.dart';
@@ -109,7 +110,7 @@ class _PeerProfileScreenState extends State<PeerProfileScreen> {
                   ),
                   const SizedBox(height: 32),
                   if (!_loaded)
-                    const Center(child: CircularProgressIndicator())
+                    const Center(child: AppLoadingIndicator())
                   else ...[
                     if (_profile?.status?.isNotEmpty == true)
                       ListTile(

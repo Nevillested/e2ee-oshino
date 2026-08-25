@@ -50,10 +50,7 @@ class AppStrings {
       AppLocale.ru: 'Идёт регистрация, подождите',
       AppLocale.en: 'Registering, please wait',
     },
-    'totp.title': {
-      AppLocale.ru: 'Подтверждение',
-      AppLocale.en: 'Confirmation',
-    },
+    'totp.title': {AppLocale.ru: 'Подтверждение', AppLocale.en: 'Confirmation'},
     'totp.scanInstruction': {
       AppLocale.ru:
           'Отсканируй эту ссылку в приложении-аутентификаторе '
@@ -70,10 +67,7 @@ class AppStrings {
       AppLocale.ru: 'Код скопирован',
       AppLocale.en: 'Code copied',
     },
-    'totp.confirm': {
-      AppLocale.ru: 'Подтвердить',
-      AppLocale.en: 'Confirm',
-    },
+    'totp.confirm': {AppLocale.ru: 'Подтвердить', AppLocale.en: 'Confirm'},
 
     'common.copied': {AppLocale.ru: 'Скопировано', AppLocale.en: 'Copied'},
 
@@ -99,6 +93,10 @@ class AppStrings {
       AppLocale.ru: 'Загрузка на сервер…',
       AppLocale.en: 'Uploading to server…',
     },
+    'chat.savingOnServer': {
+      AppLocale.ru: 'Сохранение на сервере',
+      AppLocale.en: 'Saving on server',
+    },
     'chat.negotiating': {
       AppLocale.ru: 'Согласование с собеседником…',
       AppLocale.en: 'Negotiating with peer…',
@@ -123,20 +121,11 @@ class AppStrings {
       AppLocale.ru: 'Воспроизведение',
       AppLocale.en: 'Playing',
     },
-    'chat.selectedCount': {
-      AppLocale.ru: 'Выбрано',
-      AppLocale.en: 'Selected',
-    },
+    'chat.selectedCount': {AppLocale.ru: 'Выбрано', AppLocale.en: 'Selected'},
 
     'presence.online': {AppLocale.ru: 'в сети', AppLocale.en: 'online'},
-    'presence.typing': {
-      AppLocale.ru: 'печатает…',
-      AppLocale.en: 'typing…',
-    },
-    'presence.justNow': {
-      AppLocale.ru: 'только что',
-      AppLocale.en: 'just now',
-    },
+    'presence.typing': {AppLocale.ru: 'печатает…', AppLocale.en: 'typing…'},
+    'presence.justNow': {AppLocale.ru: 'только что', AppLocale.en: 'just now'},
     'presence.minutesAgoSuffix': {
       AppLocale.ru: 'мин. назад',
       AppLocale.en: 'min ago',
@@ -152,10 +141,7 @@ class AppStrings {
       AppLocale.ru: 'Включить уведомления',
       AppLocale.en: 'Unmute notifications',
     },
-    'chatMenu.block': {
-      AppLocale.ru: 'Заблокировать',
-      AppLocale.en: 'Block',
-    },
+    'chatMenu.block': {AppLocale.ru: 'Заблокировать', AppLocale.en: 'Block'},
     'chatMenu.unblock': {
       AppLocale.ru: 'Разблокировать',
       AppLocale.en: 'Unblock',
@@ -389,10 +375,7 @@ class AppStrings {
       AppLocale.ru: 'Регистрируясь, вы соглашаетесь с ',
       AppLocale.en: 'By registering, you agree to the ',
     },
-    'register.agreementJoiner': {
-      AppLocale.ru: ' и ',
-      AppLocale.en: ' and ',
-    },
+    'register.agreementJoiner': {AppLocale.ru: ' и ', AppLocale.en: ' and '},
 
     'recovery.forgotPassword': {
       AppLocale.ru: 'Забыли пароль?',
@@ -655,9 +638,34 @@ class AppStrings {
     'action.edit': {AppLocale.ru: 'Изменить', AppLocale.en: 'Edit'},
     'action.select': {AppLocale.ru: 'Выбрать', AppLocale.en: 'Select'},
     'action.delete': {AppLocale.ru: 'Удалить', AppLocale.en: 'Delete'},
-    'action.report': {
-      AppLocale.ru: 'Пожаловаться',
-      AppLocale.en: 'Report',
+    'action.report': {AppLocale.ru: 'Пожаловаться', AppLocale.en: 'Report'},
+    'action.cancelSend': {
+      AppLocale.ru: 'Отменить отправку',
+      AppLocale.en: 'Cancel sending',
+    },
+    'action.retrySend': {
+      AppLocale.ru: 'Повторить отправку',
+      AppLocale.en: 'Retry sending',
+    },
+    'mediaViewer.saveToGallery': {
+      AppLocale.ru: 'Сохранить в галерею',
+      AppLocale.en: 'Save to gallery',
+    },
+    'mediaViewer.saved': {
+      AppLocale.ru: 'Сохранено в галерею',
+      AppLocale.en: 'Saved to gallery',
+    },
+    'mediaViewer.saveFailed': {
+      AppLocale.ru: 'Не удалось сохранить',
+      AppLocale.en: 'Failed to save',
+    },
+    'mediaViewer.savePermissionDenied': {
+      AppLocale.ru: 'Нет доступа к галерее — разрешите доступ в настройках',
+      AppLocale.en: 'No access to gallery — allow access in settings',
+    },
+    'mediaViewer.openSettings': {
+      AppLocale.ru: 'Настройки',
+      AppLocale.en: 'Settings',
     },
     'report.title': {
       AppLocale.ru: 'Пожаловаться на сообщение',
@@ -673,7 +681,8 @@ class AppStrings {
     },
 
     'media.limitedAccess': {
-      AppLocale.ru: 'Доступны не все файлы — нажмите, чтобы разрешить полный доступ',
+      AppLocale.ru:
+          'Доступны не все файлы — нажмите, чтобы разрешить полный доступ',
       AppLocale.en: 'Not all files are accessible — tap to grant full access',
     },
     'media.photo': {AppLocale.ru: 'Фото', AppLocale.en: 'Photo'},
@@ -687,9 +696,14 @@ class AppStrings {
       AppLocale.ru: 'Голосовое сообщение',
       AppLocale.en: 'Voice message',
     },
-    'media.selectedCount': {
-      AppLocale.ru: 'Выбрано',
-      AppLocale.en: 'Selected',
+    'media.selectedCount': {AppLocale.ru: 'Выбрано', AppLocale.en: 'Selected'},
+    'unit.bytes': {AppLocale.ru: 'Б', AppLocale.en: 'B'},
+    'unit.kb': {AppLocale.ru: 'КБ', AppLocale.en: 'KB'},
+    'unit.mb': {AppLocale.ru: 'МБ', AppLocale.en: 'MB'},
+    'unit.gb': {AppLocale.ru: 'ГБ', AppLocale.en: 'GB'},
+    'media.downloading': {
+      AppLocale.ru: 'Скачивание…',
+      AppLocale.en: 'Downloading…',
     },
     'media.hideWithSpoiler': {
       AppLocale.ru: 'Скрыть спойлером',
@@ -722,19 +736,18 @@ class AppStrings {
       AppLocale.en: 'Reconnecting…',
     },
 
-    'chat.messageHint': {
-      AppLocale.ru: 'Сообщение',
-      AppLocale.en: 'Message',
-    },
+    'chat.messageHint': {AppLocale.ru: 'Сообщение', AppLocale.en: 'Message'},
     // Приоритет 1 — я заблокировал собеседника (показывается даже если
     // блокировка взаимная, см. _blockedComposerText в chat_screen.dart).
     'chat.blockedByMe': {
-      AppLocale.ru: 'Вы не можете отправлять сообщения пользователю, которого заблокировали',
+      AppLocale.ru:
+          'Вы не можете отправлять сообщения пользователю, которого заблокировали',
       AppLocale.en: 'You can\'t send messages to a user you have blocked',
     },
     // Приоритет 2 — собеседник заблокировал меня (а я его — нет).
     'chat.blockingMe': {
-      AppLocale.ru: 'Вы не можете отправлять сообщения пользователю, который вас заблокировал',
+      AppLocale.ru:
+          'Вы не можете отправлять сообщения пользователю, который вас заблокировал',
       AppLocale.en: 'You can\'t send messages to a user who has blocked you',
     },
     // Оба заблокировали друг друга — отдельная, третья формулировка (не
@@ -747,9 +760,28 @@ class AppStrings {
       AppLocale.ru: 'Поиск по переписке',
       AppLocale.en: 'Search chat',
     },
-    'chat.searchAction': {
-      AppLocale.ru: 'Поиск',
-      AppLocale.en: 'Search',
+    'chat.searchAction': {AppLocale.ru: 'Поиск', AppLocale.en: 'Search'},
+    'chat.resetSessionAction': {
+      AppLocale.ru: 'Сбросить шифрование',
+      AppLocale.en: 'Reset encryption',
+    },
+    'chat.resetSessionTitle': {
+      AppLocale.ru: 'Сбросить шифрование?',
+      AppLocale.en: 'Reset encryption?',
+    },
+    'chat.resetSessionBody': {
+      AppLocale.ru:
+          'Текущая сессия шифрования с собеседником будет стёрта и установлена заново при следующем сообщении. Используйте, если сообщения перестали расшифровываться.',
+      AppLocale.en:
+          'The current encryption session with this contact will be cleared and re-established on the next message. Use this if messages have stopped decrypting.',
+    },
+    'chat.resetSessionConfirm': {
+      AppLocale.ru: 'Сбросить',
+      AppLocale.en: 'Reset',
+    },
+    'chat.resetSessionDone': {
+      AppLocale.ru: 'Шифрование сброшено',
+      AppLocale.en: 'Encryption reset',
     },
     'chat.showAsList': {
       AppLocale.ru: 'Показать списком',
@@ -810,10 +842,7 @@ class AppStrings {
       AppLocale.ru: 'Удалить фото',
       AppLocale.en: 'Remove photo',
     },
-    'settings.avatarView': {
-      AppLocale.ru: 'Просмотр',
-      AppLocale.en: 'View',
-    },
+    'settings.avatarView': {AppLocale.ru: 'Просмотр', AppLocale.en: 'View'},
     'settings.email': {
       AppLocale.ru: 'Почта для восстановления',
       AppLocale.en: 'Recovery email',
@@ -825,6 +854,28 @@ class AppStrings {
     'settings.about': {
       AppLocale.ru: 'О приложении',
       AppLocale.en: 'About the app',
+    },
+    'settings.clearCache': {
+      AppLocale.ru: 'Очистить кэш медиа',
+      AppLocale.en: 'Clear media cache',
+    },
+    'settings.clearCacheTitle': {
+      AppLocale.ru: 'Очистить кэш медиа?',
+      AppLocale.en: 'Clear media cache?',
+    },
+    'settings.clearCacheBody': {
+      AppLocale.ru:
+          'Скачанные фото, видео и другие файлы будут удалены с устройства ({size}) — сама переписка не пострадает, при необходимости файлы можно будет скачать заново.',
+      AppLocale.en:
+          'Downloaded photos, videos and other files will be removed from this device ({size}) — the chats themselves are not affected, files can be re-downloaded when needed.',
+    },
+    'settings.cacheEmpty': {
+      AppLocale.ru: 'Кэш медиа уже пуст',
+      AppLocale.en: 'Media cache is already empty',
+    },
+    'settings.cacheCleared': {
+      AppLocale.ru: 'Кэш медиа очищен',
+      AppLocale.en: 'Media cache cleared',
     },
     'settings.privacy': {
       AppLocale.ru: 'Приватность и безопасность',
@@ -895,7 +946,10 @@ class AppStrings {
       AppLocale.ru: 'Кто видит моё био',
       AppLocale.en: 'Who can see my bio',
     },
-    'privacy.everyone': {AppLocale.ru: 'Все пользователи', AppLocale.en: 'Everyone'},
+    'privacy.everyone': {
+      AppLocale.ru: 'Все пользователи',
+      AppLocale.en: 'Everyone',
+    },
     'privacy.contactsOnly': {
       AppLocale.ru: 'Мои контакты',
       AppLocale.en: 'My contacts',
@@ -905,10 +959,7 @@ class AppStrings {
       AppLocale.ru: 'Настройки сохранены',
       AppLocale.en: 'Settings saved',
     },
-    'privacy.saving': {
-      AppLocale.ru: 'Сохраняем…',
-      AppLocale.en: 'Saving…',
-    },
+    'privacy.saving': {AppLocale.ru: 'Сохраняем…', AppLocale.en: 'Saving…'},
 
     'settings.appLock': {
       AppLocale.ru: 'Вход в приложение',
@@ -992,13 +1043,28 @@ class AppStrings {
       AppLocale.ru: 'Ввести код',
       AppLocale.en: 'Use PIN instead',
     },
-    'applock.timeout.30': {AppLocale.ru: '30 секунд', AppLocale.en: '30 seconds'},
+    'applock.timeout.30': {
+      AppLocale.ru: '30 секунд',
+      AppLocale.en: '30 seconds',
+    },
     'applock.timeout.60': {AppLocale.ru: '1 минута', AppLocale.en: '1 minute'},
-    'applock.timeout.120': {AppLocale.ru: '2 минуты', AppLocale.en: '2 minutes'},
+    'applock.timeout.120': {
+      AppLocale.ru: '2 минуты',
+      AppLocale.en: '2 minutes',
+    },
     'applock.timeout.300': {AppLocale.ru: '5 минут', AppLocale.en: '5 minutes'},
-    'applock.timeout.600': {AppLocale.ru: '10 минут', AppLocale.en: '10 minutes'},
-    'applock.timeout.900': {AppLocale.ru: '15 минут', AppLocale.en: '15 minutes'},
-    'applock.timeout.1800': {AppLocale.ru: '30 минут', AppLocale.en: '30 minutes'},
+    'applock.timeout.600': {
+      AppLocale.ru: '10 минут',
+      AppLocale.en: '10 minutes',
+    },
+    'applock.timeout.900': {
+      AppLocale.ru: '15 минут',
+      AppLocale.en: '15 minutes',
+    },
+    'applock.timeout.1800': {
+      AppLocale.ru: '30 минут',
+      AppLocale.en: '30 minutes',
+    },
     'applock.timeout.3600': {AppLocale.ru: '1 час', AppLocale.en: '1 hour'},
     'applock.timeout.7200': {AppLocale.ru: '2 часа', AppLocale.en: '2 hours'},
 
@@ -1038,6 +1104,14 @@ class AppStrings {
     'about.logEmpty': {
       AppLocale.ru: 'Лог пока пуст',
       AppLocale.en: 'Log is empty',
+    },
+    'about.clearLog': {
+      AppLocale.ru: 'Очистить лог',
+      AppLocale.en: 'Clear debug log',
+    },
+    'about.logCleared': {
+      AppLocale.ru: 'Лог очищен',
+      AppLocale.en: 'Log cleared',
     },
 
     'account.logoutTitle': {
@@ -1100,10 +1174,7 @@ class AppStrings {
 
     'theme.title': {AppLocale.ru: 'Тема', AppLocale.en: 'Theme'},
     'theme.dark': {AppLocale.ru: 'Тёмная тема', AppLocale.en: 'Dark theme'},
-    'theme.light': {
-      AppLocale.ru: 'Светлая тема',
-      AppLocale.en: 'Light theme',
-    },
+    'theme.light': {AppLocale.ru: 'Светлая тема', AppLocale.en: 'Light theme'},
 
     'settings.fontSize': {
       AppLocale.ru: 'Размер шрифта',
