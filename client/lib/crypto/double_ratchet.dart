@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
+import '../services/debug_log.dart';
 
 final _x25519 = X25519();
 final _hmac = Hmac.sha256();
@@ -78,6 +79,7 @@ class RatchetState {
     required SimpleKeyPair ephemeralKeyPair,
   }) async {
     final chainKey = await _hkdf(rootKey, 'oshinobu-init', 32);
+    DebugLog.log('RatchetState initAsSender: fresh session created from X3DH root key');
     return RatchetState(
       rootKey: rootKey,
       sendingRatchetKeyPair: ephemeralKeyPair,
@@ -91,6 +93,10 @@ class RatchetState {
   }) async {
     final chainKey = await _hkdf(rootKey, 'oshinobu-init', 32);
     final freshKeyPair = await _x25519.newKeyPair();
+    DebugLog.log(
+      'RatchetState initAsReceiver: fresh session created from X3DH root key, '
+      'remoteEphemeralPubkey=${base64Encode(remoteEphemeralPubkey)}',
+    );
     return RatchetState(
       rootKey: rootKey,
       sendingRatchetKeyPair: freshKeyPair,
@@ -116,6 +122,10 @@ class RatchetState {
     sendingRatchetKeyPair = newKeyPair;
     sendMessageNumber = 0;
     needsSendingRatchet = false;
+    final newPublic = await newKeyPair.extractPublicKey();
+    DebugLog.log(
+      'RatchetState DH-step SENDING: new epoch, newRatchetPubkey=${base64Encode(newPublic.bytes)}',
+    );
   }
 
   Future<void> _dhRatchetStepForReceiving(List<int> newRemotePubkey) async {
@@ -130,17 +140,23 @@ class RatchetState {
     final derived = await _hkdf(combined, 'oshinobu-ratchet', 64);
     rootKey = derived.sublist(0, 32);
     receivingChainKey = derived.sublist(32, 64);
+    final droppedSkipped = skippedReceivingKeys.length;
     receivingRatchetPublicKey = newRemotePubkey;
     receiveMessageNumber = 0;
     needsSendingRatchet = true;
     // Новая цепочка — старые "пропущенные" ключи из предыдущей эпохи
     // больше не актуальны, они относились к другому receivingChainKey.
     skippedReceivingKeys = {};
+    DebugLog.log(
+      'RatchetState DH-step RECEIVING: new epoch, newRemotePubkey=${base64Encode(newRemotePubkey)}'
+      '${droppedSkipped > 0 ? ", dropped $droppedSkipped skipped key(s) from previous epoch (now unrecoverable if they arrive late)" : ""}',
+    );
   }
 
   Future<({Map<String, dynamic> header, List<int> messageKey})>
   nextSendingKey() async {
     if (needsSendingRatchet) {
+      DebugLog.log('RatchetState nextSendingKey: needsSendingRatchet=true, performing DH step first');
       await _dhRatchetStepForSending();
     }
     final messageKey = await _hmacBytes(sendingChainKey!, 1);
@@ -173,6 +189,10 @@ class RatchetState {
     // Сообщение, которое мы уже когда-то пропустили и запомнили ключ для
     // него — просто отдаём сохранённый ключ, ничего больше не трогаем.
     if (skippedReceivingKeys.containsKey(messageNumber)) {
+      DebugLog.log(
+        'RatchetState nextReceivingKey: messageNumber=$messageNumber found among '
+        '${skippedReceivingKeys.length} previously-skipped keys — late arrival, using saved key',
+      );
       return skippedReceivingKeys.remove(messageNumber)!;
     }
 
@@ -180,10 +200,20 @@ class RatchetState {
       // Номер меньше уже обработанного и не найден среди пропущенных —
       // это повтор (дублирующая доставка), ключ для него уже израсходован
       // и восстановить его невозможно, но сама сессия при этом здорова.
+      DebugLog.log(
+        'RatchetState nextReceivingKey: messageNumber=$messageNumber < '
+        'receiveMessageNumber=$receiveMessageNumber and not in skipped set — '
+        'duplicate delivery, session is healthy',
+      );
       throw AlreadyProcessedException(messageNumber);
     }
 
     if (messageNumber - receiveMessageNumber > _maxSkippedKeys) {
+      DebugLog.log(
+        'RatchetState nextReceivingKey FAILED: gap too large '
+        '(receiveMessageNumber=$receiveMessageNumber, incoming messageNumber=$messageNumber, '
+        'gap=${messageNumber - receiveMessageNumber} > max=$_maxSkippedKeys) — refusing, session likely desynced',
+      );
       throw Exception(
         'Слишком большой разрыв в номерах сообщений — отказ от обработки',
       );
@@ -191,11 +221,19 @@ class RatchetState {
 
     // Догоняем цепочку до нужного номера, попутно запоминая ключи для
     // всех "перепрыгнутых" позиций — вдруг те сообщения придут позже.
+    final catchUpFrom = receiveMessageNumber;
     while (receiveMessageNumber < messageNumber) {
       final skippedKey = await _hmacBytes(receivingChainKey!, 1);
       receivingChainKey = await _hmacBytes(receivingChainKey!, 2);
       skippedReceivingKeys[receiveMessageNumber] = skippedKey;
       receiveMessageNumber++;
+    }
+    if (receiveMessageNumber > catchUpFrom) {
+      DebugLog.log(
+        'RatchetState nextReceivingKey: chain caught up from $catchUpFrom to '
+        '$messageNumber, saved ${receiveMessageNumber - catchUpFrom} skipped key(s) '
+        '(out-of-order delivery, not necessarily an error)',
+      );
     }
 
     final messageKey = await _hmacBytes(receivingChainKey!, 1);

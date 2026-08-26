@@ -158,12 +158,26 @@ class WebSocketService {
     // в статусе "подключено" сколь угодно долго: ни onError, ни onDone
     // никогда не срабатывают, потому что клиенту физически неоткуда узнать
     // о разрыве. С pingInterval dart:io сам шлёт ping и, не дождавшись
-    // pong, закрывает сокет — тогда уже отработает наш обычный
-    // onDone/onError → _scheduleReconnect().
+    // pong в течение того же интервала, САМ рвёт сокет с кодом 1001 — тогда
+    // уже отработает наш обычный onDone/onError → _scheduleReconnect().
+    //
+    // 45s, а не 20s (было раньше) — с 20с любой канал, реально занятый (не
+    // мёртвый!) отправкой/приёмом пачки сообщений дольше пары секунд, не
+    // успевал ответить на pong вовремя и получал ложный самообрыв каждые
+    // ~40с (20с до пинга + 20с ожидания понга) — см. реальный кейс с
+    // устройства: во время разгона большой очереди оба устройства рвали
+    // себе соединение по этому таймеру весь тест напролёт, что запускало
+    // startPendingMessageSweeper/SendQueueProcessor._sweep заново на КАЖДОМ
+    // таком реконнекте и не давало очереди вообще опустеть. У сервера уже
+    // есть собственный независимый heartbeat (wsPingInterval=30s+
+    // wsPingTimeout=10s, см. websocket.go:startHeartbeat) для обнаружения
+    // настоящих зомби-соединений получателей — этому клиентскому таймеру не
+    // нужно быть настолько нервным, он подстраховка на случай, если именно
+    // ЭТОТ клиент не может достучаться наружу (NAT/чёрная дыра).
     final channel = IOWebSocketChannel.connect(
       uri,
       headers: {'Authorization': 'Bearer $_token'},
-      pingInterval: const Duration(seconds: 20),
+      pingInterval: const Duration(seconds: 45),
     );
     _channel = channel;
     DebugLog.log('WS _openConnection() opening channel=${identityHashCode(channel)}');

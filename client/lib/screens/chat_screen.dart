@@ -292,6 +292,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _initialLoadComplete = false;
   int _lastMessageCount = 0;
   Timer? _scrollSaveDebounce;
+  // См. _maybeSendReadReceipts: id, для которых квитанция уже поставлена в
+  // очередь и ждёт ack — InnerMessage.readReceipt() генерирует НОВЫЙ
+  // messageId при каждом вызове (в отличие от обычных сообщений, у
+  // квитанции нет своего стабильного id), поэтому без этого набора каждый
+  // новый триггер (а он срабатывает на КАЖДОЕ входящее сообщение) заново
+  // создавал отдельный конверт на те же самые ещё-не-подтверждённые id —
+  // реальный кейс с устройства: соединение забито затором, ack не успевает
+  // прийти за 8с у SendQueueProcessor, следующее входящее сообщение снова
+  // триггерит _maybeSendReadReceipts, тот снова видит те же
+  // !readReceiptSent id и штампует ещё одну квитанцию — очередь на
+  // отправку выросла до 328 элементов подряд, канал полностью забился
+  // дублями, из-за чего не успевали проходить pong'и на pingInterval
+  // клиента (dart:io рвёт "живой" сокет каждые ~40с без ответа) и реальные
+  // сообщения/медиа копились за этим мусором минутами.
+  final Set<String> _readReceiptPending = {};
 
   bool _emojiMode = false;
   double _keyboardHeight = 280;
@@ -1010,7 +1025,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<void> _maybeSendReadReceipts() async {
     if (_isNotes) return;
     final toMark = _messages
-        .where((m) => !m.isMine && !m.readReceiptSent)
+        .where(
+          (m) =>
+              !m.isMine &&
+              !m.readReceiptSent &&
+              !_readReceiptPending.contains(m.messageId),
+        )
         .map((m) => m.messageId)
         .toList();
     if (toMark.isEmpty) return;
@@ -1021,15 +1041,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // случалось. Теперь помечаем только по РЕАЛЬНОМУ ack от сервера (см.
     // onAcked/SendQueueProcessor) — просто "поставили в очередь" (то, что
     // возвращает _sendControlMessage) больше не значит "доставлено", это
-    // асинхронно. При неудаче/потере колбэка (например, если приложение
-    // убьют между постановкой в очередь и ack) эти же id просто снова
-    // попадут в toMark при следующем естественном триггере (открытие
-    // чата, новое сообщение от собеседника) — идемпотентно, без
-    // отдельного специального retry-механизма.
-    await _sendControlMessage(
+    // асинхронно.
+    //
+    // _readReceiptPending — id, для которых конверт уже стоит в
+    // SendQueueStore и ждёт ack (см. объявление поля): пока он там,
+    // SendQueueProcessor сам переотправит его на каждом реконнекте — новый
+    // конверт создавать не нужно и НЕЛЬЗЯ (у readReceipt нет стабильного
+    // id, см. InnerMessage.readReceipt, так что "просто вызвать ещё раз"
+    // означало бы независимый дубликат, а не повтор той же попытки).
+    // Если сама постановка в очередь не удалась (queued == false — ошибка
+    // ДО SendQueueStore, не таймаут ack), снимаем id из pending, чтобы
+    // следующий естественный триггер (новое сообщение, повторное открытие
+    // чата) попробовал заново, как и раньше.
+    _readReceiptPending.addAll(toMark);
+    final queued = await _sendControlMessage(
       InnerMessage.readReceipt(targetMessageIds: toMark),
-      onAcked: () => ChatStore.markReadReceiptsSent(widget.peerLogin, toMark),
+      onAcked: () async {
+        await ChatStore.markReadReceiptsSent(widget.peerLogin, toMark);
+        _readReceiptPending.removeAll(toMark);
+      },
     );
+    if (!queued) _readReceiptPending.removeAll(toMark);
   }
 
   /// Прыгает к offset'у, а затем несколько раз перепроверяет и

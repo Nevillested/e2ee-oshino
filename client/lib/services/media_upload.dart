@@ -9,6 +9,7 @@ import '../l10n/app_strings.dart';
 import '../models/picked_media.dart';
 import '../storage/chat_store.dart';
 import '../storage/media_cache.dart';
+import 'debug_log.dart';
 
 /// Порог, с которого файл льётся потоково (шифрование в отдельном изоляте,
 /// загрузка целиком уже зашифрованным файлом) — тот же порог, что и раньше
@@ -37,6 +38,12 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
   String keyBase64;
   String? nonceBase64;
   String? macBase64;
+  final startedAt = DateTime.now();
+
+  DebugLog.log(
+    'MediaUpload START messageId=$messageId to=$peerLogin size=$size '
+    'chunked=$chunked isVideo=${item.isVideo} isFile=${item.isFile}',
+  );
 
   await ChatStore.updateProcessingStep(
     peerLogin,
@@ -59,6 +66,7 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
     try {
       await File(keyPath).delete();
     } catch (_) {}
+    DebugLog.log('MediaUpload messageId=$messageId: streaming encrypt done, starting upload');
 
     await ChatStore.updateProcessingStep(
       peerLogin,
@@ -71,6 +79,7 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
       peerAccountIdForUpload,
       onProgress: (p) => onProgress?.call(p),
     );
+    DebugLog.log('MediaUpload messageId=$messageId: upload HTTP call returned mediaId=$mediaId');
     try {
       await encTempFile.delete();
     } catch (_) {}
@@ -79,6 +88,7 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
   } else {
     final bytes = await item.file.readAsBytes();
     final encrypted = await encryptFileBytes(bytes);
+    DebugLog.log('MediaUpload messageId=$messageId: whole-file encrypt done, starting upload');
     await ChatStore.updateProcessingStep(
       peerLogin,
       messageId,
@@ -106,6 +116,7 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         await encTempFile.delete();
       } catch (_) {}
     }
+    DebugLog.log('MediaUpload messageId=$messageId: upload HTTP call returned mediaId=$mediaId');
     await MediaCache.write(mediaId, bytes);
     keyBase64 = base64Encode(encrypted.key);
     nonceBase64 = base64Encode(encrypted.nonce);
@@ -119,6 +130,11 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
     keyBase64: keyBase64,
     nonceBase64: nonceBase64,
     macBase64: macBase64,
+  );
+  DebugLog.log(
+    'MediaUpload DONE messageId=$messageId mediaId=$mediaId '
+    'elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds} '
+    '— envelope (referencing this mediaId) still needs to go through SendQueueProcessor separately',
   );
 
   return {

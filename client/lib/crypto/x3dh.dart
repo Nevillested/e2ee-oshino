@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'key_store.dart';
+import '../services/debug_log.dart';
 
 List<int> base64DecodeSafe(String value) => base64Decode(value);
 
@@ -41,6 +42,11 @@ Future<X3dhOutgoing> establishOutgoingRoot({
   );
   final remoteOneTimePrekeyBase64 = bundle['one_time_prekey'] as String?;
 
+  DebugLog.log(
+    'X3DH establishOutgoingRoot: prekey bundle received, '
+    'hasOneTimePrekey=${remoteOneTimePrekeyBase64 != null}',
+  );
+
   final signedPrekeyValid = await _ed25519.verify(
     remoteSignedPrekeyBytes,
     signature: Signature(
@@ -55,7 +61,14 @@ Future<X3dhOutgoing> establishOutgoingRoot({
       publicKey: remoteIdentityPubkey,
     ),
   );
+  DebugLog.log(
+    'X3DH establishOutgoingRoot: signature check signedPrekeyValid=$signedPrekeyValid '
+    'identityDhValid=$identityDhValid',
+  );
   if (!signedPrekeyValid || !identityDhValid) {
+    DebugLog.log(
+      'X3DH establishOutgoingRoot FAILED: signature verification rejected — possible tampering/impersonation',
+    );
     throw Exception(
       'Подпись ключей собеседника недействительна — возможна подмена',
     );
@@ -114,6 +127,11 @@ Future<X3dhOutgoing> establishOutgoingRoot({
   }
 
   final rootKey = await _deriveRootKey(ikm);
+  DebugLog.log(
+    'X3DH establishOutgoingRoot OK: root key derived '
+    '(${remoteOneTimePrekeyBase64 != null ? "4" : "3"} DH steps, '
+    'ephemeralPubkey=${base64Encode(ephemeralPublicKey.bytes)})',
+  );
 
   return X3dhOutgoing(
     rootKey: rootKey,
@@ -135,8 +153,13 @@ Future<List<int>?> establishIncomingSessionRaw(
 ) async {
   final senderIdentityDhBytes = header['sender_identity_dh_pubkey'] as String?;
   final senderEphemeralBytes = header['ephemeral_pubkey'] as String?;
-  if (senderIdentityDhBytes == null || senderEphemeralBytes == null)
+  if (senderIdentityDhBytes == null || senderEphemeralBytes == null) {
+    DebugLog.log(
+      'X3DH establishIncomingSessionRaw: envelope carries no X3DH init fields '
+      '(sender_identity_dh_pubkey/ephemeral_pubkey missing) — not a session-init message',
+    );
     return null;
+  }
 
   final senderIdentityDhKey = SimplePublicKey(
     base64Decode(senderIdentityDhBytes),
@@ -154,7 +177,17 @@ Future<List<int>?> establishIncomingSessionRaw(
   );
   final myIdentityDhKeyPair = myIdentityDhResult.keyPair;
   final mySignedPrekeyPair = await KeyStore.getStoredSignedPrekeyPair();
-  if (mySignedPrekeyPair == null) return null;
+  if (mySignedPrekeyPair == null) {
+    DebugLog.log(
+      'X3DH establishIncomingSessionRaw FAILED: no local signed prekey stored — '
+      'cannot accept X3DH init (device setup incomplete or wiped)',
+    );
+    return null;
+  }
+  DebugLog.log(
+    'X3DH establishIncomingSessionRaw: accepting init, '
+    'usedOneTimePrekey=${usedOneTimePrekeyBase64 != null}',
+  );
 
   final dh1 = await _x25519.sharedSecretKey(
     keyPair: mySignedPrekeyPair,
@@ -188,10 +221,18 @@ Future<List<int>?> establishIncomingSessionRaw(
       // только он реально использован в DH, приватную часть больше не
       // держим на диске (см. docstring у deleteOneTimePrekeyPair).
       await KeyStore.deleteOneTimePrekeyPair(usedOneTimePrekeyBase64);
+    } else {
+      DebugLog.log(
+        'X3DH establishIncomingSessionRaw: sender claims a one-time prekey we '
+        'no longer have — proceeding with 3-DH only (weaker forward secrecy '
+        'for this session, not a fatal error)',
+      );
     }
   }
 
-  return _deriveRootKey(ikm);
+  final rootKey = await _deriveRootKey(ikm);
+  DebugLog.log('X3DH establishIncomingSessionRaw OK: root key derived');
+  return rootKey;
 }
 
 Future<List<int>> _deriveRootKey(List<int> ikm) async {

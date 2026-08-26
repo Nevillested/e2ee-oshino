@@ -6,6 +6,7 @@ import '../l10n/app_strings.dart';
 import 'dart:typed_data';
 import 'package:dio/dio.dart' as dio;
 import 'dart:io';
+import '../services/debug_log.dart';
 
 /// Отдельный тип ошибки для сетевых/серверных проблем — так их удобно
 /// ловить в UI через try/catch и показывать пользователю e.toString().
@@ -156,6 +157,7 @@ class ApiClient {
       ),
     });
 
+    DebugLog.log('ApiClient upload-media START size=$length');
     try {
       final response = await client.post<String>(
         '${ApiConfig.baseUrl}/upload-media',
@@ -172,10 +174,26 @@ class ApiClient {
       );
 
       if (response.statusCode != 200 || response.data == null) {
+        DebugLog.log(
+          'ApiClient upload-media FAILED: unexpected response statusCode=${response.statusCode} hasData=${response.data != null}',
+        );
         throw ApiException(tr('error.uploadFailed'));
       }
+      DebugLog.log('ApiClient upload-media OK mediaId=${response.data}');
       return response.data!;
     } on dio.DioException catch (e) {
+      // dio.DioException.type — какая именно стадия сорвалась (connectionTimeout/
+      // sendTimeout/receiveTimeout/connectionError/badResponse и т.д.), это
+      // ключевая подсказка для "висит на Saving to server": НИ ОДИН из timeout'ов
+      // (connectTimeout/sendTimeout/receiveTimeout) здесь сейчас не настроен —
+      // на действительно мёртвой сети (не offline, а "чёрная дыра") этот вызов
+      // технически может провисеть сколь угодно долго, ни разу не попав даже
+      // сюда, в catch. Если по свежим логам окажется, что именно так и
+      // происходит — это отдельный фикс на следующий релиз (dio.BaseOptions
+      // с explicit timeout'ами), не делаю его сейчас заодно с логированием.
+      DebugLog.log(
+        'ApiClient upload-media FAILED: DioException type=${e.type} message=${e.message}',
+      );
       if (e.type == dio.DioExceptionType.cancel) {
         throw ApiException(tr('error.cancelledByUser'));
       }
@@ -193,6 +211,7 @@ class ApiClient {
     dio.CancelToken? cancelToken,
   }) async {
     final client = dio.Dio();
+    DebugLog.log('ApiClient media download START mediaId=$mediaId');
     try {
       await client.download(
         '${ApiConfig.baseUrl}/media/$mediaId',
@@ -204,7 +223,11 @@ class ApiClient {
             onProgress(received / total * 100);
         },
       );
+      DebugLog.log('ApiClient media download OK mediaId=$mediaId');
     } on dio.DioException catch (e) {
+      DebugLog.log(
+        'ApiClient media download FAILED mediaId=$mediaId: DioException type=${e.type} message=${e.message}',
+      );
       if (e.type == dio.DioExceptionType.cancel) {
         throw ApiException(tr('error.cancelledByUser'));
       }
