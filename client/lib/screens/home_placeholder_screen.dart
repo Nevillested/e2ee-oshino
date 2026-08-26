@@ -945,17 +945,18 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
       // сначала развернуть карточку обратно к чатам, а не сразу закрывать
       // приложение — это то же самое действие, что и тап по табу чатов
       // на нижней панели. Активный поиск перехватывает back ЕЩЁ раньше и
-      // сам, в два шага (см. ТЗ пользователя): первый back только прячет
-      // клавиатуру, второй — сворачивает саму пилюлю поиска обратно в лупу.
+      // закрывается целиком одним back — раньше это было в два шага
+      // (сначала прятать клавиатуру, потом отдельно пилюлю), но на
+      // реальном устройстве системный swipe-back снимает клавиатуру сам,
+      // и пилюля с полем ввода без второго явного back оставалась висеть
+      // видимой (жалоба пользователя после теста на устройстве) —
+      // _closeSearch() и так сама вызывает unfocus(), второй шаг был
+      // лишним.
       canPop: _selectedTab == 0 && !_searchActive,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         if (_searchActive) {
-          if (_searchFocusNode.hasFocus) {
-            _searchFocusNode.unfocus();
-          } else {
-            _closeSearch();
-          }
+          _closeSearch();
           return;
         }
         _selectTab(0);

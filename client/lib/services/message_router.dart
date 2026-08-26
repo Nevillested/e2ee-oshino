@@ -224,6 +224,53 @@ class MessageRouter {
             'Router decrypt-FAILED from=$senderDeviceId — no fallback available '
             '(envelope carries no X3DH init fields, or session was already fresh)',
           );
+
+          // Конверт зашифрован под ratchet-ключом, ОТЛИЧНЫМ от текущего
+          // ключа нашей принимающей цепочки — это не признак поломки
+          // сессии, а нормальное, ожидаемое явление: сообщение безвозвратно
+          // устарело (типично — сервер повторно доставляет то, что мы уже
+          // давно обогнали, см. startPendingMessageSweeper на сервере,
+          // который раз в 20с дожимает всё ещё не подтверждённое). Разбор
+          // реального теста показал: именно ОДНО такое "залежавшееся"
+          // сообщение, приходя заново каждые ~20с, за несколько таких
+          // повторов набирало _resetFailureThreshold и роняло ВСЮ сессию —
+          // включая принимающую цепочку, которая в этот же момент штатно
+          // расшифровывала другие, свежие сообщения. Хуже того: сброс шлёт
+          // собеседнику просьбу тоже стереть у себя сессию — а у него в
+          // этот момент могли быть сообщения "в полёте", зашифрованные под
+          // ещё-живым (для него) состоянием, что запускало ту же цепочку
+          // уже в обратную сторону — самоподдерживающийся шторм взаимных
+          // сбросов на много минут (лог пользователя — 6+ последовательных
+          // авто-сбросов подряд).
+          //
+          // Правильное поведение (как у настоящего Double Ratchet — старые
+          // "просроченные" сообщения, чей message key вышел за пределы окна
+          // skipped-keys, просто необратимо теряются, это штатно): сдаться
+          // СРАЗУ по этой конкретной доставке, не трогая счётчик и не
+          // трогая сессию вообще. Auto-reset остаётся только для
+          // по-настоящему тревожного случая — расшифровка проваливается на
+          // ТЕКУЩЕМ (актуальном) ключе цепочки, а не на устаревшем чужом.
+          final incomingKeyB64 = envelope['ratchet_pubkey'] as String?;
+          final currentKeyB64 = state.receivingRatchetPublicKey != null
+              ? base64Encode(state.receivingRatchetPublicKey!)
+              : null;
+          final isStaleRatchetKey =
+              incomingKeyB64 != null &&
+              currentKeyB64 != null &&
+              incomingKeyB64 != currentKeyB64;
+          if (isStaleRatchetKey) {
+            DebugLog.log(
+              'Router giving up on stale-ratchet-key delivery from=$senderDeviceId '
+              '(envelope ratchet_pubkey=$incomingKeyB64 differs from current '
+              'session key=$currentKeyB64 — normal for an already-superseded '
+              'redelivery, session left untouched, not counted toward reset)',
+            );
+            if (deliveryId != null) {
+              WebSocketService.instance.ackDelivery(deliveryId);
+            }
+            return;
+          }
+
           await _onDecryptFailure(senderDeviceId, deliveryId);
           rethrow;
         }

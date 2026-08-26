@@ -192,13 +192,20 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
           Container(
             height: reserved,
             color: AppColors.surface,
-            child: _emojiMode
-                ? ClipRect(
-                    child: RepaintBoundary(
-                      child: FullEmojiPicker(
-                        onEmojiSelected: (emoji) {
-                          _controller.text += emoji;
-                        },
+            // Тот же приём, что и в ChatScreen: пока клавиатура поднята,
+            // держим FullEmojiPicker уже смонтированным, но невидимым
+            // (Offstage) — тап по иконке эмодзи тогда просто переключает
+            // видимость, а не строит панель с нуля.
+            child: (_emojiMode || keyboardVisible)
+                ? Offstage(
+                    offstage: !_emojiMode,
+                    child: ClipRect(
+                      child: RepaintBoundary(
+                        child: FullEmojiPicker(
+                          onEmojiSelected: (emoji) {
+                            _controller.text += emoji;
+                          },
+                        ),
                       ),
                     ),
                   )

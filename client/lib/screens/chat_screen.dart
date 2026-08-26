@@ -817,6 +817,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_textFocusNode.hasFocus && _emojiMode) {
       setState(() => _emojiMode = false);
     }
+    // Системный back/свайп-назад при поднятой клавиатуре закрывает её на
+    // уровне ОС ещё до того, как это событие вообще доходит до Flutter
+    // (IME сама глотает back) — единственный сигнал, который у нас
+    // остаётся, это потеря фокуса нашим полем. _keyboardCloseDebounceDelay
+    // (250мс, см. поле выше) существует ТОЛЬКО для случая "фокус остался,
+    // но realInset на кадр обнулился" (системный оверлей смены клавиатуры)
+    // — если фокус реально потерян, эта неоднозначность не применима:
+    // ждать тут больше нечего, а лишние 250мс задержки — ровно та
+    // "пустая панель мелькнула, а потом резко пропала" жалоба пользователя
+    // после теста на устройстве. Если клавиатура на самом деле остаётся
+    // (просто перескочила на другое поле), rawKeyboardVisible на
+    // следующем же кадре сама вернёт _keyboardVisibleDebounced в true.
+    if (!_textFocusNode.hasFocus && _keyboardVisibleDebounced) {
+      _keyboardCloseDebounceTimer?.cancel();
+      _keyboardCloseDebounceTimer = null;
+      setState(() => _keyboardVisibleDebounced = false);
+    }
   }
 
   void _onTextChanged() {
@@ -3481,6 +3498,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final cached = await MediaCache.read(msg.mediaId!);
     if (cached != null) return cached;
 
+    // Своё же отправленное фото: localPreviewPath у фото (в отличие от
+    // видео, где это только кадр-превью, см. _sendPickedMedia) — это путь
+    // к САМОМУ исходному файлу, который выбирал/снимал пользователь. Если
+    // MediaCache очищен (например, юзер почистил кэш приложения), но
+    // оригинал физически ещё жив на диске — читаем его напрямую вместо
+    // похода в сеть (жалоба пользователя: свои же фото не должны заново
+    // скачиваться, если файл никуда не делся).
+    if (msg.isMine &&
+        !msg.isVideo &&
+        !msg.isFile &&
+        msg.localPreviewPath != null) {
+      final localFile = File(msg.localPreviewPath!);
+      if (await localFile.exists()) {
+        final localBytes = await localFile.readAsBytes();
+        await MediaCache.write(msg.mediaId!, localBytes);
+        return localBytes;
+      }
+    }
+
     DebugLog.log(
       'ChatScreen download attempt (non-chunked) mediaId=${msg.mediaId} '
       'messageId=${msg.messageId} size=${msg.fileSize}',
@@ -4872,18 +4908,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Widget _buildReplyPreview(StoredMessage msg) {
     if (msg.replyToPreview == null) return const SizedBox.shrink();
+    // В своём (правом) пузыре акцентная полоска и текст цитаты зеркалятся
+    // на правый край, а не просто наследуют TextAlign.start по умолчанию —
+    // раньше рамка следовала за isMine (см. crossAxisAlignment в
+    // _buildMessageBubble), а текст внутри неё всё равно "прилипал" влево.
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        border: Border(
-          left: BorderSide(color: _bubbleMutedColor(msg.isMine), width: 3),
-        ),
+        border: msg.isMine
+            ? Border(
+                right: BorderSide(color: _bubbleMutedColor(msg.isMine), width: 3),
+              )
+            : Border(
+                left: BorderSide(color: _bubbleMutedColor(msg.isMine), width: 3),
+              ),
       ),
       child: Text(
         msg.replyToPreview!,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
+        textAlign: msg.isMine ? TextAlign.right : TextAlign.left,
         style: TextStyle(color: _bubbleMutedColor(msg.isMine), fontSize: 12),
       ),
     );
@@ -6588,13 +6633,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     Container(
                       height: reserved,
                       color: AppColors.surface,
-                      child: _emojiMode
-                          ? ClipRect(
-                              child: RepaintBoundary(
-                                child: FullEmojiPicker(
-                                  onEmojiSelected: (emoji) {
-                                    _textController.text += emoji;
-                                  },
+                      // Пока настоящая клавиатура поднята (keyboardVisible),
+                      // держим FullEmojiPicker уже смонтированным, просто
+                      // невидимым (Offstage) — он успевает построить свою
+                      // разметку заранее, пока пользователь печатает, и тап
+                      // по иконке эмодзи просто переключает видимость вместо
+                      // того чтобы строить панель с нуля в этот момент
+                      // (жалоба пользователя на заметную задержку первого
+                      // показа). Не монтируем его вообще, когда клавиатуры
+                      // тоже нет — незачем тратить на это первый кадр
+                      // самого экрана чата.
+                      child: (_emojiMode || keyboardVisible)
+                          ? Offstage(
+                              offstage: !_emojiMode,
+                              child: ClipRect(
+                                child: RepaintBoundary(
+                                  child: FullEmojiPicker(
+                                    onEmojiSelected: (emoji) {
+                                      _textController.text += emoji;
+                                    },
+                                  ),
                                 ),
                               ),
                             )
