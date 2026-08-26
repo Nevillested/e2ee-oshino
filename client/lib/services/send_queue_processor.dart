@@ -163,18 +163,65 @@ class SendQueueProcessor {
       try {
         await ackFuture.timeout(const Duration(seconds: 8));
       } catch (e) {
-        SendAckRegistry.cancel(id);
-        DebugLog.log('SendQueueProcessor id=$id no ack within timeout: $e');
+        // НЕ вызываем SendAckRegistry.cancel(id) здесь — раньше именно это
+        // теряло честно доставленный ack, если сервер отвечал дольше 8с:
+        // реальный кейс с устройства — конверт видео-заметки отправлен в
+        // 20:45:31, локальный таймаут сработал в 20:45:39 (через 8с), а
+        // настоящий ack от сервера пришёл только в 20:46:08 — на 29с позже.
+        // cancel() уже успевал стереть ожидание из реестра, и fulfill()
+        // для этого id находил уже пустое место — сообщение навсегда
+        // зависало на "Saving on server", хотя реально дошло и лежало на
+        // сервере. Таймаут здесь означает только "хватит ждать В ЭТОЙ
+        // попытке": освобождаем _inFlight, чтобы следующий sweep (по
+        // реконнекту) мог попробовать снова — повторная отправка с тем же
+        // id безопасна, — но продолжаем слушать тот же ackFuture в фоне на
+        // случай, если ack всё же придёт сам, просто с опозданием.
+        DebugLog.log(
+          'SendQueueProcessor id=$id no ack within timeout: $e — '
+          'still listening in background for a late ack',
+        );
+        unawaited(_finalizeOnLateAck(id, ackFuture, messageId, peerLogin, onAcked));
         return;
       }
-      await SendQueueStore.remove(id);
-      DebugLog.log('SendQueueProcessor id=$id acked, removed from queue');
-      if (messageId != null && peerLogin != null) {
-        await ChatStore.updateMessageStatus(peerLogin, messageId, 'sent');
-      }
-      await onAcked?.call();
+      await _finalizeAcked(id, messageId, peerLogin, onAcked);
     } finally {
       _inFlight.remove(id);
     }
+  }
+
+  /// Довершает попытку, чей ack пришёл ПОСЛЕ того, как _attempt уже сдалась
+  /// по локальному 8-секундному таймауту (см. комментарий выше) — слушает
+  /// тот же ackFuture без ограничения по времени, поскольку сообщение уже
+  /// физически отправлено и единственное, чего не хватает — подтверждения.
+  Future<void> _finalizeOnLateAck(
+    String id,
+    Future<void> ackFuture,
+    String? messageId,
+    String? peerLogin,
+    Future<void> Function()? onAcked,
+  ) async {
+    try {
+      await ackFuture;
+    } catch (_) {
+      // Отменено по какой-то другой причине (не таймаутом — этот путь его
+      // больше не вызывает) — сдаёмся молча.
+      return;
+    }
+    DebugLog.log('SendQueueProcessor id=$id: late ack arrived after local timeout gave up');
+    await _finalizeAcked(id, messageId, peerLogin, onAcked);
+  }
+
+  Future<void> _finalizeAcked(
+    String id,
+    String? messageId,
+    String? peerLogin,
+    Future<void> Function()? onAcked,
+  ) async {
+    await SendQueueStore.remove(id);
+    DebugLog.log('SendQueueProcessor id=$id acked, removed from queue');
+    if (messageId != null && peerLogin != null) {
+      await ChatStore.updateMessageStatus(peerLogin, messageId, 'sent');
+    }
+    await onAcked?.call();
   }
 }

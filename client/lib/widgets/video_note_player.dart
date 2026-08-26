@@ -26,6 +26,15 @@ class VideoNotePlayer extends StatefulWidget {
   // из галереи (см. ChatScreen._resolveVideoThumbnailBytes).
   final Future<Uint8List> Function({void Function(double percent)? onProgress})?
   resolveThumbnail;
+  // Дешёвая проверка "файл уже в MediaCache" — вызывается ПЕРЕД
+  // resolveFile, чтобы решить, показывать ли оверлей "Downloading" вообще.
+  // Без неё повторное воспроизведение уже скачанного видео (см.
+  // _startFresh) на долю секунды всегда мигало "Downloading 0%", хотя
+  // resolveFile реально ничего не качал — просто отдавал файл из кеша, но
+  // _loading уже успевал стать true до того, как это выяснялось (жалоба
+  // с устройства). null — считаем, что дешёвой проверки нет, ведём себя
+  // как раньше.
+  final Future<bool> Function()? isCached;
   // Локальный файл кадра-превью — только у СВОИХ ещё не отправленных (или
   // уже отправленных, но не перезагруженных с нуля) сообщений, см.
   // ChatScreen._sendRecordedMessage/_writeLocalVideoThumbnail. Пока он есть,
@@ -49,6 +58,7 @@ class VideoNotePlayer extends StatefulWidget {
     super.key,
     required this.resolveFile,
     this.resolveThumbnail,
+    this.isCached,
     this.localPreviewPath,
     required this.durationMs,
     this.compactSize = 200,
@@ -252,18 +262,32 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
     if (controller != null) {
       controller.removeListener(_onTick);
       await controller.pause();
-      await controller.dispose();
     }
-    if (mounted) {
-      setState(() {
-        _controller = null;
-        _playing = false;
-      });
-    }
+    // _playing=false СРАЗУ (а не одновременно с dispose(), как было раньше)
+    // — запускает анимацию сжатия (AnimatedContainer в build()) поверх ещё
+    // живого, просто остановленного кадра видео, вместо того чтобы кадр
+    // резко подменялся статичным превью В ТОТ ЖЕ момент, что и начало
+    // сжатия. Раньше оба действия шли в одном setState — из-за этого по
+    // естественному окончанию (см. _onTick — там та же проблема технически
+    // есть, но незаметна: последний кадр и так уже почти статичен) сжатие
+    // выглядело нормально, а по явному крестику подмена середины
+    // проигрывания на превью прямо в момент старта анимации читалась как
+    // "анимации нет вообще" (жалоба пользователя). Панель сверху (см.
+    // MediaPlaybackCoordinator/_buildMediaControlBar) сворачивается
+    // ПАРАЛЛЕЛЬНО той же анимацией — deactivate() сразу следом, а не после
+    // задержки ниже.
+    if (mounted) setState(() => _playing = false);
     final id = widget.messageId;
     if (widget.coordinator != null && id != null) {
       widget.coordinator!.deactivate(id);
     }
+    if (controller != null) {
+      // Даём анимации сжатия реально доиграть, прежде чем убрать кадр и
+      // подменить его превью — та же длительность, что у AnimatedContainer.
+      await Future.delayed(const Duration(milliseconds: 220));
+      await controller.dispose();
+    }
+    if (mounted) setState(() => _controller = null);
   }
 
   // Временное диагностическое логирование (см. обсуждение с пользователем
@@ -308,10 +332,19 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
   /// _doResume() (повторный тап/панель управления — после того, как
   /// предыдущий контроллер уже уничтожен).
   Future<void> _startFresh() async {
-    setState(() {
-      _loading = true;
-      _downloadPercent = 0;
-    });
+    // Дешёвая предварительная проверка кеша (см. widget.isCached) — если
+    // файл уже скачан, resolveFile ниже вернёт его мгновенно, без
+    // реальной сетевой загрузки, и оверлей "Downloading" показывать не
+    // нужно вообще: раньше _loading становился true безусловно, и на
+    // повторном воспроизведении уже скачанного видео на экране каждый раз
+    // мелькало "Downloading 0%" (жалоба с устройства).
+    final alreadyCached = await widget.isCached?.call() ?? false;
+    if (!alreadyCached) {
+      setState(() {
+        _loading = true;
+        _downloadPercent = 0;
+      });
+    }
     try {
       final file = await widget.resolveFile(
         onProgress: (percent) {

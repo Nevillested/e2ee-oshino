@@ -31,7 +31,6 @@ class KeyStore {
     final storedPublic = await _storage.read(key: _identityPublicKey);
 
     if (storedPrivate != null && storedPublic != null) {
-      DebugLog.log('KeyStore identity keypair: loaded existing from secure storage');
       return SimpleKeyPairData(
         base64Decode(storedPrivate),
         publicKey: SimplePublicKey(
@@ -54,9 +53,6 @@ class KeyStore {
       key: _identityPublicKey,
       value: base64Encode(publicKey.bytes),
     );
-    DebugLog.log(
-      'KeyStore identity keypair: GENERATED NEW (Ed25519) pubkey=${base64Encode(publicKey.bytes)}',
-    );
 
     return keyPair;
   }
@@ -74,7 +70,6 @@ class KeyStore {
     if (storedPrivate != null &&
         storedPublic != null &&
         storedSignature != null) {
-      DebugLog.log('KeyStore identity DH keypair: loaded existing from secure storage');
       final keyPair = SimpleKeyPairData(
         base64Decode(storedPrivate),
         publicKey: SimplePublicKey(
@@ -107,9 +102,6 @@ class KeyStore {
       key: _identityDhSignature,
       value: base64Encode(signature.bytes),
     );
-    DebugLog.log(
-      'KeyStore identity DH keypair: GENERATED NEW (X25519) pubkey=${base64Encode(publicKey.bytes)}, signed by identity key',
-    );
 
     return (keyPair: dhKeyPair, signature: signature.bytes);
   }
@@ -134,9 +126,6 @@ class KeyStore {
     final signature = await Ed25519().sign(
       prekeyPublic.bytes,
       keyPair: identityKeyPair,
-    );
-    DebugLog.log(
-      'KeyStore signed prekey: GENERATED NEW pubkey=${base64Encode(prekeyPublic.bytes)}',
     );
 
     return (publicKey: prekeyPublic.bytes, signature: signature.bytes);
@@ -183,9 +172,6 @@ class KeyStore {
       key: _oneTimePrekeysKey,
       value: jsonEncode([...existing, ...newlyStored]),
     );
-    DebugLog.log(
-      'KeyStore one-time prekeys: generated $count new, total stored now ${existing.length + newlyStored.length}',
-    );
 
     return publicKeys;
   }
@@ -207,9 +193,6 @@ class KeyStore {
     list.removeWhere((entry) => entry['public'] == publicKeyBase64);
     if (list.length == before) return;
     await _storage.write(key: _oneTimePrekeysKey, value: jsonEncode(list));
-    DebugLog.log(
-      'KeyStore one-time prekey CONSUMED pubkey=$publicKeyBase64, remaining=${list.length}',
-    );
   }
 
   static Future<String?> getStoredDeviceId() {
@@ -225,7 +208,6 @@ class KeyStore {
   /// невозможно, поэтому это необратимое действие.
   static Future<void> clearAll() async {
     await _storage.deleteAll();
-    DebugLog.log('KeyStore clearAll: all keys and device_id WIPED (logout)');
   }
 
   /// Загружает уже сохранённый signed prekey — без генерации нового.

@@ -72,6 +72,15 @@ class AppStrings {
     'common.copied': {AppLocale.ru: 'Скопировано', AppLocale.en: 'Copied'},
 
     'chat.queued': {AppLocale.ru: 'В очереди', AppLocale.en: 'Queued'},
+    // Имя отправителя цитаты в баннере реплая (см. _buildReplyPreview) —
+    // "Вы", если процитировано собственное сообщение, как в Telegram.
+    'chat.replyYou': {AppLocale.ru: 'Вы', AppLocale.en: 'You'},
+    // Показывается вместо текста цитаты в баннере реплая, если исходное
+    // сообщение больше не найдено в истории чата (удалено).
+    'chat.replyDeleted': {
+      AppLocale.ru: 'Удалённое сообщение',
+      AppLocale.en: 'Deleted message',
+    },
     'chat.sending': {AppLocale.ru: 'Отправка…', AppLocale.en: 'Sending…'},
     'chat.cancelRecording': {
       AppLocale.ru: 'Отменить запись',

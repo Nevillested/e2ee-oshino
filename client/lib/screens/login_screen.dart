@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../l10n/app_locale.dart';
 import '../l10n/app_strings.dart';
-import '../services/debug_log.dart';
 import '../session.dart';
 import '../storage/locale_store.dart';
 import '../theme/app_theme.dart';
@@ -48,7 +47,6 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     showLoadingOverlay(context, tr('auth.loggingIn'));
 
-    DebugLog.log('LoginScreen _handleLogin: attempt for login=${_loginController.text.trim()}');
     try {
       final result = await _apiClient.login(
         _loginController.text.trim(),
@@ -56,7 +54,6 @@ class _LoginScreenState extends State<LoginScreen> {
         _totpController.text.trim(),
       );
       final token = result.token;
-      DebugLog.log('LoginScreen _handleLogin: server auth OK, token received, language=${result.language}');
 
       await Session.saveToken(token);
       await Session.saveLogin(_loginController.text.trim());
@@ -67,7 +64,6 @@ class _LoginScreenState extends State<LoginScreen> {
         result.language == 'ru' ? AppLocale.ru : AppLocale.en,
       );
       await ensureDeviceRegistered(_apiClient, token);
-      DebugLog.log('LoginScreen _handleLogin: DONE, navigating to home');
 
       if (!mounted) return;
       Navigator.pushAndRemoveUntil(
@@ -76,7 +72,6 @@ class _LoginScreenState extends State<LoginScreen> {
         (route) => false,
       );
     } catch (e) {
-      DebugLog.log('LoginScreen _handleLogin FAILED: $e');
       setState(() {
         _errorText = e.toString();
       });

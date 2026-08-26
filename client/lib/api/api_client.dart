@@ -6,7 +6,6 @@ import '../l10n/app_strings.dart';
 import 'dart:typed_data';
 import 'package:dio/dio.dart' as dio;
 import 'dart:io';
-import '../services/debug_log.dart';
 
 /// Отдельный тип ошибки для сетевых/серверных проблем — так их удобно
 /// ловить в UI через try/catch и показывать пользователю e.toString().
@@ -19,6 +18,36 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
+  /// Таймауты для загрузки/скачивания медиа (см. uploadEncryptedMediaFileWithProgress/
+  /// downloadEncryptedMediaToFile) — без них у dio.Dio() таймаутов НЕТ
+  /// ВООБЩЕ: на "мёртвой" сети без явной ошибки (не офлайн — тот падает
+  /// быстро и чисто, а именно тишина: соединение вроде установилось, но
+  /// дальше ни ответа, ни ошибки — слабый мобильный сигнал, обрывающий
+  /// зависшие соединения NAT/прокси и т.п.) await мог виснуть сколь угодно
+  /// долго, ни разу не попадая в catch — сообщение навсегда застревало на
+  /// "Шифрование…"/"Загрузка на сервер…", без единой строки в логе.
+  ///
+  /// Значения намеренно щедрые, не под конкретный размер файла — connect
+  /// короткий (устанавливаться соединение обязано быстро, если сеть
+  /// вообще способна отвечать), send/receive куда длиннее (реальный кейс
+  /// с устройства: 8 МБ видео честно грузились 24с на плохой сети — резкий
+  /// таймаут убил бы рабочую, просто медленную передачу). Это страховка от
+  /// бесконечного зависания, а не тонкая настройка — если по свежим логам
+  /// окажется, что эти значения сами обрубают что-то живое, поправим по
+  /// факту.
+  static const _mediaConnectTimeout = Duration(seconds: 15);
+  static const _mediaTransferTimeout = Duration(minutes: 5);
+
+  dio.Dio _mediaDioClient() {
+    return dio.Dio(
+      dio.BaseOptions(
+        connectTimeout: _mediaConnectTimeout,
+        sendTimeout: _mediaTransferTimeout,
+        receiveTimeout: _mediaTransferTimeout,
+      ),
+    );
+  }
+
   /// POST /register — регистрация нового аккаунта.
   /// Возвращает otpauth:// ссылку для приложения-аутентификатора.
   Future<String> register(
@@ -147,7 +176,7 @@ class ApiClient {
     required void Function(double percent) onProgress,
     dio.CancelToken? cancelToken,
   }) async {
-    final client = dio.Dio();
+    final client = _mediaDioClient();
     final length = await File(filePath).length();
     final formData = dio.FormData.fromMap({
       'recipient_account_id': recipientAccountId,
@@ -157,7 +186,6 @@ class ApiClient {
       ),
     });
 
-    DebugLog.log('ApiClient upload-media START size=$length');
     try {
       final response = await client.post<String>(
         '${ApiConfig.baseUrl}/upload-media',
@@ -174,26 +202,10 @@ class ApiClient {
       );
 
       if (response.statusCode != 200 || response.data == null) {
-        DebugLog.log(
-          'ApiClient upload-media FAILED: unexpected response statusCode=${response.statusCode} hasData=${response.data != null}',
-        );
         throw ApiException(tr('error.uploadFailed'));
       }
-      DebugLog.log('ApiClient upload-media OK mediaId=${response.data}');
       return response.data!;
     } on dio.DioException catch (e) {
-      // dio.DioException.type — какая именно стадия сорвалась (connectionTimeout/
-      // sendTimeout/receiveTimeout/connectionError/badResponse и т.д.), это
-      // ключевая подсказка для "висит на Saving to server": НИ ОДИН из timeout'ов
-      // (connectTimeout/sendTimeout/receiveTimeout) здесь сейчас не настроен —
-      // на действительно мёртвой сети (не offline, а "чёрная дыра") этот вызов
-      // технически может провисеть сколь угодно долго, ни разу не попав даже
-      // сюда, в catch. Если по свежим логам окажется, что именно так и
-      // происходит — это отдельный фикс на следующий релиз (dio.BaseOptions
-      // с explicit timeout'ами), не делаю его сейчас заодно с логированием.
-      DebugLog.log(
-        'ApiClient upload-media FAILED: DioException type=${e.type} message=${e.message}',
-      );
       if (e.type == dio.DioExceptionType.cancel) {
         throw ApiException(tr('error.cancelledByUser'));
       }
@@ -210,8 +222,7 @@ class ApiClient {
     void Function(double percent)? onProgress,
     dio.CancelToken? cancelToken,
   }) async {
-    final client = dio.Dio();
-    DebugLog.log('ApiClient media download START mediaId=$mediaId');
+    final client = _mediaDioClient();
     try {
       await client.download(
         '${ApiConfig.baseUrl}/media/$mediaId',
@@ -223,11 +234,7 @@ class ApiClient {
             onProgress(received / total * 100);
         },
       );
-      DebugLog.log('ApiClient media download OK mediaId=$mediaId');
     } on dio.DioException catch (e) {
-      DebugLog.log(
-        'ApiClient media download FAILED mediaId=$mediaId: DioException type=${e.type} message=${e.message}',
-      );
       if (e.type == dio.DioExceptionType.cancel) {
         throw ApiException(tr('error.cancelledByUser'));
       }
@@ -357,7 +364,7 @@ class ApiClient {
   /// POST /account/avatar — фото профиля НЕ шифруется (см. комментарий в
   /// account_avatar.go на сервере) — видно всем контактам как есть.
   Future<void> uploadAvatar(String token, Uint8List jpegBytes) async {
-    final client = dio.Dio();
+    final client = _mediaDioClient();
     final formData = dio.FormData.fromMap({
       'file': dio.MultipartFile.fromBytes(jpegBytes, filename: 'avatar.jpg'),
     });
@@ -734,7 +741,7 @@ class ApiClient {
     String mediaId, {
     void Function(double percent)? onProgress,
   }) async {
-    final client = dio.Dio();
+    final client = _mediaDioClient();
     try {
       final response = await client.get<List<int>>(
         '${ApiConfig.baseUrl}/media/$mediaId',

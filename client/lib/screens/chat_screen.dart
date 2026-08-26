@@ -597,6 +597,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _searchShowAsList = false;
   String? _highlightedMessageId;
 
+  // Разовая подсветка на всю ширину экрана после тапа по баннеру цитаты
+  // (см. _jumpToReplyOriginal/_ReplyJumpFlash) — отдельно от
+  // _highlightedMessageId выше: тот держится постоянно (пока не
+  // переключат совпадение поиска), а это — один раз мигнуть и погаснуть.
+  // _replyJumpHighlightToken растёт при каждом тапе, даже повторном по
+  // тому же id — ValueKey на _ReplyJumpFlash с этим токеном гарантирует
+  // перезапуск анимации затухания с нуля, а не "ничего не происходит",
+  // если ткнуть в ещё не погасшую подсветку снова.
+  String? _replyJumpHighlightId;
+  int _replyJumpHighlightToken = 0;
+
   List<StoredMessage> get _searchMatches {
     if (_searchQuery.isEmpty) return const [];
     final q = _searchQuery.toLowerCase();
@@ -1542,6 +1553,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Тап по баннеру цитаты (см. _buildReplyPreview) — ТЗ пользователя:
+  /// анимационно перелетаем к процитированному сообщению (см.
+  /// _scrollToMessage — уже умеет и близкие, и далёкие цели), а когда
+  /// долетели — разово подсвечиваем его на всю ширину экрана и гасим (см.
+  /// _ReplyJumpFlash). Ничего не делаем, если исходное сообщение не нашли
+  /// (удалено) — сюда в этом случае вообще не должны попасть, см. onTap:
+  /// null в _buildReplyPreview, но проверка здесь на всякий случай тоже.
+  Future<void> _jumpToReplyOriginal(String messageId) async {
+    if (_findMessageById(messageId) == null) return;
+    await _scrollToMessage(messageId);
+    if (!mounted) return;
+    setState(() {
+      _replyJumpHighlightId = messageId;
+      _replyJumpHighlightToken++;
+    });
+  }
+
   Future<void> _openContextMenu(
     StoredMessage msg,
     Offset tapPosition, {
@@ -1687,9 +1715,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         );
         break;
       case RetryOutcome.willRetryLater:
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(tr('chat.retryFailedTemporary'))));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr('chat.retryFailedTemporary'))),
+        );
         break;
     }
   }
@@ -2520,10 +2548,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       // — ту ОС вправе стереть, пока приложение не запущено, что и
       // случилось у пользователя с голосовым сообщением); оригинал больше
       // не нужен, удаляем сразу.
-      final persistedPath = await PendingSendStore.persistFile(
-        file,
-        messageId,
-      );
+      final persistedPath = await PendingSendStore.persistFile(file, messageId);
       try {
         await file.delete();
       } catch (_) {}
@@ -3531,14 +3556,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (cached != null) return cached;
 
     // Своё же отправленное фото: localPreviewPath у фото (в отличие от
-    // видео, где это только кадр-превью, см. _sendPickedMedia) — это путь
-    // к САМОМУ исходному файлу, который выбирал/снимал пользователь. Если
-    // MediaCache очищен (например, юзер почистил кэш приложения), но
-    // оригинал физически ещё жив на диске — читаем его напрямую вместо
-    // похода в сеть (жалоба пользователя: свои же фото не должны заново
-    // скачиваться, если файл никуда не делся).
+    // видео/видео-заметки, где это только кадр-превью, см.
+    // _sendPickedMedia/_sendRecordedMessage) — это путь к САМОМУ исходному
+    // файлу, который выбирал/снимал пользователь. Если MediaCache очищен
+    // (например, юзер почистил кэш приложения), но оригинал физически ещё
+    // жив на диске — читаем его напрямую вместо похода в сеть (жалоба
+    // пользователя: свои же фото не должны заново скачиваться, если файл
+    // никуда не делся).
+    //
+    // !msg.isVideoNote — отдельная проверка от !msg.isVideo: это два
+    // независимых поля (msg.isVideo — обычное видео из галереи, isVideoNote
+    // — кружок/квадрат, записанный в самом приложении), и раньше здесь
+    // проверялся только isVideo. У своей видео-заметки localPreviewPath —
+    // это ТОЛЬКО кадр (isVideo при этом false), так что условие ошибочно
+    // пропускало её сюда: кадр-картинка записывалась в MediaCache под
+    // mediaId самого видео, плеер не мог такое воспроизвести, а повторное
+    // скачивание больше не срабатывало — MediaCache.exists() уже был
+    // (ошибочно) не пуст (баг с реального устройства: своя видео-заметка
+    // после отправки не воспроизводится и не перекачивается).
     if (msg.isMine &&
         !msg.isVideo &&
+        !msg.isVideoNote &&
         !msg.isFile &&
         msg.localPreviewPath != null) {
       final localFile = File(msg.localPreviewPath!);
@@ -4919,6 +4957,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           : [selectionSlot, swipedContent, filler],
     );
 
+    // Разовая подсветка на всю ширину строки после тапа по баннеру цитаты
+    // (см. _jumpToReplyOriginal) — оборачивает row ЦЕЛИКОМ (не только
+    // пузырь), поэтому фон заливки покрывает весь экран по горизонтали,
+    // как просил пользователь. ValueKey на токене — чтобы повторный тап
+    // по той же цитате, пока предыдущая вспышка ещё не погасла,
+    // пересоздавал виджет и честно перезапускал анимацию с нуля, а не
+    // "ничего не происходило".
+    final rowWithFlash = _replyJumpHighlightId == targetMsg.messageId
+        ? _ReplyJumpFlash(
+            key: ValueKey('reply_jump_flash_$_replyJumpHighlightToken'),
+            child: row,
+          )
+        : row;
+
     return Padding(
       key: key,
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -4933,35 +4985,103 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         onHorizontalDragUpdate: handleSwipeUpdate,
         onHorizontalDragEnd: handleSwipeEnd,
         onHorizontalDragCancel: handleSwipeCancel,
-        child: row,
+        child: rowWithFlash,
       ),
     );
   }
 
-  Widget _buildReplyPreview(StoredMessage msg) {
+  /// Ищет сообщение (в т.ч. ПРОЦИТИРОВАННОЕ, не текущее) по id среди уже
+  /// загруженной истории чата (грузится вся целиком, см. _loadHistory —
+  /// не постранично, так что "не нашли" здесь однозначно значит "удалено",
+  /// а не "ещё не подгружено"). null — сообщения больше нет.
+  StoredMessage? _findMessageById(String? messageId) {
+    if (messageId == null) return null;
+    for (final m in _messages) {
+      if (m.messageId == messageId) return m;
+    }
+    return null;
+  }
+
+  /// Баннер реплая внутри пузыря — 1 в 1 стиль Telegram (ТЗ пользователя,
+  /// сравнивал скриншот-к-скриншоту с одинаковым тестовым текстом): это
+  /// отдельная СКРУГЛЁННАЯ КАРТОЧКА СО СВОИМ ФОНОМ, заметно отличающимся
+  /// от фона самого пузыря — раньше здесь был только левый бордюр без
+  /// заливки, и цитата визуально сливалась с пузырём (жалоба "хрень",
+  /// сравнение один-в-один со скриншотом Telegram). Полупрозрачный чёрный
+  /// поверх фона пузыря — работает одинаково что на синем своём пузыре,
+  /// что на тёмном чужом, без отдельных веток на isMine. Полоска и текст
+  /// всегда слева (Telegram не зеркалит их на своих сообщениях). Сверху —
+  /// имя отправителя процитированного сообщения ("Вы" для собственного)
+  /// акцентным цветом, снизу — сама цитата приглушённым.
+  /// [maxWidth] — ОБЯЗАТЕЛЬНО та же ширина, что и у текста сообщения под
+  /// этой цитатой (см. вызов ниже — тот же maxTextWidth, что уходит в
+  /// _buildTextWithMeta): без этого у баннера реплая не было верхнего
+  /// предела по ширине вообще, и при длинной цитате он мог стать ШИРЕ
+  /// самого пузыря сообщения — в Telegram цитата всегда вписана в ту же
+  /// ширину, что и пузырь, а не растягивается отдельно от него.
+  ///
+  /// Тап по баннеру — ТЗ пользователя: анимационно перелетаем к
+  /// процитированному сообщению и один раз подсвечиваем его на всю
+  /// ширину экрана (см. _jumpToReplyOriginal/_ReplyJumpFlash). Если
+  /// оригинал не найден в истории (удалён) — вместо цитаты фиксированная
+  /// надпись, тап ничего не делает (originalMsg остаётся null).
+  Widget _buildReplyPreview(StoredMessage msg, double maxWidth) {
     if (msg.replyToPreview == null) return const SizedBox.shrink();
-    // В своём (правом) пузыре акцентная полоска и текст цитаты зеркалятся
-    // на правый край, а не просто наследуют TextAlign.start по умолчанию —
-    // раньше рамка следовала за isMine (см. crossAxisAlignment в
-    // _buildMessageBubble), а текст внутри неё всё равно "прилипал" влево.
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        border: msg.isMine
-            ? Border(
-                right: BorderSide(color: _bubbleMutedColor(msg.isMine), width: 3),
-              )
-            : Border(
-                left: BorderSide(color: _bubbleMutedColor(msg.isMine), width: 3),
+    final originalMsg = _findMessageById(msg.replyToMessageId);
+    final senderLabel = originalMsg == null
+        ? null
+        : (originalMsg.isMine
+              ? tr('chat.replyYou')
+              : (_peerDisplayName ?? widget.peerLogin));
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: originalMsg == null
+            ? null
+            : () => _jumpToReplyOriginal(originalMsg.messageId),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(6),
+            border: Border(
+              left: BorderSide(color: _bubbleMutedColor(msg.isMine), width: 3),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (senderLabel != null)
+                Text(
+                  senderLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFFFC04D),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              Text(
+                originalMsg == null
+                    ? tr('chat.replyDeleted')
+                    : msg.replyToPreview!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: _bubbleMutedColor(msg.isMine),
+                  fontSize: 12,
+                  fontStyle: originalMsg == null
+                      ? FontStyle.italic
+                      : FontStyle.normal,
+                ),
               ),
-      ),
-      child: Text(
-        msg.replyToPreview!,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        textAlign: msg.isMine ? TextAlign.right : TextAlign.left,
-        style: TextStyle(color: _bubbleMutedColor(msg.isMine), fontSize: 12),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -5080,6 +5200,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         VideoNotePlayer(
           resolveFile: ({onProgress}) =>
               _resolveRecordedMediaFile(msg, onProgress: onProgress),
+          isCached: () => MediaCache.exists(msg.mediaId!),
           resolveThumbnail: ({onProgress}) =>
               _resolveVideoThumbnailBytes(msg, onProgress: onProgress),
           localPreviewPath: msg.localPreviewPath,
@@ -5125,52 +5246,56 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final maxTextWidth = MediaQuery.of(context).size.width * 0.65;
     final isHighlighted = msg.messageId == _highlightedMessageId;
 
-    final content = Column(
-      // Было жёстко .start вне зависимости от isMine — если баннер реплая
-      // (см. _buildReplyPreview, растягивается по ширине цитаты) шире
-      // самого текста, вложенная колонка текст+время (у неё своё .end
-      // ВНУТРИ себя, см. _buildTextWithMeta) прижималась к ЛЕВОМУ краю ЭТОЙ
-      // внешней колонки — а не к истинному правому краю пузыря, который
-      // как раз и определяется более широким баннером реплая. Время
-      // визуально "уезжало" к концу короткого текста, а не к краю пузыря
-      // (см. скриншот пользователя). Выравнивание по стороне пузыря
-      // (как и везде в остальных типах сообщений) чинит это.
-      crossAxisAlignment: msg.isMine
-          ? CrossAxisAlignment.end
-          : CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _buildReplyPreview(msg),
-        msg.isVoice
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  VoiceMessagePlayer(
-                    isMine: msg.isMine,
-                    durationMs: msg.durationMs,
-                    processingStep: _processingStepDisplay(msg),
-                    resolveFile: ({onProgress}) =>
-                        _resolveRecordedMediaFile(msg, onProgress: onProgress),
-                    coordinator: _mediaCoordinator,
-                    messageId: msg.messageId,
-                  ),
-                  const SizedBox(height: 4),
-                  _buildMetaRow(msg),
-                ],
-              )
-            : msg.isMedia
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildAttachmentBubble(msg),
-                  const SizedBox(height: 4),
-                  _buildMetaRow(msg),
-                ],
-              )
-            : _buildTextWithMeta(msg, maxTextWidth),
-      ],
+    final content = IntrinsicWidth(
+      // IntrinsicWidth — БЕЗ него .stretch ниже раздувал пузырь на всю
+      // доступную (рыхлую/неограниченную) ширину строки списка сообщений
+      // целиком, а не на ширину контента (жалоба пользователя "стало ещё
+      // хуже" — раздувался вообще любой пузырь, даже без реплая).
+      // IntrinsicWidth сперва считает "естественную" ширину по самому
+      // широкому ребёнку колонки ниже, и уже ВНУТРИ этой (обычной,
+      // содержимым определённой) ширины работает .stretch — тогда пузырь
+      // по-прежнему схлопывается по контенту, а баннер цитаты и текст
+      // сообщения просто делят одну и ту же (естественную) ширину между
+      // собой.
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildReplyPreview(msg, maxTextWidth),
+          msg.isVoice
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    VoiceMessagePlayer(
+                      isMine: msg.isMine,
+                      durationMs: msg.durationMs,
+                      processingStep: _processingStepDisplay(msg),
+                      resolveFile: ({onProgress}) => _resolveRecordedMediaFile(
+                        msg,
+                        onProgress: onProgress,
+                      ),
+                      isCached: () => MediaCache.exists(msg.mediaId!),
+                      coordinator: _mediaCoordinator,
+                      messageId: msg.messageId,
+                    ),
+                    const SizedBox(height: 4),
+                    _buildMetaRow(msg),
+                  ],
+                )
+              : msg.isMedia
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildAttachmentBubble(msg),
+                    const SizedBox(height: 4),
+                    _buildMetaRow(msg),
+                  ],
+                )
+              : _buildTextWithMeta(msg, maxTextWidth),
+        ],
+      ),
     );
     final bubbleColor = msg.isMine ? AppColors.primary : AppColors.surface;
     // card — сам видимый цветной пузырь БЕЗ margin (см. комментарий в
@@ -5757,74 +5882,86 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// переключает состояние
   /// БЕЗ схлопывания панели, крестик справа — полная остановка со
   /// схлопыванием (и панели, и самого видео-кружка обратно до compactSize
-  /// — см. MediaPlaybackCoordinator.close()). AnimatedSize вместо
-  /// AnimatedSwitcher — плавно "выезжает"/"уезжает" по высоте, а не просто
-  /// исчезает, отталкивая шапку чата ниже себя (см. Column-обёртку выше).
+  /// — см. MediaPlaybackCoordinator.close()).
+  ///
+  /// AnimatedAlign(heightFactor)+ClipRect вместо AnimatedSize — раньше
+  /// содержимое (иконки/текст) собиралось только при active==true через
+  /// тернарник, и при active==false целиком выкидывалось из дерева на
+  /// первом же кадре, ДО того как AnimatedSize вообще успевал доиграть
+  /// схлопывание высоты — в результате контент пропадал рывком, а потом
+  /// уже пустая коробка почти незаметно доезжала до нуля (жалоба
+  /// пользователя: "появляется анимационно, а исчезает — нет"). Теперь
+  /// содержимое собирается ВСЕГДА одним и тем же виджетом, а
+  /// heightFactor только визуально обрезает (ClipRect) уже готовый,
+  /// никуда не девающийся контент — ровно тот же приём, что и у появления,
+  /// просто в обратную сторону, поэтому оба направления выглядят
+  /// одинаково плавными.
   Widget _buildMediaControlBar() {
     return AnimatedBuilder(
       animation: _mediaCoordinator,
       builder: (context, _) {
         final active = _mediaCoordinator.activeMessageId != null;
-        return AnimatedSize(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOut,
-          alignment: Alignment.topCenter,
-          child: !active
-              ? const SizedBox(width: double.infinity)
-              : SafeArea(
-                  // top тоже false — панель теперь стоит ПОД шапкой чата
-                  // (см. ТЗ пользователя), а не у самого верха экрана, шапка
-                  // уже сама учла отступ под статус-бар — второй раз его
-                  // резервировать не нужно, иначе между шапкой и панелью
-                  // появился бы лишний зазор высотой со статус-бар.
-                  top: false,
-                  bottom: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                    child: Container(
-                      height: 44,
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      decoration: BoxDecoration(
-                        color: AppColors.surface,
-                        borderRadius: BorderRadius.circular(22),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.18),
-                            blurRadius: 8,
-                            offset: const Offset(0, 3),
-                          ),
-                        ],
+        return ClipRect(
+          child: AnimatedAlign(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            alignment: Alignment.topCenter,
+            heightFactor: active ? 1.0 : 0.0,
+            child: SafeArea(
+              // top тоже false — панель теперь стоит ПОД шапкой чата
+              // (см. ТЗ пользователя), а не у самого верха экрана, шапка
+              // уже сама учла отступ под статус-бар — второй раз его
+              // резервировать не нужно, иначе между шапкой и панелью
+              // появился бы лишний зазор высотой со статус-бар.
+              top: false,
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                child: Container(
+                  height: 44,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(22),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.18),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
                       ),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: Icon(
-                              _mediaCoordinator.isPlaying
-                                  ? Icons.pause
-                                  : Icons.play_arrow,
-                              color: AppColors.primary,
-                            ),
-                            onPressed: _mediaCoordinator.togglePlayPause,
-                          ),
-                          Expanded(
-                            child: Text(
-                              tr('chat.mediaBarPlaying'),
-                              style: TextStyle(
-                                color: AppColors.textMuted,
-                                fontSize: 13,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          IconButton(
-                            icon: Icon(Icons.close, color: AppColors.textMuted),
-                            onPressed: _mediaCoordinator.close,
-                          ),
-                        ],
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          _mediaCoordinator.isPlaying
+                              ? Icons.pause
+                              : Icons.play_arrow,
+                          color: AppColors.primary,
+                        ),
+                        onPressed: _mediaCoordinator.togglePlayPause,
                       ),
-                    ),
+                      Expanded(
+                        child: Text(
+                          tr('chat.mediaBarPlaying'),
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 13,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.close, color: AppColors.textMuted),
+                        onPressed: _mediaCoordinator.close,
+                      ),
+                    ],
                   ),
                 ),
+              ),
+            ),
+          ),
         );
       },
     );
@@ -6106,7 +6243,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             (_textFocusNode.hasFocus || _searchFocusNode.hasFocus)) ||
         _emojiMode ||
         _awaitingKeyboardOpen;
-    final reserved = anyPanelOpen ? _keyboardHeight : 0.0;
+    // Пока настоящая клавиатура реально в процессе (поднимается ИЛИ
+    // опускается прямо сейчас — realInset > 0) — резерв берёт её ЖИВОЕ
+    // значение отступа кадр-в-кадр, а не заранее известную кэшированную
+    // высоту: тогда наша панель растёт и схлопывается СИНХРОННО с самой
+    // клавиатурой, без малейшего рассинхрона. Жалоба с реального
+    // устройства: клавиатура (системный оверлей, всегда поверх контента
+    // приложения) поднималась первой, а наша панель — своей отдельной
+    // анимацией с отставанием, и на долю секунды панель ввода оказывалась
+    // визуально скрыта под уже поднявшейся клавиатурой, пока не "догонит".
+    // Как только клавиатура закрылась по-настоящему (realInset дошёл до
+    // 0) — тут же 0, никакой собственной анимации поверх уже готового
+    // живого значения не требуется (см. reservedAnimDuration ниже — там,
+    // где используется живое значение, длительность анимации-обёртки
+    // просто зануляется, чтобы не наложить вторую задержку поверх
+    // первой). У эмодзи-панели живого значения нет (это наш собственный
+    // UI, не системный оверлей) — для неё по-прежнему берём кэшированную
+    // высоту со своей анимацией.
+    final ownFieldFocused =
+        _textFocusNode.hasFocus || _searchFocusNode.hasFocus;
+    final trackingRealKeyboard = ownFieldFocused && realInset > 0;
+    final reserved = trackingRealKeyboard
+        ? realInset
+        : (anyPanelOpen ? _keyboardHeight : 0.0);
+    final reservedAnimDuration = trackingRealKeyboard
+        ? Duration.zero
+        : const Duration(milliseconds: 220);
 
     // Клавиатура/эмодзи-панель растут снизу и СЖИМАЮТ видимую область
     // списка сообщений (Scaffold сам не резайзится, resizeToAvoidBottomInset
@@ -6652,9 +6814,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     // из-за которого высота панели эмодзи расходилась с
                     // высотой настоящей клавиатуры.
                     //
-                    // Пока БЕЗ анимаций (по просьбе) — просто мгновенная
-                    // смена высоты, чтобы сначала проверить сам механизм.
-                    SizedBox(height: anyPanelOpen ? 0 : 5 + systemBottomInset),
+                    // Анимированно — раньше было мгновенное схлопывание,
+                    // и на реальном устройстве это давало ровно ту "пустую
+                    // панель, а потом рывком телепортирующийся вниз чат"
+                    // жалобу, которую пытались проверить: между визуальным
+                    // опусканием настоящей клавиатуры и опустением reserved
+                    // ниже (см. Container) не должно быть рассинхрона —
+                    // весь этот блок движется одной плавной анимацией, а
+                    // не двумя раздельными мгновенными скачками.
+                    AnimatedContainer(
+                      duration: reservedAnimDuration,
+                      curve: Curves.easeOut,
+                      height: anyPanelOpen ? 0 : 5 + systemBottomInset,
+                    ),
                     // Клавиатура и эмодзи-панель — ОДНО и то же место экрана,
                     // одной и той же ЗАРАНЕЕ известной высоты (_keyboardHeight,
                     // см. build()), а не живое значение realInset: показываются
@@ -6662,7 +6834,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     // ними. Когда видна настоящая клавиатура, здесь просто
                     // пустой резерв места — сама клавиатура рисуется поверх
                     // всего системным оверлеем, а не этим виджетом.
-                    Container(
+                    AnimatedContainer(
+                      duration: reservedAnimDuration,
+                      curve: Curves.easeOut,
                       height: reserved,
                       color: AppColors.surface,
                       // Пока настоящая клавиатура поднята (keyboardVisible),
@@ -7123,6 +7297,66 @@ class _FlipSwitcherState extends State<_FlipSwitcher>
           child: showingOld ? _oldChild : widget.child,
         );
       },
+    );
+  }
+}
+
+/// Разовая подсветка светло-голубым на всю ширину строки — вспыхивает
+/// сразу на полную яркость и плавно гаснет сама, один раз (не пульсирует
+/// бесконечно, в отличие от _PulsingHighlight ниже, который сделан для
+/// другого случая — навигации по совпадениям поиска). См.
+/// _jumpToReplyOriginal — тап по баннеру цитаты.
+class _ReplyJumpFlash extends StatefulWidget {
+  final Widget child;
+  const _ReplyJumpFlash({super.key, required this.child});
+
+  @override
+  State<_ReplyJumpFlash> createState() => _ReplyJumpFlashState();
+}
+
+class _ReplyJumpFlashState extends State<_ReplyJumpFlash>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    // Было 1000мс, пользователь попросил снизить скорость в 1.75 раза —
+    // 1000 * 1.75 = 1750мс. Регулируется одной цифрой, если понадобится
+    // ещё раз.
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1750),
+    )..forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Curves.linear — было easeOut: та кривая гасит быстро в начале и
+    // долго "дотягивает" почти незаметный хвост в конце, что и читалось
+    // как неравномерно (жалоба пользователя). Linear — постоянная
+    // скорость затухания на всём протяжении, без рывков.
+    final fade = CurvedAnimation(parent: _controller, curve: Curves.linear);
+    return AnimatedBuilder(
+      animation: fade,
+      builder: (context, child) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.lightBlueAccent.withValues(
+              alpha: 0.32 * (1 - fade.value),
+            ),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: child,
+        );
+      },
+      child: widget.child,
     );
   }
 }

@@ -20,6 +20,7 @@ import '../services/my_profile_store.dart';
 import '../services/peer_profile_cache.dart';
 import '../services/pending_send_retrier.dart';
 import '../services/pip_service.dart';
+import '../services/debug_log.dart';
 import '../services/prekey_replenisher.dart';
 import '../services/send_queue_processor.dart';
 import '../services/push_service.dart';
@@ -199,6 +200,16 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   String? _searchFoundAccountId;
   String? _searchFoundDeviceId;
   String? _searchNotFoundMessage;
+  // См. _build(): подтверждено логами с реального устройства/эмулятора —
+  // системный back (и кнопка, и жест) при открытой клавиатуре ПЕРВЫМ
+  // делом перехватывается самой IME на уровне Android и гасит клавиатуру,
+  // ни разу не долетая до PopScope/onPopInvokedWithResult — это
+  // платформенное поведение, не обойти его перехватом самого back-события
+  // никак нельзя. Вместо этого ловим ПОСЛЕДСТВИЕ — сам факт, что
+  // клавиатура пропала, пока поиск активен — и закрываем поиск целиком по
+  // этому факту, независимо от причины (back, ручной свайп клавиатуры
+  // вниз и т.п.).
+  bool _searchKeyboardWasVisible = false;
 
   void _openSearch() {
     setState(() => _searchActive = true);
@@ -212,6 +223,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   }
 
   void _closeSearch() {
+    DebugLog.log('HomePlaceholder _closeSearch() called');
     _searchDebounce?.cancel();
     _searchFocusNode.unfocus();
     unawaited(_searchAnimController.reverse());
@@ -940,6 +952,32 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   }
 
   Widget _build(BuildContext context) {
+    // Ловим закрытие поиска по факту исчезновения клавиатуры (см.
+    // _searchKeyboardWasVisible) — PopScope ниже (onPopInvokedWithResult)
+    // оставлен как есть и по-прежнему честно отрабатывает, когда back
+    // реально до него доходит (аппаратная/навигационная кнопка на
+    // некоторых устройствах, повторный back уже без клавиатуры), но
+    // системный back/жест ПРИ ОТКРЫТОЙ клавиатуре Android перехватывает
+    // сам, на уровне IME, ни разу не долетая до Flutter — подтверждено
+    // логами (событие вообще не долетает до onPopInvokedWithResult, хотя
+    // клавиатура визуально пропадает). Единственный надёжный способ
+    // отреагировать в этом случае — заметить сам факт "клавиатуры больше
+    // нет", а не пытаться поймать событие, которого приложение никогда
+    // не увидит.
+    final searchKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 50;
+    if (_searchActive && _searchKeyboardWasVisible && !searchKeyboardVisible) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _searchActive) {
+          DebugLog.log(
+            'HomePlaceholder search: keyboard disappeared while search '
+            'active (back/IME-dismiss/etc.) — closing search to match',
+          );
+          _closeSearch();
+        }
+      });
+    }
+    _searchKeyboardWasVisible = _searchActive && searchKeyboardVisible;
+
     return PopScope(
       // На "обратной стороне" (настройки/профиль) системный back должен
       // сначала развернуть карточку обратно к чатам, а не сразу закрывать
@@ -954,6 +992,18 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
       // лишним.
       canPop: _selectedTab == 0 && !_searchActive,
       onPopInvokedWithResult: (didPop, result) {
+        // Диагностика для жалобы "swipe-back не закрывает поиск" — этот
+        // лог должен появиться в debug-логе ПРИ КАЖДОМ системном back
+        // (кнопка/жест), независимо от результата. Если его в логе НЕТ
+        // после swipe-back — значит событие вообще не доходит до
+        // PopScope (проблема на уровне Android/предиктивного back, не в
+        // этой логике); если ЕСТЬ, но поиск не закрылся — проблема в
+        // _closeSearch()/перерисовке. Одно наблюдение вместо ещё одной
+        // догадки.
+        DebugLog.log(
+          'HomePlaceholder onPopInvokedWithResult didPop=$didPop '
+          'searchActive=$_searchActive selectedTab=$_selectedTab',
+        );
         if (didPop) return;
         if (_searchActive) {
           _closeSearch();

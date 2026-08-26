@@ -24,6 +24,12 @@ class VoiceMessagePlayer extends StatefulWidget {
   final String? processingStep;
   final Future<File> Function({void Function(double percent)? onProgress})
   resolveFile;
+  // См. VideoNotePlayer.isCached — та же дешёвая пред-проверка кеша,
+  // чтобы не мигать "Downloading 0%", когда resolveFile ниже на самом
+  // деле ничего не качает (например, если этот виджет пересоздан заново
+  // — вышли из чата и вернулись — и локальный кэш _file ещё не заполнен,
+  // но файл уже лежит на диске в MediaCache).
+  final Future<bool> Function()? isCached;
   final MediaPlaybackCoordinator? coordinator;
   final String? messageId;
 
@@ -33,6 +39,7 @@ class VoiceMessagePlayer extends StatefulWidget {
     required this.durationMs,
     this.processingStep,
     required this.resolveFile,
+    this.isCached,
     this.coordinator,
     this.messageId,
   });
@@ -122,10 +129,13 @@ class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
 
   Future<void> _doResume() async {
     if (_file == null) {
-      setState(() {
-        _loading = true;
-        _downloadPercent = 0;
-      });
+      final alreadyCached = await widget.isCached?.call() ?? false;
+      if (!alreadyCached) {
+        setState(() {
+          _loading = true;
+          _downloadPercent = 0;
+        });
+      }
       try {
         _file = await widget.resolveFile(
           onProgress: (percent) {
