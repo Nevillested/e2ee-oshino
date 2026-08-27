@@ -5,6 +5,7 @@ import 'package:photo_manager/photo_manager.dart';
 import 'package:video_player/video_player.dart';
 import '../l10n/app_strings.dart';
 import '../widgets/app_loading_indicator.dart';
+import '../widgets/safe_memory_image.dart';
 import '../widgets/vertical_dismiss_detector.dart';
 
 /// Папка в галерее устройства, куда сохраняются медиа через "Сохранить в
@@ -433,7 +434,15 @@ class _MediaViewerPageState<T> extends State<_MediaViewerPage<T>>
             minScale: 1.0,
             maxScale: 5.0,
             child: Center(
-              child: Image.memory(snapshot.data!, fit: BoxFit.contain),
+              child: SafeMemoryImage(
+                bytes: snapshot.data!,
+                fit: BoxFit.contain,
+                brokenBuilder: (context) => const Icon(
+                  Icons.broken_image,
+                  color: Colors.white54,
+                  size: 64,
+                ),
+              ),
             ),
           ),
         );

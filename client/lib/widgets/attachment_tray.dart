@@ -46,6 +46,18 @@ class AttachmentTray extends StatelessWidget {
                             height: 74,
                             fit: BoxFit.cover,
                             cacheWidth: 148,
+                            // См. ChatScreen._imageDecodeErrorBuilder.
+                            errorBuilder: (context, error, stackTrace) =>
+                                Container(
+                                  width: 74,
+                                  height: 74,
+                                  color: AppColors.surface,
+                                  alignment: Alignment.center,
+                                  child: const Icon(
+                                    Icons.broken_image,
+                                    color: Colors.red,
+                                  ),
+                                ),
                           )
                         : Container(
                             width: 74,

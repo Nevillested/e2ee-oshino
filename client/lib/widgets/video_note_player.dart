@@ -7,6 +7,7 @@ import '../l10n/app_strings.dart';
 import '../services/debug_log.dart';
 import '../services/media_playback_coordinator.dart';
 import 'media_status_overlay.dart';
+import 'safe_memory_image.dart';
 
 /// Проигрыватель видео-сообщения — квадрат со скруглёнными углами (у нас
 /// не кружок, как в Телеге, а именно квадрат). Тап запускает/ставит на
@@ -443,7 +444,11 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       return Image.file(File(widget.localPreviewPath!), fit: BoxFit.cover);
     }
     if (_thumbnailBytes != null) {
-      return Image.memory(_thumbnailBytes!, fit: BoxFit.cover);
+      return SafeMemoryImage(
+        bytes: _thumbnailBytes!,
+        fit: BoxFit.cover,
+        brokenBuilder: (context) => Container(color: Colors.black),
+      );
     }
     return Container(color: Colors.black);
   }

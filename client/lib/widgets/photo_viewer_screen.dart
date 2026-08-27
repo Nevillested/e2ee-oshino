@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'safe_memory_image.dart';
 
 /// Полноэкранный просмотр фото профиля (своего — из его модалки
 /// "Просмотр"/"Изменить"/"Удалить", см. my_profile_screen.dart; чужого —
@@ -27,7 +28,17 @@ class PhotoViewerScreen extends StatelessWidget {
         body: SafeArea(
           child: Stack(
             children: [
-              Center(child: Image.memory(bytes, fit: BoxFit.contain)),
+              Center(
+                child: SafeMemoryImage(
+                  bytes: bytes,
+                  fit: BoxFit.contain,
+                  brokenBuilder: (context) => const Icon(
+                    Icons.broken_image,
+                    color: Colors.white54,
+                    size: 64,
+                  ),
+                ),
+              ),
               Positioned(
                 top: 4,
                 left: 4,
@@ -55,8 +66,10 @@ void showPhotoViewer(BuildContext context, Uint8List bytes) {
       barrierColor: Colors.black,
       transitionDuration: const Duration(milliseconds: 200),
       reverseTransitionDuration: const Duration(milliseconds: 180),
-      pageBuilder: (context, animation, secondaryAnimation) =>
-          FadeTransition(opacity: animation, child: PhotoViewerScreen(bytes: bytes)),
+      pageBuilder: (context, animation, secondaryAnimation) => FadeTransition(
+        opacity: animation,
+        child: PhotoViewerScreen(bytes: bytes),
+      ),
     ),
   );
 }

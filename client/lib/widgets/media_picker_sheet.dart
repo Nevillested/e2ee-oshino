@@ -740,6 +740,9 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
                     final image = Image.memory(
                       snapshot.data!,
                       fit: BoxFit.cover,
+                      // См. ChatScreen._imageDecodeErrorBuilder.
+                      errorBuilder: (context, error, stackTrace) =>
+                          Container(color: AppColors.surface),
                     );
                     // Спойлер — на весь выбор разом (см. _spoilerEnabled), но
                     // визуально показываем его только на УЖЕ выбранных

@@ -71,6 +71,7 @@ import '../widgets/app_loading_indicator.dart';
 import '../widgets/attach_launcher_overlay.dart';
 import '../widgets/avatar_settings_tile.dart' show AvatarThumbnail;
 import '../widgets/delete_message_dialog.dart';
+import '../widgets/safe_memory_image.dart';
 import '../widgets/full_emoji_picker.dart';
 import '../widgets/media_picker_sheet.dart';
 import '../widgets/media_status_overlay.dart';
@@ -164,10 +165,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   void Function(double percent) _progressUpdater(String mediaId) {
     return (percent) {
+      _lastDownloadActivityAt[mediaId] = DateTime.now();
       if (!mounted) return;
       setState(() => _downloadProgress[mediaId] = percent);
     };
   }
+
+  // Момент последнего реального сигнала прогресса — см. _watchForStall
+  // ниже: таймаут по ОБЩЕЙ длительности ("не больше N секунд на всё")
+  // ошибочно принимает "медленно, но качается" за "зависло" — большой
+  // файл на медленной сети никогда бы не докачался (жалоба пользователя:
+  // "а вдруг файл огромный?"). Вместо этого следим за тем, идёт ли
+  // прогресс ВООБЩЕ — пока байты продолжают поступать (пусть редко),
+  // сколько угодно долгая загрузка не считается зависшей; таймаут
+  // срабатывает только если новых тиков прогресса нет вообще какое-то
+  // время подряд — вот это уже настоящий признак зависания (тот самый
+  // реальный кейс — намертво висящий нативный плагин генерации превью
+  // видео, у которого сигналов прогресса в принципе не бывает).
+  final Map<String, DateTime> _lastDownloadActivityAt = {};
 
   // Очередь автоскачивания фото/медиа (см. ТЗ пользователя: "группа из
   // фото должна загружаться по очереди") — без неё КАЖДАЯ плитка сетки
@@ -214,23 +229,79 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return false;
   }
 
+  // Порог простоя (не общей длительности!) — см. _lastDownloadActivityAt
+  // и _raceStall ниже. Достаточно большой запас поверх обычного интервала
+  // между тиками прогресса (те приходят намного чаще), чтобы не поймать
+  // на этом честную, но неторопливую доставку одного чанка по медленной
+  // сети — но не бесконечный, чтобы задача без единого сигнала прогресса
+  // вообще (нативная генерация превью видео, см. generateVideoThumbnail)
+  // не висела вечно.
+  static const _downloadStallTimeout = Duration(seconds: 30);
+
+  /// Гонка задачи против "часового" простоя — в отличие от простого
+  /// Future.timeout(), не ограничивает ОБЩУЮ длительность (жалоба
+  /// пользователя: "а вдруг файл огромный? получается мы никогда не
+  /// сможем его скачать?" — большой файл на медленной сети мог бы честно
+  /// качаться дольше любого фиксированного лимита). Часовой перезапускает
+  /// себя на каждый вызов _progressUpdater(mediaId) (см. её обновление
+  /// _lastDownloadActivityAt) — пока прогресс продолжает идти, сколько бы
+  /// он ни занял по времени, задача не считается зависшей. Ошибку ловим
+  /// только если сигналов прогресса не было вообще (или они прекратились)
+  /// дольше _downloadStallTimeout подряд — вот это уже настоящий признак
+  /// зависания, а не просто "медленно".
+  Future<T> _raceStall<T>(String mediaId, Future<T> future) {
+    _lastDownloadActivityAt[mediaId] = DateTime.now();
+    final completer = Completer<T>();
+    final watchdog = Timer.periodic(const Duration(seconds: 5), (timer) {
+      final last = _lastDownloadActivityAt[mediaId];
+      if (last != null &&
+          DateTime.now().difference(last) >= _downloadStallTimeout) {
+        timer.cancel();
+        if (!completer.isCompleted) {
+          completer.completeError(
+            TimeoutException(
+              'Скачивание зависло — нет прогресса $_downloadStallTimeout',
+            ),
+          );
+        }
+      }
+    });
+    future.then(
+      (value) {
+        if (!completer.isCompleted) completer.complete(value);
+      },
+      onError: (Object e, StackTrace st) {
+        if (!completer.isCompleted) completer.completeError(e, st);
+      },
+    );
+    return completer.future.whenComplete(() {
+      watchdog.cancel();
+      _lastDownloadActivityAt.remove(mediaId);
+    });
+  }
+
   Future<T> _enqueueDownload<T>(String mediaId, Future<T> Function() task) {
     final result = _downloadQueueTail.then((_) async {
       if (mounted) setState(() => _activeDownloadMediaIds.add(mediaId));
+      final taskFuture = task();
+      // Предохранитель от "unhandled exception" (см. тот же приём и его
+      // подробное обоснование в SendQueueProcessor._attempt этой же
+      // сессии): если ниже сработает часовой простоя и мы перестанем
+      // ждать taskFuture, а он позже всё равно завершится ошибкой — у
+      // него уже не будет ни одного слушателя, и Dart сочтёт это
+      // настоящим необработанным исключением (под VM-дебаггером —
+      // зависание всего изолята).
+      unawaited(taskFuture.then((_) {}, onError: (_) {}));
       try {
-        // .timeout() — без него один зависший таск (например, нативная
-        // генерация превью видео — см. generateVideoThumbnail, реальный
-        // случай: платформенный плагин иногда намертво виснет на эмуляторе
-        // без единой ошибки) навсегда блокировал бы ВЕСЬ этот общий
+        // Без часового один зависший таск (например, нативная генерация
+        // превью видео — см. generateVideoThumbnail, реальный случай:
+        // платформенный плагин иногда намертво виснет на эмуляторе без
+        // единой ошибки) навсегда блокировал бы ВЕСЬ этот общий
         // последовательный конвейер: очередь одна на весь экран чата (см.
         // класс-комментарий про порядок закачки группы), а следующий
         // элемент стартует только после того, как предыдущий завершился —
-        // успехом ИЛИ неудачей. Без таймаута "неудача" никогда не
-        // наступала бы, и всё, что шло следом (даже уже скачанные когда-то
-        // фото соседней группы), вечно висело бы "В очереди" — жалоба
-        // пользователя: три уже отправленных фото так и не переставали
-        // показывать "Queued".
-        return await task().timeout(const Duration(seconds: 25));
+        // успехом ИЛИ неудачей.
+        return await _raceStall(mediaId, taskFuture);
       } finally {
         if (mounted) setState(() => _activeDownloadMediaIds.remove(mediaId));
       }
@@ -3856,9 +3927,65 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ? _clickableFileRow(msg, size: size)
           : _photoPreview(msg, size: size);
     }
-    return _downloadPromptRow(msg);
+    // Файлы — строкой (имя+иконка+размер), у них нет своей картинки, им
+    // это идёт. А вот фото/видео, которым просто требуется ручное
+    // скачивание (крупный размер), ДОЛЖНЫ остаться квадратной плиткой
+    // ТОГО ЖЕ размера, что и уже скачанные — иначе группа из нескольких
+    // фото/видео визуально ломается: строка вместо плитки занимает не то
+    // место, и сетка теряет один из своих "лотов" (жалоба пользователя,
+    // видео в группе рисовалось как имя файла со стрелочкой, а не как
+    // третья плитка в сетке).
+    return msg.isFile ? _downloadPromptRow(msg) : _mediaDownloadTile(msg, size);
   }
 
+  /// Квадратная плитка "нужно скачать вручную" для крупного фото/видео —
+  /// см. _buildAttachmentBubble. Тап только СТАВИТ задачу в общую очередь
+  /// (_mediaFutures) — дальше всю отрисовку (спиннер/процент/картинку)
+  /// подхватывает уже сам _photoPreview, который на следующей отрисовке
+  /// находит эту задачу через тот же putIfAbsent и продолжает как обычно.
+  Widget _mediaDownloadTile(StoredMessage msg, double size) {
+    if (_mediaFutures.containsKey(msg.mediaId)) {
+      return _photoPreview(msg, size: size);
+    }
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _downloadProgress[msg.mediaId!] = 0;
+          _mediaFutures[msg.mediaId!] =
+              _enqueueDownload(
+                msg.mediaId!,
+                () => _resolvePhotoBytes(
+                  msg,
+                  onProgress: _progressUpdater(msg.mediaId!),
+                ),
+              ).then((bytes) {
+                if (mounted)
+                  setState(() => _resolvedMedia[msg.mediaId!] = bytes);
+                return bytes;
+              });
+        });
+      },
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: AppColors.textMuted.withValues(alpha: 0.35),
+          ),
+        ),
+        child: Center(
+          child: Icon(Icons.download, color: AppColors.textPrimary, size: 32),
+        ),
+      ),
+    );
+  }
+
+  /// Только для msg.isFile — строка "иконка + имя + размер" с тапом на
+  /// скачивание. Фото/видео используют _mediaDownloadTile (квадратная
+  /// плитка, см. _buildAttachmentBubble) — своей картинки у файла нет, ему
+  /// строчный вид как раз идёт, а плитке-заглушке взяться неоткуда.
   Widget _downloadPromptRow(StoredMessage msg) {
     if (msg.chunked) {
       final downloading = _chunkedDownloads.containsKey(msg.mediaId);
@@ -3980,7 +4107,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   if (mounted) setState(() {});
                 });
                 return Icon(
-                  msg.isFile ? _iconForFileName(msg.fileName) : Icons.image,
+                  _iconForFileName(msg.fileName),
                   color: AppColors.textPrimary,
                   size: 28,
                 );
@@ -3996,9 +4123,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 160),
                 child: Text(
-                  msg.isFile
-                      ? (msg.fileName ?? msg.text)
-                      : '📷 ${tr('media.photo')}',
+                  msg.fileName ?? msg.text,
                   style: TextStyle(color: AppColors.textPrimary),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -4189,12 +4314,43 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// сообщения под пузырём, если она задана. Первый тап только раскрывает
   /// (см. _revealedSpoilerIds), открыть просмотрщик можно только
   /// СЛЕДУЮЩИМ, уже по раскрытому фото — как и в Телеге.
+  /// Общее содержимое резерва под эмодзи-панель — вынесено отдельно, чтобы
+  /// не дублировать один и тот же виджет в обеих ветках (Container вместо
+  /// AnimatedContainer, см. их выбор у emojiReserved в build()).
+  Widget? _buildEmojiPickerChild(bool keyboardVisible) {
+    if (!_emojiMode && !keyboardVisible) return null;
+    return Offstage(
+      offstage: !_emojiMode,
+      child: ClipRect(
+        child: RepaintBoundary(
+          child: FullEmojiPicker(
+            onEmojiSelected: (emoji) {
+              _textController.text += emoji;
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Общий errorBuilder для Image.memory (см. её вызовы ниже) — без него
+  /// сбой ДЕКОДИРОВАНИЯ (не скачивания — байты уже есть и уже прошли
+  /// наш собственный broken_image-фоллбэк FutureBuilder'а, это отдельный,
+  /// более поздний шаг) уходит во внутренний обработчик Flutter'овского
+  /// _ImageState, который, будучи неотловленным исключением, под
+  /// VM-дебаггером с "pause on uncaught exceptions" вешает ВЕСЬ изолят —
+  /// реальный кейс с устройства: "Failed to create image decoder...
+  /// unimplemented" (похоже на ограничение декодера конкретно на
+  /// эмуляторе — реальные фото с Pixel иногда используют формат вроде
+  /// Ultra HDR, который его софтверный декодер не умеет). В продакшене
+  /// (без дебаггера) Flutter и так проглотил бы это тихо, но полагаться на
+  /// внутренний путь фреймворка вместо явной обработки — не наш случай.
   Widget _spoilerOverlayImage(Uint8List bytes, double side) {
     return SpoilerSparkleOverlay(
       blurredChild: ImageFiltered(
         imageFilter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: Image.memory(
-          bytes,
+        child: SafeMemoryImage(
+          bytes: bytes,
           fit: BoxFit.cover,
           cacheWidth: (side * 2).round(),
         ),
@@ -4254,8 +4410,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             child: _withVideoPlayBadge(
               isHiddenSpoiler
                   ? _spoilerOverlayImage(cached, side)
-                  : Image.memory(
-                      cached,
+                  : SafeMemoryImage(
+                      bytes: cached,
                       fit: BoxFit.cover,
                       cacheWidth: (side * 2).round(),
                     ),
@@ -4268,11 +4424,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
     final future = _mediaFutures.putIfAbsent(
       msg.mediaId!,
-      () => _enqueueDownload(
-        msg.mediaId!,
-        () =>
-            _resolvePhotoBytes(msg, onProgress: _progressUpdater(msg.mediaId!)),
-      ),
+      () =>
+          _enqueueDownload(
+            msg.mediaId!,
+            () => _resolvePhotoBytes(
+              msg,
+              onProgress: _progressUpdater(msg.mediaId!),
+            ),
+          ).then((bytes) {
+            // Проставляем результат ЗДЕСЬ, на уровне всего экрана чата, а не
+            // только полагаемся на builder этого FutureBuilder ниже — жалоба
+            // пользователя: "фото докачалось до 100%, но превью не появилось,
+            // помогает только выход и повторный вход в чат". Если конкретный
+            // виджет этого пузыря к моменту завершения загрузки был
+            // утилизирован ListView.builder (проскроллили мимо) или экран
+            // перестроился — Flutter сам гасит подписку своего FutureBuilder
+            // при dispose, и её собственный "готово"-колбэк просто никогда не
+            // срабатывает, хотя байты уже реально на диске (см. debug_log —
+            // одни и те же mediaId докачивались повторно спустя МИНУТЫ, потому
+            // что _resolvedMedia так и не обновился с первого раза). setState
+            // здесь не привязан к жизни конкретного виджета пузыря — сработает
+            // в любом случае.
+            if (mounted) setState(() => _resolvedMedia[msg.mediaId!] = bytes);
+            return bytes;
+          }),
     );
 
     // Синхронный, всегда-актуальный флаг "файл уже физически на
@@ -4341,8 +4516,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               child: _withVideoPlayBadge(
                 isHiddenSpoiler
                     ? _spoilerOverlayImage(snapshot.data!, side)
-                    : Image.memory(
-                        snapshot.data!,
+                    : SafeMemoryImage(
+                        bytes: snapshot.data!,
                         fit: BoxFit.cover,
                         cacheWidth: (side * 2).round(),
                       ),
@@ -6304,11 +6479,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // (и закэшированную, см. _keyboardHeight/KeyboardHeightStore) высоту
     // клавиатуры, а НЕ живое значение realInset. Раз высота фиксирована и
     // общая для обеих панелей, между ними никогда не может быть скачка.
-    // _awaitingKeyboardOpen — see handler below: короткий зазор между тапом
-    // по иконке клавиатуры и моментом, когда настоящая клавиатура реально
-    // поднимется (realInset превысит порог) — без него на эти несколько
-    // кадров обе панели считались бы закрытыми и резерв на миг схлопнулся.
-    if (_awaitingKeyboardOpen && rawKeyboardVisible) {
+    // _awaitingKeyboardOpen — see handler below: держит резерв места,
+    // пока настоящая клавиатура не ДОГОНИТ его сама (realInset >=
+    // _keyboardHeight), а не просто "стала видна" (realInset > 50) — см.
+    // подробное обоснование у emojiReserved ниже: формула там устроена
+    // так, что снимать флаг раньше, чем realInset реально долез до
+    // _keyboardHeight, означало бы читать emojiReserved как 0 ДО того, как
+    // сама клавиатура успела дозанять оставшееся место — та же "прыгающая"
+    // панель, только в обратную сторону.
+    if (_awaitingKeyboardOpen && realInset >= _keyboardHeight) {
       _awaitingKeyboardOpen = false;
     }
     // ТЗ пользователя — "клавиатура как лифт": всё, что находится над ней
@@ -6327,8 +6506,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // Наш собственный резерв места (emojiReserved) остаётся только для
     // эмодзи-панели — это наш собственный UI, не системный оверлей,
     // никакого сигнала от ОС для него нет и не может быть.
+    //
+    // "_keyboardHeight - realInset" (а не просто _keyboardHeight) — ТЗ
+    // пользователя: переключение клавиатура<->эмодзи (в обе стороны) не
+    // должно двигать панель ввода ВООБЩЕ, а не просто "быстро" или "без
+    // рывков" — обе панели занимают ОДНО и то же место, значит сумма
+    // "сколько тело экрана уже сжато настоящей клавиатурой" (realInset,
+    // двигает Scaffold.resizeToAvoidBottomInset САМ) и "сколько сверху
+    // добавляет наш резерв" (emojiReserved) обязана быть равна
+    // _keyboardHeight В КАЖДЫЙ момент перехода, а не только в его начале
+    // и конце. Раньше emojiReserved прыгал на всю _keyboardHeight СРАЗУ
+    // (в тот же кадр, что setState), а realInset ещё несколько кадров
+    // донашивал свою настоящую (системную, ~250мс) анимацию — на это время
+    // сумма превышала _keyboardHeight (при закрытии клавиатуры) или была
+    // меньше него (при открытии), и панель ввода заметно дёргалась —
+    // реальная жалоба пользователя. clamp(0, _keyboardHeight) — только
+    // подстраховка от отрицательных/завышенных значений на стыке, когда
+    // realInset на долю кадра обгоняет _keyboardHeight (см. её же
+    // settle-логику выше).
     final emojiReserved = (_emojiMode || _awaitingKeyboardOpen)
-        ? _keyboardHeight
+        ? (_keyboardHeight - realInset).clamp(0.0, _keyboardHeight)
         : 0.0;
     // restGap — зазор до низа экрана в состоянии покоя (клавиатура и
     // эмодзи-панель обе закрыты). gapHeight — то же самое, но выведенное
@@ -6949,26 +7146,36 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     // показа). Не монтируем его вообще, когда клавиатуры
                     // тоже нет — незачем тратить на это первый кадр
                     // самого экрана чата.
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOut,
-                      height: emojiReserved,
-                      color: AppColors.surface,
-                      child: (_emojiMode || keyboardVisible)
-                          ? Offstage(
-                              offstage: !_emojiMode,
-                              child: ClipRect(
-                                child: RepaintBoundary(
-                                  child: FullEmojiPicker(
-                                    onEmojiSelected: (emoji) {
-                                      _textController.text += emoji;
-                                    },
-                                  ),
-                                ),
-                              ),
-                            )
-                          : null,
-                    ),
+                    // Обычный (не Animated) Container, пока в игре
+                    // настоящая клавиатура (realInset>0 ИЛИ
+                    // _awaitingKeyboardOpen — см. её объяснение выше) —
+                    // emojiReserved в этом режиме уже сам по себе плавная,
+                    // покадровая функция realInset, синхронная с системной
+                    // анимацией клавиатуры один в один. Обернуть её ЕЩЁ и
+                    // в AnimatedContainer означало бы заново наступить на
+                    // грабли этой же сессии (см. gapHeight/restGap выше):
+                    // AnimatedContainer сам плавно едет к КАЖДОМУ новому
+                    // целевому значению отдельные 220мс, то есть гнался бы
+                    // за уже плавной кривой — родная жалоба пользователя
+                    // "панель сообщения куда-то прыгает при нажатии на
+                    // эмодзи". А вот для перехода эмодзи-панель <-> состояние
+                    // покоя (настоящая клавиатура вообще не участвует,
+                    // realInset весь переход равен 0 — синхронизировать
+                    // не с чем) собственная 220мс анимация — единственный
+                    // способ показать это плавно, не рывком.
+                    (_awaitingKeyboardOpen || realInset > 0)
+                        ? Container(
+                            height: emojiReserved,
+                            color: AppColors.surface,
+                            child: _buildEmojiPickerChild(keyboardVisible),
+                          )
+                        : AnimatedContainer(
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeOut,
+                            height: emojiReserved,
+                            color: AppColors.surface,
+                            child: _buildEmojiPickerChild(keyboardVisible),
+                          ),
                   ],
                 ),
               ),
