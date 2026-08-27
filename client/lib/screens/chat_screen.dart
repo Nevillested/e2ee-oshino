@@ -4771,25 +4771,29 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  /// Время+статус — ВСЕГДА отдельной строкой под текстом, прижатой к
-  /// правому краю, точно так же, как у голосовых/видео/фото сообщений —
-  /// единое поведение для всех типов, а не только для текста, у которого
-  /// раньше было отдельное "умное" встраивание в конец последней строки.
+  /// Время+статус — снова "умная" вставка в конец последней строки текста
+  /// (см. _buildLinkifiedText: trailingMeta там становится завершающим
+  /// WidgetSpan), как когда-то и было ДО единого поведения для всех типов
+  /// сообщений. Вернули по прямому ТЗ пользователя — у коротких текстовых
+  /// сообщений, где текст не дотягивает до правого края пузыря, время и
+  /// галочки отдельной строкой снизу оставляли целую пустую строку
+  /// пустого места (текст не занимает всю ширину сверху, время не
+  /// занимает всю ширину снизу — оба зазора складываются в одну лишнюю
+  /// строку). WidgetSpan в конце абзаца сам решает: есть место на
+  /// последней строке текста — встаёт туда; нет — переносится на новую
+  /// строку целиком, как единое целое, ровно то же поведение, что и в
+  /// Телеграме/WhatsApp. Голосовые/видео/фото НЕ трогаем — там своя
+  /// раскладка (_buildMetaRow отдельной строкой под медиа), это
+  /// сознательно другой случай: там нет "текста", в который можно было бы
+  /// вписать метаданные.
   Widget _buildTextWithMeta(StoredMessage msg, double maxTextWidth) {
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxTextWidth),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildLinkifiedText(
-            msg.text,
-            _bubbleTextColor(msg.isMine),
-            isMine: msg.isMine,
-          ),
-          const SizedBox(height: 2),
-          _buildMetaRow(msg),
-        ],
+      child: _buildLinkifiedText(
+        msg.text,
+        _bubbleTextColor(msg.isMine),
+        isMine: msg.isMine,
+        trailingMeta: _buildMetaRow(msg),
       ),
     );
   }
@@ -4807,14 +4811,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// подчёркнутые и кликабельные (см. _openLink). Единая точка для обоих
   /// мест, где рендерится текст сообщения (одиночный пузырь и подпись в
   /// групповом), см. _buildGroupBubble.
+  ///
+  /// trailingMeta (см. _buildTextWithMeta) — необязательный виджет
+  /// (время+галочки), который завершающим WidgetSpan встраивается прямо в
+  /// конец текста: если на последней строке есть место — окажется там же,
+  /// иначе перенесётся на новую строку целиком, как единое целое (тот же
+  /// приём, что у Телеграма/WhatsApp). caption в _buildGroupBubble этот
+  /// параметр не передаёт — там время+статус относятся ко всей группе
+  /// целиком, а не к одной подписи, и остаются отдельной строкой ниже.
   Widget _buildLinkifiedText(
     String text,
     Color baseColor, {
     required bool isMine,
     double fontSize = 16,
+    Widget? trailingMeta,
   }) {
     final matches = _urlRegex.allMatches(text).toList();
-    if (matches.isEmpty) {
+    if (matches.isEmpty && trailingMeta == null) {
       return Text(
         text,
         style: TextStyle(color: baseColor, fontSize: fontSize),
@@ -4839,6 +4852,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     if (cursor < text.length) {
       spans.add(TextSpan(text: text.substring(cursor)));
+    }
+    if (trailingMeta != null) {
+      spans.add(
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: Padding(
+            padding: const EdgeInsets.only(left: 6, top: 2),
+            child: trailingMeta,
+          ),
+        ),
+      );
     }
 
     return Text.rich(
@@ -6651,22 +6675,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   // жалобу пользователя) — 28, а не 16,
                                   // добавляют настоящий видимый зазор.
                                   //
-                                  // "- (restGap - gapHeight)" — без этого
-                                  // вычета зазор между последним сообщением и
-                                  // таблеткой был РАЗНЫЙ в состоянии покоя и
-                                  // при открытой клавиатуре/эмодзи (жалоба
-                                  // пользователя): сама таблетка (см. Column
-                                  // ниже, SizedBox(height: gapHeight) перед
-                                  // резервом клавиатуры) в покое стоит ВЫШЕ на
-                                  // restGap (свой маленький зазор до низа
-                                  // экрана), а при открытых — вплотную, без
-                                  // этого зазора, то есть НИЖЕ на ту же
-                                  // величину. gapHeight — та же самая плавная
-                                  // (не дискретная) величина, что и у самого
-                                  // зазора-спейсера (см. её объяснение выше,
-                                  // "restGap — зазор до низа экрана..."), так
-                                  // что паддинг списка и высота спейсера
-                                  // всегда меняются синхронно, кадр в кадр.
+                                  // "+ gapHeight" (а не вычитание фиксированной
+                                  // константы, как было раньше) — реальный
+                                  // баг с устройства: на 3-кнопочной системной
+                                  // навигации (в отличие от жестовой)
+                                  // systemBottomInset заметно больше (48 vs
+                                  // 24), поэтому и сам зазор-спейсер (см.
+                                  // gapHeight/restGap выше) вырастает почти
+                                  // вдвое — а старая формула резервировала
+                                  // под него ФИКСИРОВАННЫЕ 28, никак не
+                                  // связанные с реальным systemBottomInset.
+                                  // Итог — непрозрачная "таблетка" (её
+                                  // верхний край стоит на gapHeight выше низа
+                                  // экрана) физически перекрывала последнее
+                                  // сообщение на устройствах с крупной
+                                  // 3-кнопочной панелью (жалоба пользователя
+                                  // со скриншотом). gapHeight — та же самая
+                                  // плавная (не дискретная) величина, что и у
+                                  // самого зазора-спейсера, так что паддинг
+                                  // списка и высота спейсера всегда меняются
+                                  // синхронно, кадр в кадр, и корректно растут
+                                  // вместе с systemBottomInset вместо
+                                  // константы. "12 +" — небольшой
+                                  // фиксированный запас поверх реальной
+                                  // высоты таблетки, чтобы последнее
+                                  // сообщение не липло к ней вплотную даже
+                                  // после этого исправления.
                                   //
                                   // "+ (_composerBannerVisible ? ... : 0)" —
                                   // баннер реплая/редактирования/пересылки
@@ -6683,10 +6717,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   // resizeToAvoidBottomInset у Scaffold) —
                                   // Expanded-список и так получает меньше
                                   // места безо всякого паддинга.
-                                  28 +
+                                  12 +
                                       64 +
-                                      emojiReserved -
-                                      (restGap - gapHeight) +
+                                      emojiReserved +
+                                      gapHeight +
                                       (_composerBannerVisible
                                           ? _composerBannerHeight
                                           : 0),
