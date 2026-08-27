@@ -681,6 +681,27 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 					continue
 				}
 
+				// Подтверждаем ОТПРАВИТЕЛЮ СРАЗУ здесь, а не после попытки живой
+				// доставки ниже — сообщение уже гарантированно сохранено (см.
+				// SavePendingMessage выше), это и есть момент, когда сервер
+				// принял на себя ответственность за него.
+				//
+				// РАНЬШЕ ackSender стоял ПОСЛЕ tryLiveDeliverOnce — а тот
+				// синхронно ждёт ack получателя до 5 секунд (см. его код).
+				// Вопреки собственному комментарию выше ("просто оптимизация
+				// задержки поверх уже гарантированной записи, а не
+				// альтернативный путь") на деле попытка живой доставки ВСЁ
+				// РАВНО придерживала подтверждение отправителю на всё это
+				// время — разбор жалобы пользователя: "если собеседник
+				// офлайн — отправка мгновенная, если онлайн — очень долгая",
+				// ровно потому что offline-путь (registry.Get внутри
+				// tryLiveDeliverOnce) возвращался немедленно, а online —
+				// только после ожидания ack получателя/таймаута. Сама живая
+				// доставка теперь полностью fire-and-forget в отдельной
+				// горутине — её исход больше никак не влияет на то, когда
+				// отправитель узнает, что сообщение принято.
+				ackSender(r.Context(), ws_object, NewWSMsgFrom.DeliveryId)
+
 				deliveryID := generateDeliveryID()
 				relay := WSMsgRelay{
 					ToDeviceId: NewWSMsgFrom.ToDeviceId,
@@ -688,27 +709,22 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 					Type:       NewWSMsgFrom.Type,
 					DeliveryId: deliveryID,
 				}
-
-				if tryLiveDeliverOnce(r.Context(), registry, acks, NewWSMsgFrom.ToDeviceId, message_type, relay) {
-					if err := queries.DeletePendingMessage(r.Context(), pendingID); err != nil {
-						log.Printf("ошибка удаления доставленного сообщения: %v", err)
+				go func() {
+					if tryLiveDeliverOnce(r.Context(), registry, acks, NewWSMsgFrom.ToDeviceId, message_type, relay) {
+						if err := queries.DeletePendingMessage(r.Context(), pendingID); err != nil {
+							log.Printf("ошибка удаления доставленного сообщения: %v", err)
+						}
+					} else {
+						// Не доставлено живьём прямо сейчас (получатель офлайн,
+						// зомби-соединение или просто не успел подтвердить за 5с) —
+						// строка уже надёжно лежит в очереди (см. выше), будим
+						// получателя пушем. Если он на самом деле online, но просто
+						// не успел — периодический дожим (startPendingMessageSweeper)
+						// довезёт это же сообщение ему без ожидания нового коннекта.
+						log.Printf("сообщение получателю %s не доставлено живьём, остаётся в очереди", NewWSMsgFrom.ToDeviceId)
+						wakeWithPush(r.Context(), queries, toDeviceUUID, DeviceID, NewWSMsgFrom.Silent)
 					}
-				} else {
-					// Не доставлено живьём прямо сейчас (получатель офлайн,
-					// зомби-соединение или просто не успел подтвердить за 5с) —
-					// строка уже надёжно лежит в очереди (см. выше), будим
-					// получателя пушем. Если он на самом деле online, но просто
-					// не успел — периодический дожим (startPendingMessageSweeper)
-					// довезёт это же сообщение ему без ожидания нового коннекта.
-					log.Printf("сообщение получателю %s не доставлено живьём, остаётся в очереди", NewWSMsgFrom.ToDeviceId)
-					wakeWithPush(r.Context(), queries, toDeviceUUID, DeviceID, NewWSMsgFrom.Silent)
-				}
-
-				// В обоих случаях (доставлено живьём или осталось в очереди)
-				// сервер принял на себя ответственность за сообщение с момента
-				// durable-записи выше — сообщаем ОТПРАВИТЕЛЮ (см. ackSender):
-				// это основа единой клиентской очереди отправки.
-				ackSender(r.Context(), ws_object, NewWSMsgFrom.DeliveryId)
+				}()
 
 			} else if MessageType == "call_offer" {
 
