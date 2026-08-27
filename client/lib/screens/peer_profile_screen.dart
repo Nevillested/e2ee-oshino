@@ -82,6 +82,12 @@ class _PeerProfileScreenState extends State<PeerProfileScreen> {
               child: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 children: [
+                  // Порядок полей — ТЗ пользователя: фото, username,
+                  // displayName, bio, birthday. Тап по фото — просмотр,
+                  // как и раньше (изменить/удалить тут нет и не должно
+                  // быть — это чужой профиль, read-only, см. doc-комментарий
+                  // класса; "изменить/удалить" — функциональность СВОЕГО
+                  // профиля, см. my_profile_screen.dart).
                   Center(
                     child: Hero(
                       tag: 'peer-avatar-${widget.peerAccountId}',
@@ -97,21 +103,38 @@ class _PeerProfileScreenState extends State<PeerProfileScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  Center(
-                    child: Text(
-                      _profile?.displayName ?? widget.peerLogin,
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 24),
                   if (!_loaded)
                     const Center(child: AppLoadingIndicator())
                   else ...[
+                    ListTile(
+                      leading: Icon(
+                        Icons.badge_outlined,
+                        color: AppColors.textMuted,
+                      ),
+                      title: Text(
+                        tr('profile.login'),
+                        style: TextStyle(color: AppColors.textPrimary),
+                      ),
+                      subtitle: Text(
+                        widget.peerLogin,
+                        style: TextStyle(color: AppColors.textMuted),
+                      ),
+                    ),
+                    ListTile(
+                      leading: Icon(
+                        Icons.badge_outlined,
+                        color: AppColors.textMuted,
+                      ),
+                      title: Text(
+                        tr('profile.displayName'),
+                        style: TextStyle(color: AppColors.textPrimary),
+                      ),
+                      subtitle: Text(
+                        _profile?.displayName ?? widget.peerLogin,
+                        style: TextStyle(color: AppColors.textMuted),
+                      ),
+                    ),
                     if (_profile?.status?.isNotEmpty == true)
                       ListTile(
                         leading: Icon(

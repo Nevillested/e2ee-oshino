@@ -60,9 +60,18 @@ class MyAvatarStore {
       }
     } catch (_) {}
 
-    final fresh = await ApiClient().getMyAvatar(token);
-    notifier.value = fresh;
-    unawaited(_writeToDisk(fresh));
+    // getMyAvatar теперь бросает исключение на сетевую ошибку (см. её
+    // комментарий в api_client.dart — раньше и сетевая ошибка, и честное
+    // "фото нет" от сервера одинаково превращались в null, из-за чего
+    // временный сбой сети мог затереть уже показанное с диска фото).
+    // Сбой именно тут — на старте приложения — не редкость, оставляем то,
+    // что уже показали с диска строкой выше, вместо необработанного
+    // исключения.
+    try {
+      final fresh = await ApiClient().getMyAvatar(token);
+      notifier.value = fresh;
+      unawaited(_writeToDisk(fresh));
+    } catch (_) {}
   }
 
   static Future<void> _writeToDisk(Uint8List? bytes) async {

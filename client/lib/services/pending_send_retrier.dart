@@ -50,12 +50,38 @@ class PendingSendRetrier {
   bool _started = false;
   final Set<String> _inFlight = {};
 
+  // Реальный кейс с устройства: группа из 3 фото не смогла уйти офлайн —
+  // загрузка ПЕРВОГО файла зависла на плохой сети (ещё живой TCP, но без
+  // ответа) дольше, чем шёл реконнект WebSocket. Задание попадает в
+  // PendingSendStore только когда ЭТА конкретная попытка внутри
+  // ChatScreen._sendGroupNetwork наконец провалится и долетит до catch —
+  // а к этому моменту момент для авто-повтора "по реконнекту" уже упущен:
+  // WS давно снова connected, второго такого события ждать неоткуда, пока
+  // либо не разорвётся СЛЕДУЮЩИЙ раз, либо пользователь не перезапустит
+  // приложение (holodный старт тоже делает sweep). Тот же класс проблемы
+  // уже чинили на сервере (см. server/internal/api/websocket.go —
+  // startPendingMessageSweeper): полагаться ТОЛЬКО на события реконнекта
+  // недостаточно, нужна периодическая подстраховка. 20с — тот же интервал,
+  // что и у серверного sweeper'а, для единообразия.
+  static const _periodicSweepInterval = Duration(seconds: 20);
+
+  // Не сохраняем Timer в поле для последующей отмены — start() вызывается
+  // ровно один раз за всё время жизни процесса (см. _started выше, и его
+  // единственный вызов в home_placeholder_screen.dart), отдельного stop()
+  // у этого синглтона как и у SendQueueProcessor нет и не предполагается.
   void start() {
     if (_started) return;
     _started = true;
     WebSocketService.instance.statusUpdates.listen((status) {
       if (status == ConnectionStatus.connected) {
         DebugLog.log('PendingSendRetrier sweep triggered by reconnect');
+        unawaited(_sweep());
+      }
+    });
+    Timer.periodic(_periodicSweepInterval, (_) {
+      // Не дёргаем сеть впустую, пока соединения всё равно нет — попытка
+      // заведомо провалится тем же способом, каким и попало в очередь.
+      if (WebSocketService.instance.isConnected) {
         unawaited(_sweep());
       }
     });

@@ -17,6 +17,25 @@ class SendQueueStore {
   static const _storage = FlutterSecureStorage();
   static const _key = 'send_queue';
 
+  // add()/remove() — каждый сам по себе read-modify-write (getAll → правим
+  // копию → _writeAll всего списка целиком). Без сериализации несколько
+  // ack'ов, прилетевших почти одновременно (обычный случай при отправке
+  // группы фото/пачки сообщений), запускали параллельные remove() вызовы:
+  // getAll() каждого читал ещё не обновлённый диск, и более поздняя запись
+  // затирала более раннюю, "воскрешая" уже удалённые (доставленные!)
+  // элементы обратно в очередь — реальный кейс с устройства: 5 из 7 уже
+  // acked id снова появлялись в sweep() спустя минуты и пересылались
+  // заново, вызывая повторный push получателю, хотя отправитель ничего не
+  // отправлял. _chain сериализует все операции над хранилищем в порядке
+  // вызова, устраняя саму возможность гонки.
+  static Future<void> _chain = Future.value();
+
+  static Future<T> _sync<T>(Future<T> Function() op) {
+    final result = _chain.then((_) => op());
+    _chain = result.then((_) {}, onError: (_) {});
+    return result;
+  }
+
   static Future<List<Map<String, dynamic>>> getAll() async {
     final stored = await _storage.read(key: _key);
     if (stored == null) return [];
@@ -45,7 +64,7 @@ class SendQueueStore {
     bool silent = false,
     String? messageId,
     String? peerLogin,
-  }) async {
+  }) => _sync(() async {
     final items = await getAll();
     items.add({
       'id': id,
@@ -56,11 +75,11 @@ class SendQueueStore {
       if (peerLogin != null) 'peer_login': peerLogin,
     });
     await _writeAll(items);
-  }
+  });
 
-  static Future<void> remove(String id) async {
+  static Future<void> remove(String id) => _sync(() async {
     final items = await getAll();
     items.removeWhere((item) => item['id'] == id);
     await _writeAll(items);
-  }
+  });
 }

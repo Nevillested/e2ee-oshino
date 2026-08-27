@@ -9,6 +9,7 @@ import '../l10n/app_strings.dart';
 import '../models/picked_media.dart';
 import '../storage/chat_store.dart';
 import '../storage/media_cache.dart';
+import 'upload_cancel_registry.dart';
 
 /// Порог, с которого файл льётся потоково (шифрование в отдельном изоляте,
 /// загрузка целиком уже зашифрованным файлом) — тот же порог, что и раньше
@@ -44,72 +45,85 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
     tr('chat.encrypting'),
   );
 
-  if (chunked) {
-    final tempDir = await getTemporaryDirectory();
-    final encTempFile = File('${tempDir.path}/enc_$messageId.bin');
-    final inputPath = item.file.path;
-    final outputPath = encTempFile.path;
-    final keyPath = '${tempDir.path}/key_$messageId.bin';
-    await compute(encryptFileIsolateEntry, {
-      'input': inputPath,
-      'output': outputPath,
-      'key': keyPath,
-    });
-    final keyBytes = await File(keyPath).readAsBytes();
-    try {
-      await File(keyPath).delete();
-    } catch (_) {}
+  // Регистрируем токен на всё время загрузки (включая шифрование ниже —
+  // не только сам HTTP-запрос) — см. UploadCancelRegistry: единственный
+  // способ по-настоящему прервать уже идущую передачу файла, если
+  // пользователь нажмёт "Отменить" на сообщении, которое ещё грузится
+  // (ТЗ пользователя — раньше отмена только убирала локальные следы, а
+  // сама загрузка молча донашивала себя в фоне).
+  final cancelToken = UploadCancelRegistry.register(messageId);
+  try {
+    if (chunked) {
+      final tempDir = await getTemporaryDirectory();
+      final encTempFile = File('${tempDir.path}/enc_$messageId.bin');
+      final inputPath = item.file.path;
+      final outputPath = encTempFile.path;
+      final keyPath = '${tempDir.path}/key_$messageId.bin';
+      await compute(encryptFileIsolateEntry, {
+        'input': inputPath,
+        'output': outputPath,
+        'key': keyPath,
+      });
+      final keyBytes = await File(keyPath).readAsBytes();
+      try {
+        await File(keyPath).delete();
+      } catch (_) {}
 
-    await ChatStore.updateProcessingStep(
-      peerLogin,
-      messageId,
-      tr('chat.uploading'),
-    );
-    mediaId = await apiClient.uploadEncryptedMediaFileWithProgress(
-      token,
-      encTempFile.path,
-      peerAccountIdForUpload,
-      onProgress: (p) => onProgress?.call(p),
-    );
-    try {
-      await encTempFile.delete();
-    } catch (_) {}
-    await MediaCache.writeFromFile(mediaId, item.file);
-    keyBase64 = base64Encode(keyBytes);
-  } else {
-    final bytes = await item.file.readAsBytes();
-    final encrypted = await encryptFileBytes(bytes);
-    await ChatStore.updateProcessingStep(
-      peerLogin,
-      messageId,
-      tr('chat.uploading'),
-    );
-    // uploadEncryptedMediaWithProgress (байты целиком через
-    // MultipartFile.fromBytes) отдаёт dio ОДНИМ куском — прогресс из-за
-    // этого не дробится на промежуточные тики, только 0% и сразу 100%
-    // (жалоба пользователя: "должно быть постепенное изменение"). Пишем
-    // шифротекст во временный файл и грузим тем же файловым методом, что
-    // и "тяжёлый" путь ниже — MultipartFile.fromFile читает файл потоком
-    // и репортит прогресс по-настоящему постепенно.
-    final tempDir = await getTemporaryDirectory();
-    final encTempFile = File('${tempDir.path}/enc_$messageId.bin');
-    await encTempFile.writeAsBytes(encrypted.ciphertext);
-    try {
+      await ChatStore.updateProcessingStep(
+        peerLogin,
+        messageId,
+        tr('chat.uploading'),
+      );
       mediaId = await apiClient.uploadEncryptedMediaFileWithProgress(
         token,
         encTempFile.path,
         peerAccountIdForUpload,
         onProgress: (p) => onProgress?.call(p),
+        cancelToken: cancelToken,
       );
-    } finally {
       try {
         await encTempFile.delete();
       } catch (_) {}
+      await MediaCache.writeFromFile(mediaId, item.file);
+      keyBase64 = base64Encode(keyBytes);
+    } else {
+      final bytes = await item.file.readAsBytes();
+      final encrypted = await encryptFileBytes(bytes);
+      await ChatStore.updateProcessingStep(
+        peerLogin,
+        messageId,
+        tr('chat.uploading'),
+      );
+      // uploadEncryptedMediaWithProgress (байты целиком через
+      // MultipartFile.fromBytes) отдаёт dio ОДНИМ куском — прогресс из-за
+      // этого не дробится на промежуточные тики, только 0% и сразу 100%
+      // (жалоба пользователя: "должно быть постепенное изменение"). Пишем
+      // шифротекст во временный файл и грузим тем же файловым методом, что
+      // и "тяжёлый" путь ниже — MultipartFile.fromFile читает файл потоком
+      // и репортит прогресс по-настоящему постепенно.
+      final tempDir = await getTemporaryDirectory();
+      final encTempFile = File('${tempDir.path}/enc_$messageId.bin');
+      await encTempFile.writeAsBytes(encrypted.ciphertext);
+      try {
+        mediaId = await apiClient.uploadEncryptedMediaFileWithProgress(
+          token,
+          encTempFile.path,
+          peerAccountIdForUpload,
+          onProgress: (p) => onProgress?.call(p),
+          cancelToken: cancelToken,
+        );
+      } finally {
+        try {
+          await encTempFile.delete();
+        } catch (_) {}
+      }
+      await MediaCache.write(mediaId, bytes);
+      keyBase64 = base64Encode(encrypted.key);
+      nonceBase64 = base64Encode(encrypted.nonce);
+      macBase64 = base64Encode(encrypted.mac);
     }
-    await MediaCache.write(mediaId, bytes);
-    keyBase64 = base64Encode(encrypted.key);
-    nonceBase64 = base64Encode(encrypted.nonce);
-    macBase64 = base64Encode(encrypted.mac);
+  } finally {
+    UploadCancelRegistry.unregister(messageId);
   }
 
   await ChatStore.updateMediaInfo(

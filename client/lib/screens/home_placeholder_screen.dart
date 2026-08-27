@@ -15,6 +15,7 @@ import '../services/local_notifications.dart';
 import '../services/message_cleanup.dart';
 import '../services/message_router.dart';
 import '../services/my_avatar_store.dart';
+import '../storage/media_cache.dart';
 import '../services/my_email_store.dart';
 import '../services/my_profile_store.dart';
 import '../services/peer_profile_cache.dart';
@@ -210,6 +211,16 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   // этому факту, независимо от причины (back, ручной свайп клавиатуры
   // вниз и т.п.).
   bool _searchKeyboardWasVisible = false;
+  // Кнопка "поиск" на самой системной клавиатуре (см. TextField ниже,
+  // textInputAction: search) на некоторых клавиатурах прячет клавиатуру
+  // САМА, тем же способом, что и системный back (см. _searchKeyboardWasVisible
+  // выше) — тогда keyboard-drop-детектор ошибочно принимал это за "ушли из
+  // поиска" и закрывал всю панель, хотя пользователь просто отправил запрос
+  // (жалоба пользователя: "то, что я ввёл, должно уйти на сервер, а не
+  // закрыться"). Флаг — на один-единственный следующий keyboard-drop не
+  // закрывать поиск, выставляется в onSubmitted непосредственно перед тем,
+  // как это самое исчезновение клавиатуры произойдёт.
+  bool _suppressNextSearchKeyboardClose = false;
 
   void _openSearch() {
     setState(() => _searchActive = true);
@@ -443,6 +454,18 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
               controller: _searchController,
               focusNode: _searchFocusNode,
               onChanged: _onSearchChanged,
+              // Кнопка "поиск" на самой системной клавиатуре — на ряде
+              // клавиатур сама прячет клавиатуру нажатием (см.
+              // _suppressNextSearchKeyboardClose выше). Поиск и так уже
+              // идёт по мере ввода (см. onChanged/_onSearchChanged) —
+              // здесь только не даём этому нажатию ничего закрыть:
+              // подавляем срабатывание автозакрытия панели и сразу
+              // пробуем вернуть фокус, чтобы клавиатура, если всё же
+              // спряталась, тут же открылась заново.
+              onSubmitted: (value) {
+                _suppressNextSearchKeyboardClose = true;
+                _searchFocusNode.requestFocus();
+              },
               textInputAction: TextInputAction.search,
               textAlignVertical: TextAlignVertical.center,
               style: TextStyle(color: AppColors.textPrimary, fontSize: 15),
@@ -572,6 +595,12 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     unawaited(_syncMutedChats(token));
     unawaited(_syncBlockedContacts(token));
     unawaited(MyAvatarStore.init());
+    // Прогревает MediaCache._dirCache (см. её комментарий) — без этого
+    // MediaCache.existsSync() в ChatScreen на самое первое открытие чата
+    // после старта приложения ещё не работал бы (дефолт false), и уже
+    // скачанные фото на миг показывали бы текст закачки ровно там, где
+    // этот прогрев и должен был его предотвратить.
+    unawaited(MediaCache.warmUp());
     unawaited(MyEmailStore.init());
     unawaited(MyProfileStore.init());
     unawaited(ensurePrekeysTopped(ApiClient(), token, deviceId));
@@ -966,15 +995,21 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     // не увидит.
     final searchKeyboardVisible = MediaQuery.of(context).viewInsets.bottom > 50;
     if (_searchActive && _searchKeyboardWasVisible && !searchKeyboardVisible) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _searchActive) {
-          DebugLog.log(
-            'HomePlaceholder search: keyboard disappeared while search '
-            'active (back/IME-dismiss/etc.) — closing search to match',
-          );
-          _closeSearch();
-        }
-      });
+      if (_suppressNextSearchKeyboardClose) {
+        // Клавиатура спряталась из-за кнопки "поиск" на ней самой (см.
+        // onSubmitted), не из-за back — пропускаем закрытие ровно один раз.
+        _suppressNextSearchKeyboardClose = false;
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _searchActive) {
+            DebugLog.log(
+              'HomePlaceholder search: keyboard disappeared while search '
+              'active (back/IME-dismiss/etc.) — closing search to match',
+            );
+            _closeSearch();
+          }
+        });
+      }
     }
     _searchKeyboardWasVisible = _searchActive && searchKeyboardVisible;
 

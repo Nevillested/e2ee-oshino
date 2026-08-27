@@ -139,12 +139,30 @@ class SendQueueProcessor {
     // параллельную попытку поверх уже идущей: она бы просто затёрла ack-
     // ожидание первой, и та навсегда "зависла" бы, даже реально получив ack.
     if (_inFlight.contains(id)) {
-      DebugLog.log('SendQueueProcessor id=$id already in flight, skipping duplicate attempt');
+      DebugLog.log(
+        'SendQueueProcessor id=$id already in flight, skipping duplicate attempt',
+      );
       return;
     }
     _inFlight.add(id);
     try {
       final ackFuture = SendAckRegistry.wait(id);
+      // Предохранитель от "unhandled exception": до этой точки и до того,
+      // как ниже (после sendEnvelope) появится настоящий слушатель через
+      // ackFuture.timeout(...), сообщение может быть отменено параллельно
+      // (см. message_cleanup.dart:purgeMessageArtifacts -> SendAckRegistry.
+      // cancel — например, пользователь нажал "Отменить" на ещё
+      // отправляющемся сообщении) — тогда completer завершается ошибкой, а у
+      // ackFuture в этот момент ещё нет ни одного слушателя: Dart считает
+      // это настоящим необработанным исключением. Без дебаггера это просто
+      // шум в логе, но под VM-дебаггером с дефолтным "pause on uncaught
+      // exceptions" (например, запуск через VSCode) это останавливает ВЕСЬ
+      // изолят навсегда — реальный кейс с устройства: приложение зависало
+      // намертво (ANR) ровно в моменты реконнекта, когда очередь пыталась
+      // отправить, пока канал ещё не был готов. Этот catchError — просто
+      // постоянный слушатель "по умолчанию", он не мешает реальному await
+      // ниже (у Future может быть несколько независимых слушателей).
+      unawaited(ackFuture.catchError((_) {}));
       try {
         await WebSocketService.instance.sendEnvelope(
           toDeviceId,
@@ -180,7 +198,9 @@ class SendQueueProcessor {
           'SendQueueProcessor id=$id no ack within timeout: $e — '
           'still listening in background for a late ack',
         );
-        unawaited(_finalizeOnLateAck(id, ackFuture, messageId, peerLogin, onAcked));
+        unawaited(
+          _finalizeOnLateAck(id, ackFuture, messageId, peerLogin, onAcked),
+        );
         return;
       }
       await _finalizeAcked(id, messageId, peerLogin, onAcked);
@@ -207,7 +227,9 @@ class SendQueueProcessor {
       // больше не вызывает) — сдаёмся молча.
       return;
     }
-    DebugLog.log('SendQueueProcessor id=$id: late ack arrived after local timeout gave up');
+    DebugLog.log(
+      'SendQueueProcessor id=$id: late ack arrived after local timeout gave up',
+    );
     await _finalizeAcked(id, messageId, peerLogin, onAcked);
   }
 

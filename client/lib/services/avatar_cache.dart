@@ -12,7 +12,8 @@ import '../session.dart';
 class AvatarCache {
   static final Map<String, Uint8List?> _cache = {};
   static final Map<String, DateTime> _cachedAt = {};
-  static final Map<String, Future<Uint8List?>> _inFlight = {};
+  static final Map<String, Future<({bool ok, Uint8List? bytes})>> _inFlight =
+      {};
   // Счётчик поколений на accountId — растёт при каждом invalidate(). Нужен,
   // чтобы поймать гонку: запрос, отправленный ДО загрузки нового фото (и
   // потому вернувший старое значение/null), может резолвиться ПОСЛЕ того,
@@ -69,7 +70,10 @@ class AvatarCache {
         cachedAt != null && DateTime.now().difference(cachedAt) < _ttl;
     if (isFresh && _cache.containsKey(accountId)) return _cache[accountId];
     final inFlight = _inFlight[accountId];
-    if (inFlight != null) return inFlight;
+    if (inFlight != null) {
+      final result = await inFlight;
+      return result.ok ? result.bytes : _cache[accountId];
+    }
 
     // Диск (в отличие от карт выше) переживает перезапуск процесса — на
     // холодном старте приложения показываем то, что было закэшировано в
@@ -100,16 +104,25 @@ class AvatarCache {
     _inFlight[accountId] = future;
     final result = await future;
     _inFlight.remove(accountId);
+    // Сеть подвела (см. _fetch: ok=false на любую сетевую ошибку, а не
+    // только на честное "фото нет" от сервера) — реальный кейс с
+    // устройства: выключил/включил вайфай, запрос улетел в момент
+    // разрыва, поймал исключение — раньше это молча превращалось в null и
+    // затирало уже загруженное фото (и в памяти, и на диске) на "фото
+    // нет". Теперь просто НЕ трогаем кэш вообще и отдаём то, что уже там
+    // было (может оказаться null, если раньше ничего не грузили — тогда
+    // честно показываем заглушку, это не регрессия).
+    if (!result.ok) return _cache[accountId];
     // Пока этот запрос летал туда-обратно, кэш успели инвалидировать
     // (см. комментарий у _generation выше) — результат уже устарел, в
     // общий кэш его не кладём (только возвращаем вызвавшему, разово).
     if ((_generation[accountId] ?? 0) != myGeneration) {
-      return result;
+      return result.bytes;
     }
-    _cache[accountId] = result;
+    _cache[accountId] = result.bytes;
     _cachedAt[accountId] = DateTime.now();
-    unawaited(_writeToDisk(accountId, result));
-    return result;
+    unawaited(_writeToDisk(accountId, result.bytes));
+    return result.bytes;
   }
 
   /// Тихий фоновый рефреш вслед за мгновенным ответом с диска — сам ничего
@@ -118,13 +131,16 @@ class AvatarCache {
   /// фото поменялось, пока приложение было закрыто.
   static Future<void> _refreshInBackground(String accountId) async {
     final myGeneration = _generation[accountId] ?? 0;
-    final fresh = await _fetch(accountId);
+    final result = await _fetch(accountId);
+    // Сеть подвела — оставляем и память, и диск как есть (см. комментарий
+    // в get() выше про ту же самую причину), ничего не сигналим подписчикам.
+    if (!result.ok) return;
     if ((_generation[accountId] ?? 0) != myGeneration) return;
     final old = _cache[accountId];
-    _cache[accountId] = fresh;
+    _cache[accountId] = result.bytes;
     _cachedAt[accountId] = DateTime.now();
-    unawaited(_writeToDisk(accountId, fresh));
-    if (!_bytesEqual(old, fresh)) {
+    unawaited(_writeToDisk(accountId, result.bytes));
+    if (!_bytesEqual(old, result.bytes)) {
       _changesController.add(accountId);
     }
   }
@@ -157,10 +173,19 @@ class AvatarCache {
     return true;
   }
 
-  static Future<Uint8List?> _fetch(String accountId) async {
+  /// ok=false — сеть подвела (или нет токена сессии), кэш ЗАТРАГИВАТЬ
+  /// НЕЛЬЗЯ, старое значение (если было) остаётся в силе. ok=true —
+  /// честный ответ сервера, bytes==null тогда означает подтверждённое
+  /// "фото нет" (404 — см. ApiClient.getAvatar/getMyAvatar).
+  static Future<({bool ok, Uint8List? bytes})> _fetch(String accountId) async {
     final token = await Session.getToken();
-    if (token == null) return null;
-    return ApiClient().getAvatar(token, accountId);
+    if (token == null) return (ok: false, bytes: null);
+    try {
+      final bytes = await ApiClient().getAvatar(token, accountId);
+      return (ok: true, bytes: bytes);
+    } catch (_) {
+      return (ok: false, bytes: null);
+    }
   }
 
   /// Вызывается после успешной загрузки нового фото — иначе кэш ещё долго

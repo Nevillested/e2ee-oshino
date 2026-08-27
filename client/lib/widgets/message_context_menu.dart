@@ -72,11 +72,17 @@ Future<ChatMenuSelection?> showMessageContextMenu(
   // панель реакций — но раскрывается она уже ПОСЛЕ открытия, без смены
   // позиции), но количество пунктов действий известно уже сейчас — оценка
   // по нему заметно точнее старой фиксированной константы.
-  final actionItemCount = singleAction
+  // isFailed — теперь ДВА пункта (повторить + отменить, см. _ActionsList),
+  // а не один, как раньше — оценка высоты должна знать об этом, иначе меню
+  // на долю секунды до реального layout может встать чуть неточно.
+  final actionItemCount = isPending
       ? 1
+      : isFailed
+      ? 2
       : 5 + (showCopy ? 1 : 0) + (showEdit ? 1 : 0) + (isMine ? 0 : 1);
   final reactionsHeight = singleAction ? 0.0 : _kMenuCellSize;
-  final estimatedHeight = reactionsHeight + actionItemCount * _kActionItemHeight;
+  final estimatedHeight =
+      reactionsHeight + actionItemCount * _kActionItemHeight;
 
   final mq = MediaQuery.of(context);
   final size = mq.size;
@@ -180,8 +186,7 @@ class _MessageContextMenuOverlay extends StatefulWidget {
       _MessageContextMenuOverlayState();
 }
 
-class _MessageContextMenuOverlayState
-    extends State<_MessageContextMenuOverlay>
+class _MessageContextMenuOverlayState extends State<_MessageContextMenuOverlay>
     with SingleTickerProviderStateMixin {
   // Было 350мс — ещё на 30% быстрее по прямому ТЗ пользователя (350 * 0.7).
   late final AnimationController _controller = AnimationController(
@@ -498,12 +503,28 @@ class _ActionsList extends StatelessWidget {
       );
     }
     if (isFailed) {
-      return _buildSingleAction(
-        _ActionItem(
-          Icons.refresh,
-          tr('action.retrySend'),
-          MessageMenuAction.retrySend,
-        ),
+      // Отмена — ТЗ пользователя: у "не смогло уйти" (восклицательный
+      // знак) должна быть та же возможность полностью отменить, что и у
+      // "ещё в очереди" выше, а не только повторить попытку.
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _actionRow(
+            _ActionItem(
+              Icons.refresh,
+              tr('action.retrySend'),
+              MessageMenuAction.retrySend,
+            ),
+          ),
+          _actionRow(
+            _ActionItem(
+              Icons.close,
+              tr('action.cancelSend'),
+              MessageMenuAction.cancelSend,
+              color: Colors.redAccent,
+            ),
+          ),
+        ],
       );
     }
 

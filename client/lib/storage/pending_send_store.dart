@@ -15,6 +15,18 @@ class PendingSendStore {
   static const _storage = FlutterSecureStorage();
   static const _key = 'pending_send_queue';
 
+  // См. тот же фикс и его обоснование в SendQueueStore — add()/remove()
+  // тут тоже read-modify-write поверх общего диска, и без сериализации
+  // параллельные вызовы (например, несколько job из группы фото завершают
+  // ретрай почти одновременно) точно так же теряли бы чужие изменения.
+  static Future<void> _chain = Future.value();
+
+  static Future<T> _sync<T>(Future<T> Function() op) {
+    final result = _chain.then((_) => op());
+    _chain = result.then((_) {}, onError: (_) {});
+    return result;
+  }
+
   static Future<List<Map<String, dynamic>>> getAll() async {
     final stored = await _storage.read(key: _key);
     if (stored == null) return [];
@@ -28,18 +40,18 @@ class PendingSendStore {
 
   /// job['id'] — messageId, служит и ключом дедупликации: повторный add с
   /// тем же id просто заменяет старую запись, а не дублирует её.
-  static Future<void> add(Map<String, dynamic> job) async {
+  static Future<void> add(Map<String, dynamic> job) => _sync(() async {
     final items = await getAll();
     items.removeWhere((item) => item['id'] == job['id']);
     items.add(job);
     await _writeAll(items);
-  }
+  });
 
-  static Future<void> remove(String id) async {
+  static Future<void> remove(String id) => _sync(() async {
     final items = await getAll();
     items.removeWhere((item) => item['id'] == id);
     await _writeAll(items);
-  }
+  });
 
   /// Снимает устойчивую копию файла для задания в этом хранилище — задание
   /// обязано пережить полное закрытие приложения (см. класс-комментарий),

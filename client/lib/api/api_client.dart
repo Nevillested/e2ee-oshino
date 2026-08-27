@@ -401,28 +401,36 @@ class ApiClient {
     }
   }
 
-  /// GET /account/avatar/{account_id} — null, если у аккаунта нет фото
-  /// профиля (404) или запрос не удался — вызывающая сторона в этом
-  /// случае показывает заглушку, а не бросает исключение выше.
+  /// GET /account/avatar/{account_id} — null ТОЛЬКО если сервер честно
+  /// подтвердил, что у аккаунта нет фото/оно скрыто приватностью (404 —
+  /// см. account_avatar.go на сервере, там всегда именно этот статус для
+  /// обоих случаев). Любая другая неудача (сеть недоступна, таймаут,
+  /// неожиданный статус) — бросает исключение, а НЕ возвращает null.
+  ///
+  /// Раньше сетевая ошибка тоже тихо превращалась в null — неотличимо от
+  /// "фото правда нет" для вызывающей стороны (см. AvatarCache.get/
+  /// _refreshInBackground): реальный кейс с устройства — выключил/включил
+  /// вайфай, запрос на обновление чужого аватара улетел в момент разрыва,
+  /// поймал сетевое исключение, вернул null, и AvatarCache честно
+  /// перезаписала УЖЕ ЗАГРУЖЕННОЕ фото на "фото нет", заодно удалив его и
+  /// с диска (см. _writeToDisk) — фото пропадало из списка чатов на
+  /// ровном месте. Теперь AvatarCache сама решает, что делать с ошибкой
+  /// (оставить старое значение как есть), а не получает от этого метода
+  /// ложное "фото нет".
   Future<Uint8List?> getAvatar(String token, String accountId) async {
-    try {
-      final response = await http
-          .get(
-            Uri.parse('${ApiConfig.baseUrl}/account/avatar/$accountId'),
-            headers: {'Authorization': 'Bearer $token'},
-          )
-          .timeout(const Duration(seconds: 8));
-      if (response.statusCode != 200) {
-        debugPrint(
-          'getAvatar failed: accountId=$accountId status=${response.statusCode} body=${response.body}',
-        );
-        return null;
-      }
-      return response.bodyBytes;
-    } catch (e) {
-      debugPrint('getAvatar exception: accountId=$accountId error=$e');
-      return null;
+    final response = await http
+        .get(
+          Uri.parse('${ApiConfig.baseUrl}/account/avatar/$accountId'),
+          headers: {'Authorization': 'Bearer $token'},
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode == 404) return null;
+    if (response.statusCode != 200) {
+      throw ApiException(
+        'getAvatar failed: accountId=$accountId status=${response.statusCode}',
+      );
     }
+    return response.bodyBytes;
   }
 
   /// GET /account/avatar — своё же фото, но БЕЗ account_id в запросе:
@@ -432,25 +440,22 @@ class ApiClient {
   /// устареть и разойтись с тем, что реально означает текущий токен
   /// (например, после пересоздания аккаунтов при чистке базы), тогда
   /// getAvatar получил бы честный, но бесполезный "аккаунт не найден".
+  /// null ТОЛЬКО на честное подтверждение от сервера (404 — своего фото
+  /// нет); любая другая неудача бросает исключение — см. подробный
+  /// комментарий у getAvatar выше про ту же самую причину (сетевая ошибка
+  /// не должна маскироваться под "фото нет").
   Future<Uint8List?> getMyAvatar(String token) async {
-    try {
-      final response = await http
-          .get(
-            Uri.parse('${ApiConfig.baseUrl}/account/avatar'),
-            headers: {'Authorization': 'Bearer $token'},
-          )
-          .timeout(const Duration(seconds: 8));
-      if (response.statusCode != 200) {
-        debugPrint(
-          'getMyAvatar failed: status=${response.statusCode} body=${response.body}',
-        );
-        return null;
-      }
-      return response.bodyBytes;
-    } catch (e) {
-      debugPrint('getMyAvatar exception: $e');
-      return null;
+    final response = await http
+        .get(
+          Uri.parse('${ApiConfig.baseUrl}/account/avatar'),
+          headers: {'Authorization': 'Bearer $token'},
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode == 404) return null;
+    if (response.statusCode != 200) {
+      throw ApiException('getMyAvatar failed: status=${response.statusCode}');
     }
+    return response.bodyBytes;
   }
 
   /// POST /chats/mute — полный мьют, включая push при закрытом приложении

@@ -56,7 +56,8 @@ class PeerProfile {
 class PeerProfileCache {
   static final Map<String, PeerProfile?> _cache = {};
   static final Map<String, DateTime> _cachedAt = {};
-  static final Map<String, Future<PeerProfile?>> _inFlight = {};
+  static final Map<String, Future<({bool ok, PeerProfile? profile})>>
+  _inFlight = {};
   static final Map<String, int> _generation = {};
 
   // Аналогично AvatarCache: живой сигнал (profile_updated) инвалидирует
@@ -81,7 +82,10 @@ class PeerProfileCache {
         cachedAt != null && DateTime.now().difference(cachedAt) < _ttl;
     if (isFresh && _cache.containsKey(accountId)) return _cache[accountId];
     final inFlight = _inFlight[accountId];
-    if (inFlight != null) return inFlight;
+    if (inFlight != null) {
+      final result = await inFlight;
+      return result.ok ? result.profile : _cache[accountId];
+    }
 
     if (!_cache.containsKey(accountId)) {
       final diskFile = await _diskFileFor(accountId);
@@ -105,13 +109,16 @@ class PeerProfileCache {
     _inFlight[accountId] = future;
     final result = await future;
     _inFlight.remove(accountId);
+    // Сеть подвела — та же причина и тот же фикс, что и в AvatarCache (см.
+    // подробный комментарий там): не трогаем кэш, отдаём что уже было.
+    if (!result.ok) return _cache[accountId];
     if ((_generation[accountId] ?? 0) != myGeneration) {
-      return result;
+      return result.profile;
     }
-    _cache[accountId] = result;
+    _cache[accountId] = result.profile;
     _cachedAt[accountId] = DateTime.now();
-    unawaited(_writeToDisk(accountId, result));
-    return result;
+    unawaited(_writeToDisk(accountId, result.profile));
+    return result.profile;
   }
 
   static Future<void> _refreshInBackground(
@@ -119,15 +126,19 @@ class PeerProfileCache {
     String login,
   ) async {
     final myGeneration = _generation[accountId] ?? 0;
-    final fresh = await _fetch(accountId, login);
+    final result = await _fetch(accountId, login);
+    if (!result.ok) return;
     if ((_generation[accountId] ?? 0) != myGeneration) return;
-    _cache[accountId] = fresh;
+    _cache[accountId] = result.profile;
     _cachedAt[accountId] = DateTime.now();
-    unawaited(_writeToDisk(accountId, fresh));
+    unawaited(_writeToDisk(accountId, result.profile));
     _changesController.add(accountId);
   }
 
-  static Future<void> _writeToDisk(String accountId, PeerProfile? profile) async {
+  static Future<void> _writeToDisk(
+    String accountId,
+    PeerProfile? profile,
+  ) async {
     if (profile == null) return;
     try {
       final file = await _diskFileFor(accountId);
@@ -135,22 +146,30 @@ class PeerProfileCache {
     } catch (_) {}
   }
 
-  static Future<PeerProfile?> _fetch(String accountId, String login) async {
+  /// ok=false — сеть подвела (или нет токена сессии), кэш затрагивать
+  /// нельзя. ok=true, profile==null — честное "профиля нет/скрыт" (404).
+  static Future<({bool ok, PeerProfile? profile})> _fetch(
+    String accountId,
+    String login,
+  ) async {
     final token = await Session.getToken();
-    if (token == null) return null;
+    if (token == null) return (ok: false, profile: null);
     try {
       final data = await ApiClient().getAccountProfile(token, login);
-      if (data == null) return null;
-      return PeerProfile(
-        login: data.login,
-        displayName: data.displayName,
-        devices: data.devices,
-        status: data.status,
-        birthday: data.birthday,
-        hasAvatar: data.hasAvatar,
+      if (data == null) return (ok: true, profile: null);
+      return (
+        ok: true,
+        profile: PeerProfile(
+          login: data.login,
+          displayName: data.displayName,
+          devices: data.devices,
+          status: data.status,
+          birthday: data.birthday,
+          hasAvatar: data.hasAvatar,
+        ),
       );
     } catch (_) {
-      return null;
+      return (ok: false, profile: null);
     }
   }
 

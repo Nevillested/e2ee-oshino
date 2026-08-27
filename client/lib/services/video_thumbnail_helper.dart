@@ -14,12 +14,21 @@ final _thumbnailer = FcNativeVideoThumbnail();
 /// резолвится современным Gradle (сборка падала с "Could not find method
 /// jcenter()"). fc_native_video_thumbnail — актуальный пакет с рабочей
 /// сборкой (mavenCentral, современный AGP).
+/// .timeout() — нативный плагин (платформенный вызов, не наш код) иногда
+/// намертво виснет без единой ошибки (реальный случай на эмуляторе) — без
+/// таймаута это не просто "одно видео без превью", а зависшая навсегда
+/// задача в общей последовательной очереди загрузок экрана чата (см.
+/// _enqueueDownload в chat_screen.dart — она же теперь подстрахована своим
+/// таймаутом, этот здесь просто даёт более быстрый и точный сбой именно
+/// для превью, не дожидаясь общего предохранителя).
 Future<Uint8List?> generateVideoThumbnail(String videoPath) {
-  return _thumbnailer.saveThumbnailToBytes(
-    srcFile: videoPath,
-    width: 400,
-    height: 400,
-    format: 'jpeg',
-    quality: 75,
-  );
+  return _thumbnailer
+      .saveThumbnailToBytes(
+        srcFile: videoPath,
+        width: 400,
+        height: 400,
+        format: 'jpeg',
+        quality: 75,
+      )
+      .timeout(const Duration(seconds: 12));
 }

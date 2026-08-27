@@ -52,6 +52,7 @@ import '../services/peer_profile_cache.dart';
 import '../services/pending_send_retrier.dart';
 import '../services/send_lock.dart';
 import '../services/send_queue_processor.dart';
+import '../services/upload_cancel_registry.dart';
 import '../services/upload_progress_bus.dart';
 import '../services/video_thumbnail_helper.dart';
 import '../services/websocket_service.dart';
@@ -153,7 +154,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _apiClient = ApiClient();
   final Map<String, Future<Uint8List>> _mediaFutures = {};
   final Map<String, Uint8List> _resolvedMedia = {};
-  final Map<String, Future<bool>> _existsChecks = {};
   final Map<String, Future<void>> _chunkedDownloads = {};
   // Живой процент скачивания (0..100) для фото/видео/аудио/видео-сообщений
   // прямо в чате — см. ТЗ пользователя: во время скачивания медиа вместо
@@ -189,11 +189,48 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // и очищается самим _enqueueDownload вокруг вызова задачи.
   final Set<String> _activeDownloadMediaIds = {};
 
+  /// Синхронный, всегда-актуальный ответ на вопрос "этот медиафайл уже
+  /// физически на устройстве?" — ТЗ пользователя: "абсолютно всё в чате,
+  /// кроме текста, должно иметь флаг — существует ли это на телефоне".
+  /// Проверяется ДО построения FutureBuilder в _photoPreview (см. её
+  /// комментарий), а не внутри его "не готово"-ветки — сама асинхронность
+  /// проверки (а не факт реального отсутствия файла) и вызывала вспышку
+  /// текста "Скачивание/В очереди" на уже скачанных фото. Порядок
+  /// зеркалит быстрые пути _loadAndCacheMedia: сначала расшифрованный кэш
+  /// (MediaCache — все файлы, включая свои же отправленные, после первого
+  /// успешного чтения), потом — только для СВОИХ фото — исходник по
+  /// localPreviewPath (тот самый файл, который выбрал пользователь, ещё до
+  /// какой-либо отправки/загрузки).
+  bool _mediaExistsLocally(StoredMessage msg) {
+    final mediaId = msg.mediaId;
+    if (mediaId != null && MediaCache.existsSync(mediaId)) return true;
+    if (msg.isMine &&
+        !msg.isVideo &&
+        !msg.isVideoNote &&
+        !msg.isFile &&
+        msg.localPreviewPath != null) {
+      return File(msg.localPreviewPath!).existsSync();
+    }
+    return false;
+  }
+
   Future<T> _enqueueDownload<T>(String mediaId, Future<T> Function() task) {
     final result = _downloadQueueTail.then((_) async {
       if (mounted) setState(() => _activeDownloadMediaIds.add(mediaId));
       try {
-        return await task();
+        // .timeout() — без него один зависший таск (например, нативная
+        // генерация превью видео — см. generateVideoThumbnail, реальный
+        // случай: платформенный плагин иногда намертво виснет на эмуляторе
+        // без единой ошибки) навсегда блокировал бы ВЕСЬ этот общий
+        // последовательный конвейер: очередь одна на весь экран чата (см.
+        // класс-комментарий про порядок закачки группы), а следующий
+        // элемент стартует только после того, как предыдущий завершился —
+        // успехом ИЛИ неудачей. Без таймаута "неудача" никогда не
+        // наступала бы, и всё, что шло следом (даже уже скачанные когда-то
+        // фото соседней группы), вечно висело бы "В очереди" — жалоба
+        // пользователя: три уже отправленных фото так и не переставали
+        // показывать "Queued".
+        return await task().timeout(const Duration(seconds: 25));
       } finally {
         if (mounted) setState(() => _activeDownloadMediaIds.remove(mediaId));
       }
@@ -274,7 +311,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _downloadProgress.remove(mediaId);
     _mediaFutures.remove(mediaId);
     _resolvedMedia.remove(mediaId);
-    _existsChecks.remove(mediaId);
     _chunkedDownloads.remove(mediaId);
     _videoThumbCache.remove(mediaId);
     _activeDownloadMediaIds.remove(mediaId);
@@ -312,13 +348,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   double _keyboardHeight = 280;
   static const _keyboardHeightSettleDelay = Duration(milliseconds: 180);
   Timer? _keyboardHeightSettleTimer;
-  // См. build(): держит anyPanelOpen=true на те несколько кадров между
-  // тапом по иконке клавиатуры (переключение из эмодзи-режима) и моментом,
-  // когда настоящая клавиатура реально поднимется и realInset это заметит.
+  // См. build(): держит emojiReserved резервированным на те несколько кадров
+  // между тапом по иконке клавиатуры (переключение из эмодзи-режима) и
+  // моментом, когда настоящая клавиатура реально поднимется и realInset
+  // это заметит.
   bool _awaitingKeyboardOpen = false;
   bool _hasText = false;
   double _lastReserved = 0;
   double? _lastLoggedBottomInset;
+  // См. _handleScroll и триггер в build() ниже: пока клавиатура/эмодзи-панель
+  // открывается, viewport физически сжимается кадр за кадром, maxScrollExtent
+  // растёт БЫСТРЕЕ, чем успевает докрутить компенсирующий _scrollToBottom —
+  // без этого флага _handleScroll видел бы "pixels < maxScrollExtent-40" на
+  // каждом таком промежуточном кадре и сбрасывал _userAtBottom в false,
+  // глуша тем самым сам же механизм компенсации (он требует _userAtBottom==
+  // true, чтобы вообще сработать) — реальная жалоба пользователя: отступ
+  // между последним сообщением и панелью появляется при открытии клавиатуры
+  // и не пропадает, пока не прокрутить вручную. При закрытии бага нет —
+  // там ScrollPosition сама подрезает pixels под уменьшившийся
+  // maxScrollExtent, никакой компенсации не требуется.
+  bool _autoScrollingForResize = false;
 
   // Держит "клавиатура видна" через короткие провалы realInset до 0 —
   // системный оверлей "Change keyboard" (долгий тап на пробел) на части
@@ -937,9 +986,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   void _handleScroll() {
     if (!_scrollController.hasClients) return;
-    _userAtBottom =
-        _scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 40;
+    // См. комментарий у поля _autoScrollingForResize — во время
+    // компенсирующей докрутки после сжатия/расширения viewport клавиатурой
+    // метрики скролла меняются САМИ ПО СЕБЕ, не из-за жеста пользователя;
+    // не даём этому промежуточному состоянию сбросить _userAtBottom.
+    if (!_autoScrollingForResize) {
+      _userAtBottom =
+          _scrollController.position.pixels >=
+          _scrollController.position.maxScrollExtent - 40;
+    }
 
     // Сохраняем позицию не только при выходе из экрана (dispose может
     // вообще не вызваться — например, если приложение просто убили из
@@ -1673,16 +1728,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// "Отменить отправку" (ТЗ пользователя) — сообщение(я) ещё не ушли
-  /// (часики): убираем локальный пузырь и всю проделанную на клиенте
-  /// работу — задание из PendingSendStore (если ещё не начало грузиться) и
-  /// из SendQueueStore (если уже зашифровано и ждёт подтверждения сервера).
-  /// Активную ПРЯМО СЕЙЧАС загрузку файла на сервер это не прерывает (нет
-  /// готового механизма отмены на середине сетевого запроса) — тогда
-  /// сообщение просто исчезает из чата, а фоновая загрузка донашивает себя
-  /// молча и результат никуда не попадает (enqueue всё равно случится, но
-  /// без видимого пузыря это уже не наблюдаемо пользователем как проблема).
+  /// "Отменить отправку" (ТЗ пользователя) — и для ещё не ушедших (часики),
+  /// и для не смогших уйти (восклицательный знак) сообщений: убираем
+  /// локальный пузырь и всю проделанную на клиенте работу — задание из
+  /// PendingSendStore, из SendQueueStore (если уже зашифровано и ждёт
+  /// подтверждения сервера), и АКТИВНУЮ ПРЯМО СЕЙЧАС загрузку файла на
+  /// сервер (см. UploadCancelRegistry.cancel — реально прерывает сетевой
+  /// запрос через dio.CancelToken, а не просто убирает пузырь, пока
+  /// загрузка молча донашивает себя в фоне, как было раньше).
   Future<void> _cancelSend(List<String> messageIds, String? groupId) async {
+    for (final id in messageIds) {
+      UploadCancelRegistry.cancel(id);
+    }
     final messagesToPurge = _messages
         .where((m) => messageIds.contains(m.messageId))
         .toList();
@@ -3791,31 +3848,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           : _photoPreview(msg, size: size);
     }
 
-    final existsFuture = _existsChecks.putIfAbsent(
-      msg.mediaId!,
-      () => MediaCache.exists(msg.mediaId!),
-    );
-
-    return FutureBuilder<bool>(
-      future: existsFuture,
-      builder: (context, existsSnapshot) {
-        if (existsSnapshot.connectionState != ConnectionState.done) {
-          return const SizedBox(
-            height: 40,
-            child: Center(child: AppLoadingIndicator(size: 22)),
-          );
-        }
-
-        final alreadyDownloaded = existsSnapshot.data == true;
-        if (alreadyDownloaded) {
-          return msg.isFile
-              ? _clickableFileRow(msg, size: size)
-              : _photoPreview(msg, size: size);
-        }
-
-        return _downloadPromptRow(msg);
-      },
-    );
+    // Синхронно (см. _mediaExistsLocally/MediaCache.existsSync) — как и в
+    // _photoPreview, никакой нужды в FutureBuilder ради вопроса, ответ на
+    // который и так уже известен без похода в async.
+    if (_mediaExistsLocally(msg)) {
+      return msg.isFile
+          ? _clickableFileRow(msg, size: size)
+          : _photoPreview(msg, size: size);
+    }
+    return _downloadPromptRow(msg);
   }
 
   Widget _downloadPromptRow(StoredMessage msg) {
@@ -3826,7 +3867,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             ? null
             : () {
                 setState(() {
-                  _existsChecks.remove(msg.mediaId!);
                   _downloadProgress[msg.mediaId!] = 0;
                   _chunkedDownloads[msg.mediaId!] = _enqueueDownload(
                     msg.mediaId!,
@@ -3903,7 +3943,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           ? null
           : () {
               setState(() {
-                _existsChecks.remove(msg.mediaId!);
                 _downloadProgress[msg.mediaId!] = 0;
                 _mediaFutures[msg.mediaId!] = _enqueueDownload(
                   msg.mediaId!,
@@ -4175,7 +4214,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       }
     }
 
-    final cached = _resolvedMedia[msg.mediaId!];
+    var cached = _resolvedMedia[msg.mediaId!];
+    // Синхронное чтение прямо в build() для уже скачанного ФОТО (не
+    // видео — там превью не читается напрямую отсюда, а отдельно
+    // генерируется, синхронно недостижимо) — без этого даже при
+    // синхронно-известном "файл уже здесь" (_mediaExistsLocally ниже)
+    // само чтение байт всё равно шло бы через FutureBuilder и минимум
+    // один кадр показывало бы спиннер-заглушку вместо самого фото (жалоба
+    // пользователя: "почему нельзя сразу отображать превью фото?"). Один
+    // раз успешно прочитанное сразу же попадает в _resolvedMedia — все
+    // следующие построения этого же виджета используют уже его, эта
+    // ветка больше не сработает повторно.
+    if (cached == null && !msg.isVideo) {
+      cached = MediaCache.readSync(msg.mediaId!);
+      if (cached == null &&
+          msg.isMine &&
+          !msg.isVideoNote &&
+          !msg.isFile &&
+          msg.localPreviewPath != null) {
+        try {
+          final localFile = File(msg.localPreviewPath!);
+          if (localFile.existsSync()) {
+            cached = localFile.readAsBytesSync();
+          }
+        } catch (_) {
+          // Не удалось — просто идём обычным (асинхронным) путём ниже.
+        }
+      }
+      if (cached != null) _resolvedMedia[msg.mediaId!] = cached;
+    }
     if (cached != null) {
       return GestureDetector(
         onTap: handleTap,
@@ -4208,6 +4275,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       ),
     );
 
+    // Синхронный, всегда-актуальный флаг "файл уже физически на
+    // устройстве" (см. _mediaExistsLocally и MediaCache.existsSync) —
+    // считаем его ДО FutureBuilder, а не внутри его "не готово"-ветки:
+    // сама асинхронность проверки (а не факт реального отсутствия файла)
+    // и была причиной вспышки текста "Скачивание/В очереди" на уже
+    // скачанных фото (жалоба пользователя) — FutureBuilder гарантированно
+    // проходит через "не готово" минимум один кадр, даже когда файл давно
+    // на диске и чтение займёт микросекунды. Раз мы и так уже знаем ответ
+    // синхронно, этот кадр вообще не должен показывать никакого текста.
+    final existsLocally = _mediaExistsLocally(msg);
+
     return FutureBuilder<Uint8List>(
       future: future,
       builder: (context, snapshot) {
@@ -4223,20 +4301,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 color: AppColors.textMuted.withValues(alpha: 0.35),
               ),
             ),
-            child: Stack(
-              children: [
-                MediaStatusOverlay(
-                  statusText: isActive
-                      ? tr('media.downloading')
-                      : tr('chat.queued'),
-                  percent: isActive
-                      ? (_downloadProgress[msg.mediaId!] ?? 0)
-                      : null,
-                  size: side,
-                  borderRadius: BorderRadius.circular(13),
-                ),
-              ],
-            ),
+            child: existsLocally
+                ? const Center(child: AppLoadingIndicator(size: 22))
+                : Stack(
+                    children: [
+                      MediaStatusOverlay(
+                        statusText: isActive
+                            ? tr('media.downloading')
+                            : tr('chat.queued'),
+                        percent: isActive
+                            ? (_downloadProgress[msg.mediaId!] ?? 0)
+                            : null,
+                        size: side,
+                        borderRadius: BorderRadius.circular(13),
+                      ),
+                    ],
+                  ),
           );
         }
         if (snapshot.hasError || snapshot.data == null) {
@@ -6228,57 +6308,75 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // по иконке клавиатуры и моментом, когда настоящая клавиатура реально
     // поднимется (realInset превысит порог) — без него на эти несколько
     // кадров обе панели считались бы закрытыми и резерв на миг схлопнулся.
-    if (_awaitingKeyboardOpen && keyboardVisible) {
+    if (_awaitingKeyboardOpen && rawKeyboardVisible) {
       _awaitingKeyboardOpen = false;
     }
-    // realInset — глобальное значение на всё приложение: если поверх этого
-    // экрана открыт другой modal (например, подпись к фото в шторке
-    // вложений) и клавиатура поднята ТАМ, keyboardVisible всё равно
-    // становится true и здесь, хотя к полю ввода этого чата это не имеет
-    // отношения — без явной проверки фокуса именно нашего текстового поля
-    // чат под шторкой сам "поджимался" бы, будто открыли его собственную
-    // клавиатуру.
-    final anyPanelOpen =
-        (keyboardVisible &&
-            (_textFocusNode.hasFocus || _searchFocusNode.hasFocus)) ||
-        _emojiMode ||
-        _awaitingKeyboardOpen;
-    // Пока настоящая клавиатура реально в процессе (поднимается ИЛИ
-    // опускается прямо сейчас — realInset > 0) — резерв берёт её ЖИВОЕ
-    // значение отступа кадр-в-кадр, а не заранее известную кэшированную
-    // высоту: тогда наша панель растёт и схлопывается СИНХРОННО с самой
-    // клавиатурой, без малейшего рассинхрона. Жалоба с реального
-    // устройства: клавиатура (системный оверлей, всегда поверх контента
-    // приложения) поднималась первой, а наша панель — своей отдельной
-    // анимацией с отставанием, и на долю секунды панель ввода оказывалась
-    // визуально скрыта под уже поднявшейся клавиатурой, пока не "догонит".
-    // Как только клавиатура закрылась по-настоящему (realInset дошёл до
-    // 0) — тут же 0, никакой собственной анимации поверх уже готового
-    // живого значения не требуется (см. reservedAnimDuration ниже — там,
-    // где используется живое значение, длительность анимации-обёртки
-    // просто зануляется, чтобы не наложить вторую задержку поверх
-    // первой). У эмодзи-панели живого значения нет (это наш собственный
-    // UI, не системный оверлей) — для неё по-прежнему берём кэшированную
-    // высоту со своей анимацией.
-    final ownFieldFocused =
-        _textFocusNode.hasFocus || _searchFocusNode.hasFocus;
-    final trackingRealKeyboard = ownFieldFocused && realInset > 0;
-    final reserved = trackingRealKeyboard
-        ? realInset
-        : (anyPanelOpen ? _keyboardHeight : 0.0);
-    final reservedAnimDuration = trackingRealKeyboard
-        ? Duration.zero
-        : const Duration(milliseconds: 220);
+    // ТЗ пользователя — "клавиатура как лифт": всё, что находится над ней
+    // (список сообщений И панель ввода), должно двигаться ОДНИМ жёстким
+    // блоком, а не отдельно анимируемой панелью, которая "досгоняет".
+    // Раньше это пытались воспроизвести вручную (свой Container, живое
+    // отслеживание realInset) — и всё равно оставалось ощущение погони за
+    // клавиатурой, потому что ручное отслеживание в принципе не может быть
+    // точно тем же самым кадром, что и сама системная анимация клавиатуры.
+    // Настоящее решение — штатный resizeToAvoidBottomInset (см. Scaffold
+    // ниже): Flutter сам физически сжимает ВСЁ тело экрана вместе с
+    // клавиатурой за один проход layout'а, и наша панель ввода (Positioned
+    // bottom: 0, см. ниже) сама, естественно, следует за нижним краем уже
+    // сжавшегося тела — без какой-либо СВОЕЙ анимации/Container поверх.
+    //
+    // Наш собственный резерв места (emojiReserved) остаётся только для
+    // эмодзи-панели — это наш собственный UI, не системный оверлей,
+    // никакого сигнала от ОС для него нет и не может быть.
+    final emojiReserved = (_emojiMode || _awaitingKeyboardOpen)
+        ? _keyboardHeight
+        : 0.0;
+    // restGap — зазор до низа экрана в состоянии покоя (клавиатура и
+    // эмодзи-панель обе закрыты). gapHeight — то же самое, но выведенное
+    // ПЛАВНОЙ функцией живого realInset, а не отдельной анимацией ПОСЛЕ
+    // того, как клавиатура/эмодзи-панель уже стали неактивны. Раньше зазор
+    // был либо 0, либо restGap (по дискретному условию realInset > 0 ||
+    // emojiReserved > 0), и переключался отдельным 220мс
+    // AnimatedContainer'ом ровно в момент, когда realInset УЖЕ достигал
+    // нуля (клавиатура физически уже полностью закрылась, тело экрана уже
+    // полностью развернулось обратно, панель ввода уже физически стояла
+    // впритык к самому низу) — и только ПОТОМ, вдогонку, панель
+    // поднималась на restGap отдельным движением. Жалоба пользователя:
+    // "панель сообщения доходит до самого низа экрана... а затем
+    // чуть-чуть поднимается вверх, перекрывая тот самый отступ" — то есть
+    // ей не нужно было опускаться до конца, чтобы потом подниматься
+    // обратно. Формула ниже: пока realInset ещё не меньше restGap, зазор
+    // не нужен (0, как раньше) — а когда клавиатура в САМОМ ХВОСТЕ своей
+    // закрывающей анимации становится тоньше restGap, зазор линейно
+    // "дозаполняет" ровно то же расстояние, что клавиатура успела
+    // освободить, — в ТОМ ЖЕ кадре и от ТОЙ ЖЕ переменной realInset, что и
+    // сама системная анимация, поэтому панель просто перестаёт опускаться
+    // ниже своей итоговой точки покоя вместо того, чтобы её потом
+    // отыгрывать назад. Для эмодзи-панели (не системная, ей нечего
+    // синхронизировать с realInset) сохраняем прежнее мгновенное
+    // поведение — она никогда не показывается одновременно с настоящей
+    // клавиатурой, скачка между ними не бывает.
+    final restGap = 5 + systemBottomInset;
+    final gapHeight = (_emojiMode || _awaitingKeyboardOpen)
+        ? 0.0
+        : (restGap - realInset).clamp(0.0, restGap);
 
-    // Клавиатура/эмодзи-панель растут снизу и СЖИМАЮТ видимую область
-    // списка сообщений (Scaffold сам не резайзится, resizeToAvoidBottomInset
-    // выключен намеренно, см. выше) — если пользователь и так был внизу
-    // чата, съехавший вверх последний ряд сообщений нужно снова прокрутить
-    // в видимую зону, иначе клавиатура визуально "накрывает" их.
-    if (_initialLoadComplete && reserved > _lastReserved + 4 && _userAtBottom) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    // Список сообщений теперь ужимается по высоте АВТОМАТИЧЕСКИ вместе с
+    // телом экрана (см. Scaffold.resizeToAvoidBottomInset выше) — ScrollView
+    // сам остаётся "приклеенным" к своему текущему смещению, а не к низу,
+    // так что если пользователь и так был внизу чата, после того как
+    // viewport стал короче, нужно один раз прокрутить обратно к настоящему
+    // концу, иначе последние сообщения окажутся чуть выше видимой области.
+    final scrollTriggerReserved = realInset + emojiReserved;
+    if (_initialLoadComplete &&
+        scrollTriggerReserved > _lastReserved + 4 &&
+        _userAtBottom) {
+      _autoScrollingForResize = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await _scrollToBottom();
+        _autoScrollingForResize = false;
+      });
     }
-    _lastReserved = reserved;
+    _lastReserved = scrollTriggerReserved;
 
     return PopScope(
       canPop:
@@ -6294,7 +6392,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         enabled: !_emojiMode && !_selectionMode && !_searchMode,
         onBlockedSwipe: () => _handleBackAction(emojiOnlyVisible: _emojiMode),
         child: Scaffold(
-          resizeToAvoidBottomInset: false,
+          // true (было false) — ТЗ пользователя, "клавиатура как лифт":
+          // штатное поведение Scaffold само физически сжимает body вместе
+          // с клавиатурой одним layout-проходом — ручная имитация этого
+          // через свой Container/AnimatedContainer (см. историю правок
+          // выше) в принципе не могла быть кадр-в-кадр той же самой
+          // системной анимацией. ВНУТРИ body (см. ниже) Scaffold сам
+          // обнуляет MediaQuery.viewInsets.bottom для потомков — все
+          // переменные, завязанные на реальный отступ клавиатуры
+          // (realInset, systemBottomInset и т.д.), поэтому посчитаны ВЫШЕ,
+          // до этого Scaffold, из внешнего MediaQuery, которому Scaffold
+          // не сможет ничего обнулить.
+          resizeToAvoidBottomInset: true,
           // Шапки больше нет как Scaffold.appBar — весь заголовок стал
           // плавающим оверлеем ПОВЕРХ списка сообщений (см. Positioned в
           // body ниже), тем же способом и по тем же причинам, что и панель
@@ -6345,27 +6454,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   // жалобу пользователя) — 28, а не 16,
                                   // добавляют настоящий видимый зазор.
                                   //
-                                  // "- (anyPanelOpen ? 5+systemBottomInset : 0)"
-                                  // — без этого вычета зазор между последним
-                                  // сообщением и таблеткой был РАЗНЫЙ в двух
-                                  // состояниях (жалоба пользователя): сама
-                                  // таблетка (см. Column ниже, SizedBox(height:
-                                  // anyPanelOpen ? 0 : 5 + systemBottomInset)
-                                  // перед резервом клавиатуры) в состоянии
-                                  // покоя стоит ВЫШЕ на эти же 5+systemBottomInset
-                                  // (у неё есть свой маленький зазор до низа
-                                  // экрана), а при открытой клавиатуре/эмодзи —
-                                  // вплотную к ним, без этого зазора — то есть
-                                  // НИЖЕ на ту же величину. Паддинг списка
-                                  // раньше резервировал одно и то же место
-                                  // независимо от этого — при открытой
-                                  // клавиатуре получался лишний зазор ровно
-                                  // такого же размера (первая попытка чинить
-                                  // это вычитала не из той ветки — только
-                                  // портила состояние покоя, см. жалобу
-                                  // пользователя со скриншотами). Вычитаем
-                                  // именно из ветки anyPanelOpen, покой не
-                                  // трогаем вовсе — он и так уже был верным.
+                                  // "- (restGap - gapHeight)" — без этого
+                                  // вычета зазор между последним сообщением и
+                                  // таблеткой был РАЗНЫЙ в состоянии покоя и
+                                  // при открытой клавиатуре/эмодзи (жалоба
+                                  // пользователя): сама таблетка (см. Column
+                                  // ниже, SizedBox(height: gapHeight) перед
+                                  // резервом клавиатуры) в покое стоит ВЫШЕ на
+                                  // restGap (свой маленький зазор до низа
+                                  // экрана), а при открытых — вплотную, без
+                                  // этого зазора, то есть НИЖЕ на ту же
+                                  // величину. gapHeight — та же самая плавная
+                                  // (не дискретная) величина, что и у самого
+                                  // зазора-спейсера (см. её объяснение выше,
+                                  // "restGap — зазор до низа экрана..."), так
+                                  // что паддинг списка и высота спейсера
+                                  // всегда меняются синхронно, кадр в кадр.
                                   //
                                   // "+ (_composerBannerVisible ? ... : 0)" —
                                   // баннер реплая/редактирования/пересылки
@@ -6374,12 +6478,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   // добавления резерв учитывал только саму
                                   // пилюлю, и баннер перекрывал последнее
                                   // сообщение (жалоба пользователя).
+                                  //
+                                  // "+ emojiReserved" — только эмодзи-панель:
+                                  // саму настоящую клавиатуру ВТОРОЙ раз
+                                  // сюда добавлять не нужно, тело экрана уже
+                                  // физически короче на её высоту (см.
+                                  // resizeToAvoidBottomInset у Scaffold) —
+                                  // Expanded-список и так получает меньше
+                                  // места безо всякого паддинга.
                                   28 +
                                       64 +
-                                      reserved -
-                                      (anyPanelOpen
-                                          ? 5 + systemBottomInset
-                                          : 0) +
+                                      emojiReserved -
+                                      (restGap - gapHeight) +
                                       (_composerBannerVisible
                                           ? _composerBannerHeight
                                           : 0),
@@ -6798,9 +6908,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     // при попытке провести пальцем вверх до замочка (запись
                     // голосового/видео) вместо этого срабатывает системный
                     // жест "домой", перехватывающий тачи у самого края экрана.
-                    // Нужен только когда СНИЗУ больше ничего нет — как только
-                    // поднимается клавиатура ИЛИ наша панель эмодзи
-                    // (anyPanelOpen), зазор схлопывается в 0.
+                    // Нужен только когда СНИЗУ больше ничего нет — см.
+                    // gapHeight выше: плавно схлопывается в 0, пока клавиатура
+                    // или эмодзи-панель занимают низ экрана. Обычный (не Animated)
+                    // SizedBox — gapHeight уже сама плавная функция живого
+                    // realInset, кадр в кадр с системной анимацией клавиатуры;
+                    // отдельная анимация поверх нужна не была бы даже раньше,
+                    // а теперь ещё и создавала бы ту самую рассинхронизацию
+                    // (см. её разбор у объявления restGap/gapHeight выше).
                     //
                     // Системный отступ до жестовой зоны добавляем СВОИМИ
                     // руками (через viewPadding, а не SafeArea) и тоже только
@@ -6813,42 +6928,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     // внезапно возвращался — ровно то самое "пустое место",
                     // из-за которого высота панели эмодзи расходилась с
                     // высотой настоящей клавиатуры.
+                    SizedBox(height: gapHeight),
+                    // Резерв места ТОЛЬКО под эмодзи-панель (см. emojiReserved
+                    // выше) — настоящую клавиатуру больше не нужно ни
+                    // отслеживать, ни резервировать здесь вообще: body уже
+                    // физически сжался вместе с ней (resizeToAvoidBottomInset),
+                    // и вся эта Positioned(bottom: 0) панель ввода сама
+                    // естественно оказывается прямо над клавиатурой, без
+                    // какого-либо отдельного Container/анимации поверх —
+                    // именно та "жёсткая сцепка", которую попросил
+                    // пользователь.
                     //
-                    // Анимированно — раньше было мгновенное схлопывание,
-                    // и на реальном устройстве это давало ровно ту "пустую
-                    // панель, а потом рывком телепортирующийся вниз чат"
-                    // жалобу, которую пытались проверить: между визуальным
-                    // опусканием настоящей клавиатуры и опустением reserved
-                    // ниже (см. Container) не должно быть рассинхрона —
-                    // весь этот блок движется одной плавной анимацией, а
-                    // не двумя раздельными мгновенными скачками.
+                    // Пока настоящая клавиатура поднята (keyboardVisible),
+                    // держим FullEmojiPicker уже смонтированным, просто
+                    // невидимым (Offstage) — он успевает построить свою
+                    // разметку заранее, пока пользователь печатает, и тап
+                    // по иконке эмодзи просто переключает видимость вместо
+                    // того чтобы строить панель с нуля в этот момент
+                    // (жалоба пользователя на заметную задержку первого
+                    // показа). Не монтируем его вообще, когда клавиатуры
+                    // тоже нет — незачем тратить на это первый кадр
+                    // самого экрана чата.
                     AnimatedContainer(
-                      duration: reservedAnimDuration,
+                      duration: const Duration(milliseconds: 220),
                       curve: Curves.easeOut,
-                      height: anyPanelOpen ? 0 : 5 + systemBottomInset,
-                    ),
-                    // Клавиатура и эмодзи-панель — ОДНО и то же место экрана,
-                    // одной и той же ЗАРАНЕЕ известной высоты (_keyboardHeight,
-                    // см. build()), а не живое значение realInset: показываются
-                    // по очереди, никогда одновременно, без "скачков" между
-                    // ними. Когда видна настоящая клавиатура, здесь просто
-                    // пустой резерв места — сама клавиатура рисуется поверх
-                    // всего системным оверлеем, а не этим виджетом.
-                    AnimatedContainer(
-                      duration: reservedAnimDuration,
-                      curve: Curves.easeOut,
-                      height: reserved,
+                      height: emojiReserved,
                       color: AppColors.surface,
-                      // Пока настоящая клавиатура поднята (keyboardVisible),
-                      // держим FullEmojiPicker уже смонтированным, просто
-                      // невидимым (Offstage) — он успевает построить свою
-                      // разметку заранее, пока пользователь печатает, и тап
-                      // по иконке эмодзи просто переключает видимость вместо
-                      // того чтобы строить панель с нуля в этот момент
-                      // (жалоба пользователя на заметную задержку первого
-                      // показа). Не монтируем его вообще, когда клавиатуры
-                      // тоже нет — незачем тратить на это первый кадр
-                      // самого экрана чата.
                       child: (_emojiMode || keyboardVisible)
                           ? Offstage(
                               offstage: !_emojiMode,
