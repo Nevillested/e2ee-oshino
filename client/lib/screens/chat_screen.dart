@@ -1027,6 +1027,26 @@ class _ChatScreenState extends State<ChatScreen>
     if (_textFocusNode.hasFocus && _emojiMode) {
       setState(() => _emojiMode = false);
     }
+    // РЕАЛЬНЫЙ баг, найденный по присланному debug_log: фокус вернулся
+    // (клавиатура заново поднимается), а close-fallback-анимация с
+    // ПРЕДЫДУЩЕГО закрытия ещё доигрывает — effectiveInset (см. build())
+    // в этот момент слепо тянется к нулю по старой, уже неактуальной
+    // кривой, полностью игнорируя, что клавиатура на самом деле уже
+    // ЗАНОВО поднимается. Тело экрана в итоге сжимается по вымышленному
+    // "почти закрыто" значению, пока настоящая клавиатура уже открыта —
+    // и чем чаще открыть/закрыть повторяются, тем чаще заново стартующий
+    // фолбэк застаёт предыдущий ещё активным, отсюда и нарастающий с
+    // повторами глюк вплоть до настоящего пустого пространства. Как
+    // только фокус вернулся — synthetic-анимация больше не актуальна ни
+    // в каком виде, снимаем её немедленно.
+    if (_textFocusNode.hasFocus && _usingCloseFallback) {
+      DebugLog.log(
+        'Chat _onFocusChange: фокус вернулся, пока close-fallback ещё '
+        'играл — отменяю его немедленно',
+      );
+      _closeFallbackController.stop();
+      setState(() => _usingCloseFallback = false);
+    }
     // Системный back/свайп-назад при поднятой клавиатуре закрывает её на
     // уровне ОС ещё до того, как это событие вообще доходит до Flutter
     // (IME сама глотает back) — единственный сигнал, который у нас
@@ -6529,6 +6549,21 @@ class _ChatScreenState extends State<ChatScreen>
 
   Widget _build(BuildContext context) {
     final realInset = MediaQuery.of(context).viewInsets.bottom;
+    // РЕАЛЬНЫЙ баг, найденный по debug_log с устройства: клавиатура может
+    // заново подняться БЕЗ повторного события фокуса (см. _onFocusChange —
+    // там уже есть симметричный гвард на явную потерю/возврат фокуса, но в
+    // части циклов из присланного лога сам realInset уходит вверх без
+    // единой строки _onFocusChange рядом). Раз realInset САМ говорит, что
+    // клавиатура уже реально открыта — synthetic-анимация закрытия по
+    // определению устарела, снимаем её тут же, не дожидаясь фокуса.
+    if (_usingCloseFallback && realInset > 50) {
+      DebugLog.log(
+        'Chat _build: realInset=$realInset уже показывает открытую клавиатуру, '
+        'пока close-fallback ещё играл — отменяю его',
+      );
+      _closeFallbackController.stop();
+      _usingCloseFallback = false;
+    }
     // См. _closeFallbackController/_onFocusChange выше — во время
     // close-fallback анимации ВСЁ ниже (резервы под клавиатуру/эмодзи,
     // и — через MediaQuery-обёртку у Scaffold ниже — сам
@@ -6670,6 +6705,8 @@ class _ChatScreenState extends State<ChatScreen>
         'keyboardVisible=$keyboardVisible emojiMode=$_emojiMode '
         'awaitingKeyboardOpen=$_awaitingKeyboardOpen '
         'realInset=${realInset.round()} '
+        'effectiveInset=${effectiveInset.round()} '
+        'usingCloseFallback=$_usingCloseFallback '
         'emojiReserved=${emojiReserved.round()}';
     if (_lastLoggedEmojiKeyboardState != emojiKeyboardState) {
       _lastLoggedEmojiKeyboardState = emojiKeyboardState;
