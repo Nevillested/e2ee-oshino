@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../services/debug_log.dart';
 import '../theme/app_theme.dart';
 
 /// Высота, которую нужно резервировать СНИЗУ прокручиваемого контента под
@@ -104,9 +105,27 @@ class BottomActionBar extends StatelessWidget {
       leading = ValueListenableBuilder<Uint8List?>(
         valueListenable: item.avatar!,
         builder: (context, bytes, _) => bytes != null
-            ? CircleAvatar(
-                radius: leadingSize / 2,
-                backgroundImage: MemoryImage(bytes),
+            ? ClipOval(
+                child: Image.memory(
+                  bytes,
+                  width: leadingSize,
+                  height: leadingSize,
+                  fit: BoxFit.cover,
+                  // См. AvatarThumbnail — CircleAvatar.backgroundImage не
+                  // поддерживает errorBuilder, повреждённый кэш-файл молча
+                  // превращался бы в пустой кружок вместо иконки-заглушки.
+                  errorBuilder: (context, error, stackTrace) {
+                    DebugLog.log(
+                      'BottomActionBar avatar: decode FAILED, '
+                      '${bytes.length} байт, error=$error',
+                    );
+                    return Icon(
+                      Icons.person_outline,
+                      size: leadingSize,
+                      color: color,
+                    );
+                  },
+                ),
               )
             : Icon(Icons.person_outline, size: leadingSize, color: color),
       );

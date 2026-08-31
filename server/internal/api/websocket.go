@@ -195,7 +195,18 @@ func notifyPresenceSubscribers(ctx context.Context, registry *ConnectionRegistry
 	if err != nil {
 		return
 	}
-	for _, subscriberID := range registry.PresenceSubscribers(deviceID) {
+	subscribers := registry.PresenceSubscribers(deviceID)
+	// Диагностика жалобы "собеседник показан онлайн, хотя телефон не
+	// трогали" — фиксируем КАЖДУЮ рассылку статуса: кому именно (deviceID),
+	// online/offline, скольким подписчикам ушло. Сопоставляя эти строки по
+	// времени с клиентским debug_log ("WS status -> connected" на самом
+	// устройстве и полученным presence-событием на устройстве подписчика),
+	// можно будет отличить настоящее подключение от ложного/дублирующего.
+	log.Printf(
+		"presence: device=%s online=%v lastSeenMs=%d -> %d подписчик(ов) %v",
+		deviceID, online, lastSeenMs, len(subscribers), subscribers,
+	)
+	for _, subscriberID := range subscribers {
 		if conn, ok := registry.Get(subscriberID); ok {
 			if writeErr := conn.Write(ctx, websocket.MessageText, msgBytes); writeErr != nil {
 				log.Printf("ошибка рассылки статуса подписчику: %v", writeErr)
@@ -447,6 +458,15 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 
 		var DeviceID string = r.URL.Query().Get("device_id")
 
+		// Диагностика ложного "онлайн" (см. notifyPresenceSubscribers) —
+		// момент открытия САМОГО соединения, до какой-либо рассылки статуса:
+		// RemoteAddr тут почти всегда адрес обратного прокси (см. деплой),
+		// но X-Forwarded-For у большинства реальных клиентов есть.
+		log.Printf(
+			"ws connect: device=%s remoteAddr=%s xForwardedFor=%s",
+			DeviceID, r.RemoteAddr, r.Header.Get("X-Forwarded-For"),
+		)
+
 		registry.Add(DeviceID, ws_object)
 		// Мы подключились — сообщаем "онлайн" всем, кто в этот момент уже
 		// подписан на наш статус (например, у него открыт чат с нами и он
@@ -456,13 +476,22 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 		// живости — см. startHeartbeat. Останавливается сама, когда этот
 		// обработчик вернётся (r.Context() отменяется вместе с ним).
 		startHeartbeat(r.Context(), ws_object, DeviceID)
+		connectedAt := time.Now()
 		defer func() {
 			// RemoveIfCurrent возвращает false, если это соединение уже не
 			// актуально (устройство успело переподключиться по-новой) —
 			// тогда слать "офлайн" нельзя, оно по факту всё ещё онлайн.
 			if !registry.RemoveIfCurrent(DeviceID, ws_object) {
+				log.Printf(
+					"ws disconnect: device=%s connection ЗАМЕНЕНА новой раньше, чем закрылась (heldFor=%s) — офлайн НЕ рассылаем",
+					DeviceID, time.Since(connectedAt),
+				)
 				return
 			}
+			log.Printf(
+				"ws disconnect: device=%s heldFor=%s",
+				DeviceID, time.Since(connectedAt),
+			)
 			registry.UnsubscribeAllFor(DeviceID)
 
 			bgCtx := context.Background()

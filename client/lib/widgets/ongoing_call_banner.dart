@@ -9,9 +9,14 @@ import '../services/call_service.dart';
 /// который можно свернуть/уйти с него в другой чат, не завершая звонок).
 /// Показывает живой таймер длительности и разворачивает CallScreen обратно
 /// по нажатию.
+///
+/// peerLogin == null — режим "любой активный звонок" (см. ТЗ пользователя:
+/// та же полоска в шапке общего списка чатов, а не внутри конкретного
+/// чата) — тогда собеседник неважен, актуальность определяется только
+/// самим фактом идущего разговора, а не тем, с кем именно он идёт.
 class OngoingCallBanner extends StatefulWidget {
-  final String peerLogin;
-  const OngoingCallBanner({super.key, required this.peerLogin});
+  final String? peerLogin;
+  const OngoingCallBanner({super.key, this.peerLogin});
 
   @override
   State<OngoingCallBanner> createState() => _OngoingCallBannerState();
@@ -31,7 +36,7 @@ class _OngoingCallBannerState extends State<OngoingCallBanner> {
       (_call.state == CallState.outgoingRinging ||
           _call.state == CallState.incomingRinging ||
           _call.state == CallState.connected) &&
-      _call.currentPeerLogin == widget.peerLogin;
+      (widget.peerLogin == null || _call.currentPeerLogin == widget.peerLogin);
 
   @override
   void initState() {
@@ -89,7 +94,7 @@ class _OngoingCallBannerState extends State<OngoingCallBanner> {
             context,
             MaterialPageRoute(
               builder: (_) => CallScreen(
-                peerLogin: widget.peerLogin,
+                peerLogin: widget.peerLogin ?? _call.currentPeerLogin ?? '',
                 peerAccountId: _call.currentPeerAccountId ?? '',
               ),
             ),

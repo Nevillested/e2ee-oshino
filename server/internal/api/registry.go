@@ -50,6 +50,12 @@ func (reg *ConnectionRegistry) Add(deviceID string, conn *websocket.Conn) {
 	reg.mu.Unlock()
 
 	if hadOld && old != conn {
+		// Диагностика ложного "онлайн"/дублей — если это происходит часто
+		// (а не разово, при обрыве сети), значит устройство ЧАСТО
+		// переоткрывает соединение параллельно ещё не отвалившемуся
+		// старому, что и могло бы объяснять лишние online/offline
+		// колебания у подписчиков (см. notifyPresenceSubscribers).
+		log.Printf("registry.Add: device=%s заменил ещё не закрытое старое соединение (zombie/дубль)", deviceID)
 		old.Close(websocket.StatusPolicyViolation, "reconnected from a new connection")
 	}
 }
@@ -136,6 +142,7 @@ func (reg *ConnectionRegistry) SubscribePresence(subscriberID, targetID string) 
 	reg.presenceSubs[targetID][subscriberID] = true
 
 	_, online := reg.conns[targetID]
+	log.Printf("presence subscribe: %s -> %s (текущий online=%v)", subscriberID, targetID, online)
 	return online
 }
 

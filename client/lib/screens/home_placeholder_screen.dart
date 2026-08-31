@@ -38,6 +38,7 @@ import '../widgets/cached_avatar_image.dart';
 import '../widgets/chat_list_context_menu.dart';
 import '../widgets/connection_status_indicator.dart';
 import '../widgets/delete_message_dialog.dart';
+import '../widgets/ongoing_call_banner.dart';
 import '../widgets/peer_name_text.dart';
 import '../widgets/swipe_back_page_route.dart';
 import '../widgets/theme_reactive.dart';
@@ -1085,52 +1086,79 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                   ),
                 ],
               ),
-        body: Stack(
+        body: Column(
           children: [
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onHorizontalDragStart: _onHorizontalDragStart,
-                onHorizontalDragUpdate: _onHorizontalDragUpdate,
-                onHorizontalDragEnd: _onHorizontalDragEnd,
-                // БЕЗ Padding(bottom:) снаружи — иначе сам прокручиваемый
-                // viewport списка обрезан этой высотой и последний чат
-                // физически не может доехать до зоны под капсулой, ни при
-                // каком скролле (см. скриншоты пользователя — Notes
-                // упирался в границу). Тот же по величине отступ теперь
-                // висит на паддинге прокрутки внутри каждой вкладки (см.
-                // bottomActionBarReservedHeight — _buildChatList/
-                // SettingsContent/MyProfileContent) — в покое выглядит
-                // так же, но последний элемент можно докрутить под
-                // капсулу и увидеть его сквозь блюр.
-                child: _buildFlippableBody(),
-              ),
+            // Полоска "Вернуться к экрану звонка" — тут, в отличие от
+            // chat_screen.dart (где тот же баннер — плавающий Positioned
+            // ПОВЕРХ списка сообщений, специально чтобы под него можно
+            // было докрутить), она НЕ оверлей: обычный сосед по Column,
+            // реально отодвигающий Stack со списком чатов вниз на свою
+            // высоту. Список чатов — не диалог с одним собеседником,
+            // самый верхний чат при прокрутке в топ должен быть виден
+            // целиком, а не наполовину скрыт под полупрозрачной плашкой
+            // (см. ТЗ пользователя). peerLogin не передаём — тут это не
+            // диалог с конкретным собеседником, а общий список: баннер
+            // актуален при ЛЮБОМ идущем звонке, независимо от того, с
+            // кем именно (см. OngoingCallBanner.peerLogin == null).
+            AnimatedSize(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              alignment: Alignment.topCenter,
+              child: const OngoingCallBanner(),
             ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: BottomActionBar(
-                items: [
-                  BottomTabItem(
-                    icon: Icons.chat_bubble_outline,
-                    label: tr('nav.chats'),
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onHorizontalDragStart: _onHorizontalDragStart,
+                      onHorizontalDragUpdate: _onHorizontalDragUpdate,
+                      onHorizontalDragEnd: _onHorizontalDragEnd,
+                      // БЕЗ Padding(bottom:) снаружи — иначе сам прокручиваемый
+                      // viewport списка обрезан этой высотой и последний чат
+                      // физически не может доехать до зоны под капсулой, ни при
+                      // каком скролле (см. скриншоты пользователя — Notes
+                      // упирался в границу). Тот же по величине отступ теперь
+                      // висит на паддинге прокрутки внутри каждой вкладки (см.
+                      // bottomActionBarReservedHeight — _buildChatList/
+                      // SettingsContent/MyProfileContent) — в покое выглядит
+                      // так же, но последний элемент можно докрутить под
+                      // капсулу и увидеть его сквозь блюр.
+                      child: _buildFlippableBody(),
+                    ),
                   ),
-                  BottomTabItem(icon: Icons.tune, label: tr('nav.settings')),
-                  BottomTabItem(
-                    avatar: MyAvatarStore.notifier,
-                    label: tr('nav.profile'),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: BottomActionBar(
+                      items: [
+                        BottomTabItem(
+                          icon: Icons.chat_bubble_outline,
+                          label: tr('nav.chats'),
+                        ),
+                        BottomTabItem(
+                          icon: Icons.tune,
+                          label: tr('nav.settings'),
+                        ),
+                        BottomTabItem(
+                          avatar: MyAvatarStore.notifier,
+                          label: tr('nav.profile'),
+                        ),
+                      ],
+                      selectedIndex: _selectedTab,
+                      onTabSelected: _selectTab,
+                    ),
+                  ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    child: _buildSearchResultsPanel(),
                   ),
                 ],
-                selectedIndex: _selectedTab,
-                onTabSelected: _selectTab,
               ),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              top: 0,
-              child: _buildSearchResultsPanel(),
             ),
           ],
         ),

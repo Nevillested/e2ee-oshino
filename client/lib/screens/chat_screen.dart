@@ -916,6 +916,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (type == 'presence') {
       final online = event['Online'] as bool? ?? false;
       final lastSeenMs = (event['LastSeenMs'] as num?)?.toInt() ?? 0;
+      // Диагностика жалобы "собеседник показан онлайн, хотя телефон не
+      // трогали" — на этом устройстве (наблюдателе) фиксируем каждое живое
+      // presence-событие от собеседника с временем получения; сопоставить
+      // с серверным логом notifyPresenceSubscribers/ws connect по времени
+      // и с "WS status -> connected" в debug_log САМОГО собеседника (если
+      // будет доступен) — так можно будет отличить настоящее подключение
+      // от ложного/дублирующего.
+      DebugLog.log(
+        'Presence event from=${event['FromDeviceId']} online=$online '
+        'lastSeenMs=$lastSeenMs (peerLogin=${widget.peerLogin})',
+      );
       if (!mounted) return;
       setState(() {
         _peerOnline = online;

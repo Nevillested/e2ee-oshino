@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import '../api/api_client.dart';
 import '../session.dart';
+import 'debug_log.dart';
 
 /// Фото профиля НЕ зашифровано (см. комментарий в account_avatar.go на
 /// сервере) — просто обычный HTTP GET по account_id, поэтому его можно
@@ -89,12 +90,21 @@ class AvatarCache {
       if (await diskFile.exists()) {
         try {
           final diskBytes = await diskFile.readAsBytes();
+          DebugLog.log(
+            'AvatarCache.get($accountId): читаю с диска, ${diskBytes.length} байт',
+          );
           _cache[accountId] = diskBytes;
           _cachedAt[accountId] = DateTime.now();
           unawaited(_refreshInBackground(accountId));
           return diskBytes;
-        } catch (_) {
+        } catch (e) {
           // Повреждённый/недочитанный файл — просто идём обычным путём ниже.
+          // См. жалобу "иногда при перезапуске приложения пропадают фото
+          // собеседников" — если это снова повторится, тут будет видно,
+          // что причиной был именно нечитаемый файл кэша, а не что-то ещё.
+          DebugLog.log(
+            'AvatarCache.get($accountId): файл на диске есть, но НЕ ЧИТАЕТСЯ: $e',
+          );
         }
       }
     }
@@ -157,10 +167,24 @@ class AvatarCache {
         if (await file.exists()) await file.delete();
         return;
       }
-      await file.writeAsBytes(bytes);
-    } catch (_) {
+      // Пишем во временный файл и переименовываем — не напрямую в файл
+      // кэша: rename() на одной и той же файловой системе атомарен, а
+      // прямая writeAsBytes() — нет. Если процесс убьют посреди записи
+      // (реальный кейс с устройства: "иногда при перезапуске приложения
+      // пропадают фото собеседников"), на диске либо останется старый
+      // валидный файл, либо ничего — но никогда не частично записанный,
+      // непригодный для декодирования.
+      final tmp = File('${file.path}.tmp');
+      await tmp.writeAsBytes(bytes, flush: true);
+      await tmp.rename(file.path);
+      DebugLog.log(
+        'AvatarCache._writeToDisk($accountId): записал ${bytes.length} байт',
+      );
+    } catch (e) {
       // Диск переполнен/недоступен на запись — не критично, просто в
-      // следующий раз холодный старт снова пойдёт в сеть.
+      // следующий раз холодный старт снова пойдёт в сеть. Логируем — та же
+      // диагностика "пропавших фото собеседников", что и выше в get().
+      DebugLog.log('AvatarCache._writeToDisk($accountId): ОШИБКА записи: $e');
     }
   }
 
@@ -182,8 +206,13 @@ class AvatarCache {
     if (token == null) return (ok: false, bytes: null);
     try {
       final bytes = await ApiClient().getAvatar(token, accountId);
+      DebugLog.log(
+        'AvatarCache._fetch($accountId): сервер ответил, ${bytes?.length ?? 0} байт '
+        '(null=${bytes == null})',
+      );
       return (ok: true, bytes: bytes);
-    } catch (_) {
+    } catch (e) {
+      DebugLog.log('AvatarCache._fetch($accountId): сетевая ошибка: $e');
       return (ok: false, bytes: null);
     }
   }

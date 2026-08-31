@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import '../api/api_client.dart';
 import '../session.dart';
+import 'debug_log.dart';
 
 /// Собственное фото профиля — намеренно ОТДЕЛЬНО от AvatarCache (которая
 /// продолжает обслуживать фото ЧУЖИХ аккаунтов и остаётся честным
@@ -56,9 +57,17 @@ class MyAvatarStore {
     try {
       final file = await _diskFile();
       if (await file.exists()) {
-        notifier.value = await file.readAsBytes();
+        final bytes = await file.readAsBytes();
+        notifier.value = bytes;
+        DebugLog.log(
+          'MyAvatarStore.init: прочитал с диска ${bytes.length} байт',
+        );
       }
-    } catch (_) {}
+    } catch (e) {
+      DebugLog.log(
+        'MyAvatarStore.init: файл на диске есть, но НЕ ЧИТАЕТСЯ: $e',
+      );
+    }
 
     // getMyAvatar теперь бросает исключение на сетевую ошибку (см. её
     // комментарий в api_client.dart — раньше и сетевая ошибка, и честное
@@ -81,10 +90,18 @@ class MyAvatarStore {
         if (await file.exists()) await file.delete();
         return;
       }
-      await file.writeAsBytes(bytes, flush: true);
-    } catch (_) {
+      // Через временный файл + rename (атомарно на той же ФС) — см. тот же
+      // приём и его обоснование в AvatarCache._writeToDisk: прямая
+      // writeAsBytes() не атомарна, и если процесс убьют посреди записи,
+      // на диске мог бы остаться частично записанный, битый файл.
+      final tmp = File('${file.path}.tmp');
+      await tmp.writeAsBytes(bytes, flush: true);
+      await tmp.rename(file.path);
+      DebugLog.log('MyAvatarStore._writeToDisk: записал ${bytes.length} байт');
+    } catch (e) {
       // Диск недоступен/переполнен — не критично, просто в следующий раз
       // холодный старт снова пойдёт в сеть без мгновенного превью.
+      DebugLog.log('MyAvatarStore._writeToDisk: ОШИБКА записи: $e');
     }
   }
 

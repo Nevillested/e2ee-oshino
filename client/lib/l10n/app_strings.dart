@@ -722,6 +722,10 @@ class AppStrings {
       AppLocale.ru: 'Скачивание…',
       AppLocale.en: 'Downloading…',
     },
+    'media.playbackFailed': {
+      AppLocale.ru: 'Не удалось воспроизвести. Нажмите ещё раз',
+      AppLocale.en: 'Playback failed. Tap to retry',
+    },
     'media.hideWithSpoiler': {
       AppLocale.ru: 'Скрыть спойлером',
       AppLocale.en: 'Hide with spoiler',

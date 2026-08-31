@@ -368,36 +368,61 @@ class _CallScreenState extends State<CallScreen> {
               right: 0,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                // .end — базовые круглые кнопки все на одной линии; кнопка
+                // разворота камеры растёт НАД видео-кнопкой (см. Column
+                // ниже), а не раздвигает всю группу от центра.
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
+                  // Иконка не меняется вкл/выкл (см. ТЗ пользователя) —
+                  // только подсветка отмечает, что микрофон выключен
+                  // (crossed-out mic сам по себе уже читается как "выкл",
+                  // отдельная подсветка тут как раз про это же состояние).
                   _controlButton(
                     icon: _call.micEnabled ? Icons.mic : Icons.mic_off,
+                    highlighted: !_call.micEnabled,
                     onTap: () async {
                       await _call.toggleMic();
                       if (mounted) setState(() {});
                     },
                   ),
-                  _controlButton(
-                    icon: _call.videoEnabled
-                        ? Icons.videocam
-                        : Icons.videocam_off,
-                    onTap: () async {
-                      await _call.toggleVideo();
-                      _syncLocalRenderer();
-                      if (mounted) setState(() {});
-                    },
+                  // Кнопка видео — иконка ВСЕГДА одна и та же (см. ТЗ
+                  // пользователя: "иконка должна остаться такой же"), вкл/
+                  // выкл отличается только подсветкой; иконка разворота
+                  // камеры — отдельная кнопка НАД ней (Column), появляется,
+                  // только пока видео включено, и всегда подсвечена.
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_call.videoEnabled) ...[
+                        _controlButton(
+                          icon: Icons.cameraswitch,
+                          highlighted: true,
+                          onTap: () => _call.switchCamera(),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      _controlButton(
+                        icon: Icons.videocam_off,
+                        highlighted: _call.videoEnabled,
+                        onTap: () async {
+                          await _call.toggleVideo();
+                          _syncLocalRenderer();
+                          if (mounted) setState(() {});
+                        },
+                      ),
+                    ],
                   ),
+                  // Иконка громкой связи — ВСЕГДА динамик, не ухо (см. ТЗ
+                  // пользователя); подсветка отмечает сам факт включённой
+                  // громкой связи.
                   _controlButton(
-                    icon: _call.speakerOn ? Icons.volume_up : Icons.hearing,
+                    icon: Icons.volume_up,
+                    highlighted: _call.speakerOn,
                     onTap: () async {
                       await _call.toggleSpeaker();
                       if (mounted) setState(() {});
                     },
                   ),
-                  if (_call.videoEnabled)
-                    _controlButton(
-                      icon: Icons.cameraswitch,
-                      onTap: () => _call.switchCamera(),
-                    ),
                   _controlButton(
                     icon: Icons.call_end,
                     background: Colors.red,
@@ -416,7 +441,14 @@ class _CallScreenState extends State<CallScreen> {
     required IconData icon,
     required VoidCallback onTap,
     Color? background,
+    // "Активное" состояние кнопки (мьют/громкая связь/разворот камеры —
+    // см. ТЗ пользователя) — та же визуальная подсветка, что уже
+    // используется для выбранного таба нижней панели (AppColors.primary),
+    // просто как ещё один вариант background по умолчанию.
+    bool highlighted = false,
   }) {
+    final effectiveBackground =
+        background ?? (highlighted ? AppColors.primary : AppColors.surface);
     return InkWell(
       onTap: onTap,
       customBorder: const CircleBorder(),
@@ -424,16 +456,19 @@ class _CallScreenState extends State<CallScreen> {
         width: 56,
         height: 56,
         decoration: BoxDecoration(
-          color: background ?? AppColors.surface,
+          color: effectiveBackground,
           shape: BoxShape.circle,
         ),
-        // На красной кнопке (завершить звонок) фон всегда фиксированный —
-        // белая иконка корректна в обеих темах. На остальных фон теперь
-        // AppColors.surface (белый в светлой теме) — там нужен цвет текста
-        // самой темы, иначе снова белым по белому.
+        // На красной кнопке (завершить звонок) и на подсвеченной кнопке
+        // фон всегда фиксированный (красный/primary) — белая иконка
+        // корректна в обеих темах. На нейтральном фоне (AppColors.surface,
+        // белый в светлой теме) нужен цвет текста самой темы, иначе снова
+        // белым по белому.
         child: Icon(
           icon,
-          color: background != null ? Colors.white : AppColors.textPrimary,
+          color: (background != null || highlighted)
+              ? Colors.white
+              : AppColors.textPrimary,
         ),
       ),
     );

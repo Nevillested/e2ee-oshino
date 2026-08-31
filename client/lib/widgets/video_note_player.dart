@@ -93,6 +93,54 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
   // тестировщика "повторно видео не воспроизводится без выхода из чата".
   bool _handlingEnd = false;
 
+  // См. _watchForStall — реальный кейс с устройства (OnePlus 13, debug_log
+  // пользователя): play() успешно возвращается и на миг даже репортит
+  // isPlaying=true, но видео физически не декодируется — позиция навсегда
+  // застревает на 0:00. Раньше это только логировалось ("+400ms check
+  // moved=false") и молча оставалось висеть — для пользователя выглядело
+  // как "видео не воспроизводится вообще". _stallRetryUsed ограничивает
+  // автоматическое восстановление ОДНИМ пересозданием контроллера за один
+  // пользовательский заход (сбрасывается в _toggle() только когда
+  // пользователь САМ заново запускает воспроизведение с нуля, не при
+  // внутреннем авто-ретрае — иначе бесконечно зависший декодер зациклил бы
+  // пересоздание сам с собой).
+  bool _stallRetryUsed = false;
+  bool _stallError = false;
+
+  // Периодический снимок состояния КАЖДЫЕ несколько секунд, ПОКА идёт
+  // воспроизведение — в отличие от _watchForStall (одна разовая проверка
+  // только в момент play()), это ловит зависание/зелёный экран/ошибку,
+  // возникшие СРЕДИ уже идущего воспроизведения, а не только на старте.
+  // Само по себе ничего не чинит (нет ретрая) — только пишет в лог, чтобы
+  // при повторной жалобе было видно, где именно позиция перестала
+  // двигаться или когда controller.value.hasError стал true.
+  Timer? _diagTicker;
+  Duration? _lastDiagPosition;
+
+  void _startDiagTicker(VideoPlayerController controller) {
+    _diagTicker?.cancel();
+    _lastDiagPosition = controller.value.position;
+    _diagTicker = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted || _controller != controller) {
+        _diagTicker?.cancel();
+        return;
+      }
+      final pos = controller.value.position;
+      final stuck = pos == _lastDiagPosition;
+      DebugLog.log(
+        'VideoNote diag-tick messageId=${widget.messageId} stuck=$stuck '
+        'isBuffering=${controller.value.isBuffering} '
+        '${_stateSnapshot(controller)}',
+      );
+      _lastDiagPosition = pos;
+    });
+  }
+
+  void _stopDiagTicker() {
+    _diagTicker?.cancel();
+    _diagTicker = null;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -158,6 +206,7 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       'VideoNote dispose messageId=${widget.messageId} '
       'hadController=${_controller != null} playing=$_playing',
     );
+    _stopDiagTicker();
     _controller?.removeListener(_onTick);
     _controller?.dispose();
     // Если это сообщение было "активным" в верхней панели, а сам виджет
@@ -202,6 +251,7 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
     final controller = _controller;
     if (controller == null) return;
     await controller.pause();
+    _stopDiagTicker();
     if (mounted) setState(() => _playing = false);
     _reportPlayingState(false);
   }
@@ -225,21 +275,57 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
     );
     if (mounted) setState(() => _playing = true);
     _registerWithCoordinator();
-    // Само play() иногда завершается, даже если декодер реально не
-    // возобновил выдачу кадров (частая проблема video_player на Android
-    // после seekTo в конец/начало) — is Playing=true сразу после play() это
-    // не докажет. Проверяем позицию ещё раз спустя паузу: если она не
-    // сдвинулась вообще — воспроизведение не идёт, несмотря на успешный
-    // play().
+    _watchForStall(controller);
+    _startDiagTicker(controller);
+  }
+
+  /// Само play() иногда завершается, даже если декодер реально не
+  /// возобновил выдачу кадров (частая проблема video_player/ExoPlayer на
+  /// Android после seekTo в конец/начало, а по debug_log с OnePlus 13 —
+  /// иногда и на самом первом холодном старте) — isPlaying=true сразу после
+  /// play() это не доказывает. Проверяем позицию ещё раз спустя паузу: если
+  /// она не сдвинулась вообще — воспроизведение не идёт, несмотря на
+  /// успешный play(). Раньше это только логировалось и оставалось молча
+  /// висеть (жалоба с реального устройства: "видеосообщение не
+  /// воспроизводится") — теперь при обнаружении пробуем восстановиться
+  /// автоматически (см. _stallRetryUsed), а если и повторная попытка не
+  /// помогла — показываем настоящую ошибку вместо тишины.
+  void _watchForStall(VideoPlayerController controller) {
     final posAtPlay = controller.value.position;
     unawaited(
-      Future.delayed(const Duration(milliseconds: 400), () {
+      Future.delayed(const Duration(milliseconds: 400), () async {
         if (!mounted || _controller != controller) return;
         final moved = controller.value.position != posAtPlay;
         DebugLog.log(
-          'VideoNote _doResume() +400ms check moved=$moved '
-          '${_stateSnapshot(controller)}',
+          'VideoNote stall-check moved=$moved ${_stateSnapshot(controller)}',
         );
+        if (moved) return;
+        _stopDiagTicker();
+        controller.removeListener(_onTick);
+        try {
+          await controller.pause();
+        } catch (_) {}
+        try {
+          await controller.dispose();
+        } catch (_) {}
+        if (!mounted) return;
+        if (_stallRetryUsed) {
+          DebugLog.log('VideoNote stall-check: retry already used, giving up');
+          setState(() {
+            _controller = null;
+            _playing = false;
+            _stallError = true;
+          });
+          final id = widget.messageId;
+          if (widget.coordinator != null && id != null) {
+            widget.coordinator!.deactivate(id);
+          }
+          return;
+        }
+        _stallRetryUsed = true;
+        DebugLog.log('VideoNote stall-check: auto-retrying via cold restart');
+        setState(() => _controller = null);
+        await _startFresh();
       }),
     );
   }
@@ -260,6 +346,7 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
   /// работает только пересоздание с нуля при следующем плее).
   Future<void> _doStop() async {
     final controller = _controller;
+    _stopDiagTicker();
     if (controller != null) {
       controller.removeListener(_onTick);
       await controller.pause();
@@ -321,6 +408,11 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       return;
     }
 
+    // Пользователь сам запускает воспроизведение с нуля (не наш внутренний
+    // авто-ретрай — см. _watchForStall) — снимаем и лимит попыток, и
+    // предыдущую ошибку, раз это уже новый заход.
+    _stallRetryUsed = false;
+    if (_stallError) setState(() => _stallError = false);
     await _startFresh();
   }
 
@@ -370,6 +462,8 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       );
       if (mounted) setState(() => _playing = true);
       _registerWithCoordinator();
+      _watchForStall(newController);
+      _startDiagTicker(newController);
     } catch (e) {
       DebugLog.log('VideoNote _startFresh() FAILED error=$e');
       if (mounted) setState(() => _loading = false);
@@ -395,6 +489,7 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
         return;
       }
       _handlingEnd = true;
+      _stopDiagTicker();
       DebugLog.log(
         'VideoNote _onTick() end-of-video detected ${_stateSnapshot(c)} '
         'currentlyPlayingFlag=$_playing',
@@ -486,6 +581,23 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
             borderRadius: BorderRadius.circular(18),
           )
         : null;
+    // См. _watchForStall — декодер молча застрял (isPlaying=true, позиция
+    // навсегда на 0:00), автовосстановление тоже не помогло. Реальный
+    // случай с устройства раньше молча висел без единого сигнала
+    // пользователю — теперь честно показываем, что не получилось, а не
+    // просто статичный кадр-превью без объяснений.
+    final stallErrorOverlay =
+        sendingOverlay == null &&
+            receivingOverlay == null &&
+            playTapOverlay == null &&
+            _stallError
+        ? MediaStatusOverlay(
+            statusText: tr('media.playbackFailed'),
+            percent: null,
+            size: size,
+            borderRadius: BorderRadius.circular(18),
+          )
+        : null;
 
     return GestureDetector(
       onTap: (_loading || sendingOverlay != null) ? null : _toggle,
@@ -512,7 +624,8 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
               if (!_playing &&
                   sendingOverlay == null &&
                   receivingOverlay == null &&
-                  playTapOverlay == null)
+                  playTapOverlay == null &&
+                  stallErrorOverlay == null)
                 Center(
                   child: Container(
                     width: 46,
@@ -550,6 +663,7 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
               if (sendingOverlay != null) sendingOverlay,
               if (receivingOverlay != null) receivingOverlay,
               if (playTapOverlay != null) playTapOverlay,
+              if (stallErrorOverlay != null) stallErrorOverlay,
             ],
           ),
         ),
