@@ -128,7 +128,8 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
+class _ChatScreenState extends State<ChatScreen>
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   static const int _autoDownloadLimitBytes = 10 * 1024 * 1024; // 10 МБ
   // Общий с PendingSendRetrier порог (см. media_upload.dart) — единый
   // источник истины, чтобы автоматический повтор после сбоя сети грузил
@@ -427,6 +428,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _hasText = false;
   double _lastReserved = 0;
   double? _lastLoggedBottomInset;
+  // Диагностика жалобы "при опускании клавиатуры на миг видна пустая
+  // панель эмодзи, потом резко исчезает" (особенно после выхода из чата и
+  // повторного входа) — логируем состояние (keyboardVisible/_emojiMode/
+  // _awaitingKeyboardOpen/emojiReserved), но только когда оно РЕАЛЬНО
+  // меняется, а не на каждый build() — иначе лог захлебнётся (build()
+  // вызывается на каждый кадр анимации клавиатуры).
+  String? _lastLoggedEmojiKeyboardState;
   // См. _handleScroll и триггер в build() ниже: пока клавиатура/эмодзи-панель
   // открывается, viewport физически сжимается кадр за кадром, maxScrollExtent
   // растёт БЫСТРЕЕ, чем успевает докрутить компенсирующий _scrollToBottom —
@@ -451,6 +459,40 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _keyboardVisibleDebounced = false;
   static const _keyboardCloseDebounceDelay = Duration(milliseconds: 250);
   Timer? _keyboardCloseDebounceTimer;
+
+  // Фикс жалобы "системный свайп назад при поднятой клавиатуре — клавиатура
+  // уезжает, а панель сообщения остаётся висеть на месте, между ней и низом
+  // экрана видно пустое пространство, потом оно резко исчезает и панель
+  // падает вниз" (см. скриншоты пользователя — три чётких шага, не мелькание
+  // на один кадр). Причина — Scaffold.resizeToAvoidBottomInset физически
+  // сжимает тело экрана СЛЕДОМ за MediaQuery.viewInsets.bottom, а системный
+  // back-жест закрывает клавиатуру нативно (IME-анимация целиком на стороне
+  // ОС, см. её же комментарий у _onFocusChange про "IME сама глотает back")
+  // — судя по всему, конкретно в этом сценарии (в отличие от обычного тапа
+  // по полю/иконке) Flutter получает не плавный поток промежуточных
+  // значений inset'а, а ОДНО финальное обновление уже ПОСЛЕ того, как
+  // настоящая клавиатура на экране целиком уехала: всё это время Flutter
+  // продолжает резервировать место под уже исчезнувшую клавиатуру (пустое
+  // пространство), а когда обновление наконец приходит — тело экрана
+  // схлопывается на всю эту высоту разом, в один кадр (резкий прыжок).
+  //
+  // Единственный НАДЁЖНЫЙ и СВОЕВРЕМЕННЫЙ сигнал, что клавиатура вот-вот
+  // исчезнет — потеря фокуса нашим полем (см. _onFocusChange), которая (по
+  // тому же самому наблюдению) приходит куда быстрее, чем финальный
+  // MediaQuery. Как только видим потерю фокуса, ПОКА realInset (по мнению
+  // Flutter) всё ещё > 0 — берём управление в свои руки: сами плавно
+  // доводим используемый везде ниже "эффективный" inset до нуля за то же
+  // время, что обычно занимает системная анимация клавиатуры, вместо того
+  // чтобы ждать (неизвестно сколько) настоящего обновления от MediaQuery.
+  late final AnimationController _closeFallbackController =
+      AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 260),
+      )..addListener(() {
+        if (mounted) setState(() {});
+      });
+  bool _usingCloseFallback = false;
+  double _closeFallbackStartInset = 0;
 
   // Растущая пилюля-композер (см. ТЗ пользователя "Enter — перенос строки,
   // а не закрытие клавиатуры") — считаем число строк по явным '\n' (не
@@ -966,6 +1008,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   void _onFocusChange() {
+    // Диагностика "пустая панель эмодзи при закрытии клавиатуры" — этот
+    // колбэк дёргается НЕ на каждый кадр (в отличие от build()), а только
+    // на реальные события фокуса, поэтому лог тут не захлёбывается и даёт
+    // точную последовательность событий вокруг момента, когда что-то
+    // пошло не так.
+    DebugLog.log(
+      'Chat _onFocusChange hasFocus=${_textFocusNode.hasFocus} '
+      'emojiMode=$_emojiMode awaitingKeyboardOpen=$_awaitingKeyboardOpen '
+      'keyboardVisibleDebounced=$_keyboardVisibleDebounced '
+      'realInset=${mounted ? MediaQuery.of(context).viewInsets.bottom : 'n/a'}',
+    );
     // Резерв места (reserved в build()) сам вычисляется на лету из
     // keyboardVisible/_emojiMode на каждой перестройке — здесь нужно
     // только не дать эмодзи-панели остаться включённой, если фокус
@@ -987,9 +1040,37 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // (просто перескочила на другое поле), rawKeyboardVisible на
     // следующем же кадре сама вернёт _keyboardVisibleDebounced в true.
     if (!_textFocusNode.hasFocus && _keyboardVisibleDebounced) {
+      DebugLog.log(
+        'Chat _onFocusChange: фокус потерян, немедленно keyboardVisibleDebounced=false '
+        '(было true, минуя _keyboardCloseDebounceDelay)',
+      );
       _keyboardCloseDebounceTimer?.cancel();
       _keyboardCloseDebounceTimer = null;
       setState(() => _keyboardVisibleDebounced = false);
+    }
+    // См. _closeFallbackController выше — фокус потерян (клавиатура
+    // закрывается), но MediaQuery ЕЩЁ считает её открытой (realInset > 0):
+    // это и есть тот самый рассинхрон при системном back-свайпе. Не в
+    // эмодзи-режиме и не ждём открытия клавиатуры (та же логика, что и у
+    // самого emojiReserved) — иначе рисковали бы вмешаться в НЕсвязанный
+    // переход и там что-нибудь сломать.
+    if (!_textFocusNode.hasFocus &&
+        !_emojiMode &&
+        !_awaitingKeyboardOpen &&
+        mounted) {
+      final liveInset = MediaQuery.of(context).viewInsets.bottom;
+      if (liveInset > 0) {
+        DebugLog.log(
+          'Chat _onFocusChange: фокус потерян, но realInset=$liveInset ещё '
+          '> 0 — включаю close-fallback анимацию (260мс) вместо ожидания MediaQuery',
+        );
+        _closeFallbackStartInset = liveInset;
+        _usingCloseFallback = true;
+        _closeFallbackController.stop();
+        _closeFallbackController.forward(from: 0).whenComplete(() {
+          if (mounted) setState(() => _usingCloseFallback = false);
+        });
+      }
     }
   }
 
@@ -5676,6 +5757,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _scrollSaveDebounce?.cancel();
     _keyboardCloseDebounceTimer?.cancel();
     _keyboardHeightSettleTimer?.cancel();
+    _closeFallbackController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     // Если пользователь ушёл с экрана прямо посреди записи — обрываем её
@@ -6447,6 +6529,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   Widget _build(BuildContext context) {
     final realInset = MediaQuery.of(context).viewInsets.bottom;
+    // См. _closeFallbackController/_onFocusChange выше — во время
+    // close-fallback анимации ВСЁ ниже (резервы под клавиатуру/эмодзи,
+    // и — через MediaQuery-обёртку у Scaffold ниже — сам
+    // resizeToAvoidBottomInset) ориентируется на этот плавно убывающий
+    // "эффективный" inset вместо потенциально зависшего realInset. В
+    // обычное время (не в фолбэке) effectiveInset === realInset один в
+    // один — нулевой риск регресса для уже отлаженного обычного случая.
+    final effectiveInset = _usingCloseFallback
+        ? _closeFallbackStartInset * (1 - _closeFallbackController.value)
+        : realInset;
     final rawKeyboardVisible = realInset > 50;
     // Открытие — сразу; закрытие — только если провал держится дольше
     // _keyboardCloseDebounceDelay (см. поле выше про "Change keyboard").
@@ -6459,7 +6551,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _keyboardCloseDebounceTimer = Timer(_keyboardCloseDebounceDelay, () {
         if (!mounted) return;
         _keyboardCloseDebounceTimer = null;
-        if (MediaQuery.of(context).viewInsets.bottom <= 50) {
+        final stillClosed = MediaQuery.of(context).viewInsets.bottom <= 50;
+        DebugLog.log(
+          'Chat _keyboardCloseDebounceTimer fired stillClosed=$stillClosed '
+          'emojiMode=$_emojiMode awaitingKeyboardOpen=$_awaitingKeyboardOpen',
+        );
+        if (stillClosed) {
           setState(() => _keyboardVisibleDebounced = false);
         }
       });
@@ -6560,8 +6657,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // realInset на долю кадра обгоняет _keyboardHeight (см. её же
     // settle-логику выше).
     final emojiReserved = (_emojiMode || _awaitingKeyboardOpen)
-        ? (_keyboardHeight - realInset).clamp(0.0, _keyboardHeight)
+        ? (_keyboardHeight - effectiveInset).clamp(0.0, _keyboardHeight)
         : 0.0;
+    // Диагностика "пустая панель эмодзи на миг видна при закрытии
+    // клавиатуры" — тут все значения, от которых зависит, покажется ли
+    // на экране пустой (Offstage-содержимым) прямоугольник ненулевой
+    // высоты (см. Container(height: emojiReserved, ...) ниже). Логируем
+    // только при изменении состояния (round — чтобы не плодить строку на
+    // каждый дробный кадр анимации realInset), иначе build() (кадр в
+    // кадр во время анимации клавиатуры) забьёт лог за секунды.
+    final emojiKeyboardState =
+        'keyboardVisible=$keyboardVisible emojiMode=$_emojiMode '
+        'awaitingKeyboardOpen=$_awaitingKeyboardOpen '
+        'realInset=${realInset.round()} '
+        'emojiReserved=${emojiReserved.round()}';
+    if (_lastLoggedEmojiKeyboardState != emojiKeyboardState) {
+      _lastLoggedEmojiKeyboardState = emojiKeyboardState;
+      DebugLog.log('Chat emoji/keyboard state: $emojiKeyboardState');
+    }
     // restGap — зазор до низа экрана в состоянии покоя (клавиатура и
     // эмодзи-панель обе закрыты). gapHeight — то же самое, но выведенное
     // ПЛАВНОЙ функцией живого realInset, а не отдельной анимацией ПОСЛЕ
@@ -6590,7 +6703,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final restGap = 5 + systemBottomInset;
     final gapHeight = (_emojiMode || _awaitingKeyboardOpen)
         ? 0.0
-        : (restGap - realInset).clamp(0.0, restGap);
+        : (restGap - effectiveInset).clamp(0.0, restGap);
 
     // Список сообщений теперь ужимается по высоте АВТОМАТИЧЕСКИ вместе с
     // телом экрана (см. Scaffold.resizeToAvoidBottomInset выше) — ScrollView
@@ -6598,7 +6711,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // так что если пользователь и так был внизу чата, после того как
     // viewport стал короче, нужно один раз прокрутить обратно к настоящему
     // концу, иначе последние сообщения окажутся чуть выше видимой области.
-    final scrollTriggerReserved = realInset + emojiReserved;
+    final scrollTriggerReserved = effectiveInset + emojiReserved;
     if (_initialLoadComplete &&
         scrollTriggerReserved > _lastReserved + 4 &&
         _userAtBottom) {
@@ -6623,641 +6736,691 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       child: SwipeBackDetector(
         enabled: !_emojiMode && !_selectionMode && !_searchMode,
         onBlockedSwipe: () => _handleBackAction(emojiOnlyVisible: _emojiMode),
-        child: Scaffold(
-          // true (было false) — ТЗ пользователя, "клавиатура как лифт":
-          // штатное поведение Scaffold само физически сжимает body вместе
-          // с клавиатурой одним layout-проходом — ручная имитация этого
-          // через свой Container/AnimatedContainer (см. историю правок
-          // выше) в принципе не могла быть кадр-в-кадр той же самой
-          // системной анимацией. ВНУТРИ body (см. ниже) Scaffold сам
-          // обнуляет MediaQuery.viewInsets.bottom для потомков — все
-          // переменные, завязанные на реальный отступ клавиатуры
-          // (realInset, systemBottomInset и т.д.), поэтому посчитаны ВЫШЕ,
-          // до этого Scaffold, из внешнего MediaQuery, которому Scaffold
-          // не сможет ничего обнулить.
-          resizeToAvoidBottomInset: true,
-          // Шапки больше нет как Scaffold.appBar — весь заголовок стал
-          // плавающим оверлеем ПОВЕРХ списка сообщений (см. Positioned в
-          // body ниже), тем же способом и по тем же причинам, что и панель
-          // ввода снизу (см. ТЗ пользователя про единый стиль: только сами
-          // "таблетки" непрозрачны, всё остальное — просвечивает чат).
-          appBar: null,
-          body: Stack(
-            key: _bodyStackKey,
-            children: [
-              Column(
-                children: [
-                  Expanded(
-                    // Список не строится, пока _bootstrapHistory() не узнает
-                    // сохранённую позицию — иначе он БЫ построился с нуля,
-                    // пользователь увидел бы это на один кадр, и только потом
-                    // прыгнул бы туда, где был (тот самый "мигает" баг).
-                    // Пустая область на эти несколько миллисекунд куда менее
-                    // заметна, чем видимый прыжок по уже отрисованному списку.
-                    child: _searchMode && _searchShowAsList
-                        ? _buildSearchResultsList()
-                        : !_scrollReady
-                        ? const SizedBox.shrink()
-                        : Builder(
-                            builder: (context) {
-                              final groups = _groupedMessages();
-                              return ListView.builder(
-                                controller: _scrollController,
-                                // Снизу — не просто 16 (как раньше), а ещё и
-                                // высота непрозрачной части плавающей панели
-                                // ввода (овальная "таблетка" + резерв под
-                                // клавиатуру/эмодзи, когда открыты) — список
-                                // теперь во весь рост Stack'а, а не сосед
-                                // панели в Column (см. ниже, где эта же
-                                // панель стала Positioned(bottom: 0) поверх
-                                // него). НЕ добавляем сюда сам зазор-спейсер
-                                // (5 + systemBottomInset) — его прозрачность
-                                // и есть весь смысл (см. ТЗ пользователя):
-                                // именно в этой узкой полосе должны быть
-                                // видны кусочки сообщений, а не отступ под
-                                // них.
-                                padding: EdgeInsets.fromLTRB(
-                                  16,
-                                  16 + MediaQuery.of(context).padding.top + 60,
-                                  16,
-                                  // 64 — высота самой таблетки, но последнее
-                                  // сообщение вплотную к ней смотрелось так,
-                                  // будто панель его слегка перекрывает (см.
-                                  // жалобу пользователя) — 28, а не 16,
-                                  // добавляют настоящий видимый зазор.
-                                  //
-                                  // "+ gapHeight" (а не вычитание фиксированной
-                                  // константы, как было раньше) — реальный
-                                  // баг с устройства: на 3-кнопочной системной
-                                  // навигации (в отличие от жестовой)
-                                  // systemBottomInset заметно больше (48 vs
-                                  // 24), поэтому и сам зазор-спейсер (см.
-                                  // gapHeight/restGap выше) вырастает почти
-                                  // вдвое — а старая формула резервировала
-                                  // под него ФИКСИРОВАННЫЕ 28, никак не
-                                  // связанные с реальным systemBottomInset.
-                                  // Итог — непрозрачная "таблетка" (её
-                                  // верхний край стоит на gapHeight выше низа
-                                  // экрана) физически перекрывала последнее
-                                  // сообщение на устройствах с крупной
-                                  // 3-кнопочной панелью (жалоба пользователя
-                                  // со скриншотом). gapHeight — та же самая
-                                  // плавная (не дискретная) величина, что и у
-                                  // самого зазора-спейсера, так что паддинг
-                                  // списка и высота спейсера всегда меняются
-                                  // синхронно, кадр в кадр, и корректно растут
-                                  // вместе с systemBottomInset вместо
-                                  // константы. "12 +" — небольшой
-                                  // фиксированный запас поверх реальной
-                                  // высоты таблетки, чтобы последнее
-                                  // сообщение не липло к ней вплотную даже
-                                  // после этого исправления.
-                                  //
-                                  // "+ (_composerBannerVisible ? ... : 0)" —
-                                  // баннер реплая/редактирования/пересылки
-                                  // стоит НАД пилюлей, а не вместо неё (см.
-                                  // _composerBannerHeight) — без этого
-                                  // добавления резерв учитывал только саму
-                                  // пилюлю, и баннер перекрывал последнее
-                                  // сообщение (жалоба пользователя).
-                                  //
-                                  // "+ emojiReserved" — только эмодзи-панель:
-                                  // саму настоящую клавиатуру ВТОРОЙ раз
-                                  // сюда добавлять не нужно, тело экрана уже
-                                  // физически короче на её высоту (см.
-                                  // resizeToAvoidBottomInset у Scaffold) —
-                                  // Expanded-список и так получает меньше
-                                  // места безо всякого паддинга.
-                                  12 +
-                                      64 +
-                                      emojiReserved +
-                                      gapHeight +
-                                      (_composerBannerVisible
-                                          ? _composerBannerHeight
-                                          : 0),
-                                ),
-                                itemCount: groups.length,
-                                itemBuilder: (context, index) {
-                                  final group = groups[index];
-                                  return group.length == 1
-                                      ? _buildMessageBubble(group.first)
-                                      : _buildGroupBubble(group);
-                                },
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ),
-              // Шапка — плавающий оверлей ПОВЕРХ списка сообщений, тот же
-              // приём, что и у панели ввода снизу (см. ниже): три овальные
-              // "таблетки" (назад / профиль собеседника / звонок+меню), а
-              // всё вокруг них прозрачно — список сообщений просвечивает в
-              // промежутках между ними и по краям. Переключение между
-              // обычным видом, режимом выбора и поиском — тот же
-              // AnimatedSwitcher, что раньше жил в Scaffold.appBar, просто
-              // теперь как оверлей в body, а не отдельный слот Scaffold'а
-              // (тот менялся бы мгновенно без анимации при появлении/
-              // исчезновении — см. аналогичный фикс на экране чатов/
-              // настроек/профиля).
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+        // См. _closeFallbackController выше — resizeToAvoidBottomInset
+        // ниже сам читает MediaQuery.viewInsets.bottom из СВОЕГО контекста
+        // (потомок этого MediaQuery), поэтому во время close-fallback
+        // анимации подменяем именно ЭТО значение на effectiveInset — тело
+        // экрана физически сжимается/разжимается по НАШЕЙ плавной кривой
+        // вместо потенциально зависшего системного значения. В обычное
+        // время (effectiveInset === realInset) это буквально то же самое
+        // MediaQuery, что и было — resizeToAvoidBottomInset ведёт себя
+        // ИДЕНТИЧНО прежнему поведению, никакого регресса для уже
+        // отлаженного обычного случая.
+        child: MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            viewInsets: MediaQuery.of(
+              context,
+            ).viewInsets.copyWith(bottom: effectiveInset),
+          ),
+          child: Scaffold(
+            // true (было false) — ТЗ пользователя, "клавиатура как лифт":
+            // штатное поведение Scaffold само физически сжимает body вместе
+            // с клавиатурой одним layout-проходом — ручная имитация этого
+            // через свой Container/AnimatedContainer (см. историю правок
+            // выше) в принципе не могла быть кадр-в-кадр той же самой
+            // системной анимацией. ВНУТРИ body (см. ниже) Scaffold сам
+            // обнуляет MediaQuery.viewInsets.bottom для потомков — все
+            // переменные, завязанные на реальный отступ клавиатуры
+            // (realInset, systemBottomInset и т.д.), поэтому посчитаны ВЫШЕ,
+            // до этого Scaffold, из внешнего MediaQuery, которому Scaffold
+            // не сможет ничего обнулить.
+            resizeToAvoidBottomInset: true,
+            // Шапки больше нет как Scaffold.appBar — весь заголовок стал
+            // плавающим оверлеем ПОВЕРХ списка сообщений (см. Positioned в
+            // body ниже), тем же способом и по тем же причинам, что и панель
+            // ввода снизу (см. ТЗ пользователя про единый стиль: только сами
+            // "таблетки" непрозрачны, всё остальное — просвечивает чат).
+            appBar: null,
+            body: Stack(
+              key: _bodyStackKey,
+              children: [
+                Column(
                   children: [
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 280),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      transitionBuilder: (child, animation) {
-                        if (child.key == const ValueKey('search_header')) {
-                          return ClipRect(
-                            child: FractionallySizedBox(
-                              alignment: Alignment.centerRight,
-                              widthFactor: animation.value.clamp(0.0, 1.0),
-                              child: FadeTransition(
-                                opacity: animation,
-                                child: child,
-                              ),
+                    Expanded(
+                      // Список не строится, пока _bootstrapHistory() не узнает
+                      // сохранённую позицию — иначе он БЫ построился с нуля,
+                      // пользователь увидел бы это на один кадр, и только потом
+                      // прыгнул бы туда, где был (тот самый "мигает" баг).
+                      // Пустая область на эти несколько миллисекунд куда менее
+                      // заметна, чем видимый прыжок по уже отрисованному списку.
+                      child: _searchMode && _searchShowAsList
+                          ? _buildSearchResultsList()
+                          : !_scrollReady
+                          ? const SizedBox.shrink()
+                          : Builder(
+                              builder: (context) {
+                                final groups = _groupedMessages();
+                                return ListView.builder(
+                                  controller: _scrollController,
+                                  // Снизу — не просто 16 (как раньше), а ещё и
+                                  // высота непрозрачной части плавающей панели
+                                  // ввода (овальная "таблетка" + резерв под
+                                  // клавиатуру/эмодзи, когда открыты) — список
+                                  // теперь во весь рост Stack'а, а не сосед
+                                  // панели в Column (см. ниже, где эта же
+                                  // панель стала Positioned(bottom: 0) поверх
+                                  // него). НЕ добавляем сюда сам зазор-спейсер
+                                  // (5 + systemBottomInset) — его прозрачность
+                                  // и есть весь смысл (см. ТЗ пользователя):
+                                  // именно в этой узкой полосе должны быть
+                                  // видны кусочки сообщений, а не отступ под
+                                  // них.
+                                  padding: EdgeInsets.fromLTRB(
+                                    16,
+                                    16 +
+                                        MediaQuery.of(context).padding.top +
+                                        60,
+                                    16,
+                                    // 64 — высота самой таблетки, но последнее
+                                    // сообщение вплотную к ней смотрелось так,
+                                    // будто панель его слегка перекрывает (см.
+                                    // жалобу пользователя) — 28, а не 16,
+                                    // добавляют настоящий видимый зазор.
+                                    //
+                                    // "+ gapHeight" (а не вычитание фиксированной
+                                    // константы, как было раньше) — реальный
+                                    // баг с устройства: на 3-кнопочной системной
+                                    // навигации (в отличие от жестовой)
+                                    // systemBottomInset заметно больше (48 vs
+                                    // 24), поэтому и сам зазор-спейсер (см.
+                                    // gapHeight/restGap выше) вырастает почти
+                                    // вдвое — а старая формула резервировала
+                                    // под него ФИКСИРОВАННЫЕ 28, никак не
+                                    // связанные с реальным systemBottomInset.
+                                    // Итог — непрозрачная "таблетка" (её
+                                    // верхний край стоит на gapHeight выше низа
+                                    // экрана) физически перекрывала последнее
+                                    // сообщение на устройствах с крупной
+                                    // 3-кнопочной панелью (жалоба пользователя
+                                    // со скриншотом). gapHeight — та же самая
+                                    // плавная (не дискретная) величина, что и у
+                                    // самого зазора-спейсера, так что паддинг
+                                    // списка и высота спейсера всегда меняются
+                                    // синхронно, кадр в кадр, и корректно растут
+                                    // вместе с systemBottomInset вместо
+                                    // константы. "12 +" — небольшой
+                                    // фиксированный запас поверх реальной
+                                    // высоты таблетки, чтобы последнее
+                                    // сообщение не липло к ней вплотную даже
+                                    // после этого исправления.
+                                    //
+                                    // "+ (_composerBannerVisible ? ... : 0)" —
+                                    // баннер реплая/редактирования/пересылки
+                                    // стоит НАД пилюлей, а не вместо неё (см.
+                                    // _composerBannerHeight) — без этого
+                                    // добавления резерв учитывал только саму
+                                    // пилюлю, и баннер перекрывал последнее
+                                    // сообщение (жалоба пользователя).
+                                    //
+                                    // "+ emojiReserved" — только эмодзи-панель:
+                                    // саму настоящую клавиатуру ВТОРОЙ раз
+                                    // сюда добавлять не нужно, тело экрана уже
+                                    // физически короче на её высоту (см.
+                                    // resizeToAvoidBottomInset у Scaffold) —
+                                    // Expanded-список и так получает меньше
+                                    // места безо всякого паддинга.
+                                    12 +
+                                        64 +
+                                        emojiReserved +
+                                        gapHeight +
+                                        (_composerBannerVisible
+                                            ? _composerBannerHeight
+                                            : 0),
+                                  ),
+                                  itemCount: groups.length,
+                                  itemBuilder: (context, index) {
+                                    final group = groups[index];
+                                    return group.length == 1
+                                        ? _buildMessageBubble(group.first)
+                                        : _buildGroupBubble(group);
+                                  },
+                                );
+                              },
                             ),
-                          );
-                        }
-                        return FadeTransition(opacity: animation, child: child);
-                      },
-                      child: _selectionMode
-                          ? _buildSelectionHeader()
-                          : _searchMode
-                          ? _buildSearchHeader()
-                          : _buildFloatingChatHeader(),
                     ),
-                    // Панель управления голосовым/видео-сообщением — ПОД
-                    // обычной шапкой чата (см. ТЗ пользователя: не должна
-                    // перекрывать кнопку "назад", логин/статус/фото
-                    // собеседника и кнопку звонка) — растёт/схлопывается
-                    // здесь, шапка при этом остаётся на своём обычном месте.
-                    _buildMediaControlBar(),
                   ],
                 ),
-              ),
-              // Баннер звонка/закреплённого сообщения — раньше был частью
-              // того же Column, что и список (и потому естественно оказывался
-              // ПОД Scaffold.appBar). Теперь список — самостоятельный
-              // full-height Positioned (см. выше, Expanded внутри Column
-              // больше не начинается ниже шапки — иначе список снова не
-              // заходил бы под неё, а весь смысл этой правки как раз в
-              // обратном). Баннеры поэтому — свой отдельный Positioned, НЕ
-              // влияющий на позицию списка, просто отступающий от верха на
-              // высоту шапки, чтобы не оказаться под её "таблетками".
-              if (!_isNotes || _pinnedMessageId != null)
+                // Шапка — плавающий оверлей ПОВЕРХ списка сообщений, тот же
+                // приём, что и у панели ввода снизу (см. ниже): три овальные
+                // "таблетки" (назад / профиль собеседника / звонок+меню), а
+                // всё вокруг них прозрачно — список сообщений просвечивает в
+                // промежутках между ними и по краям. Переключение между
+                // обычным видом, режимом выбора и поиском — тот же
+                // AnimatedSwitcher, что раньше жил в Scaffold.appBar, просто
+                // теперь как оверлей в body, а не отдельный слот Scaffold'а
+                // (тот менялся бы мгновенно без анимации при появлении/
+                // исчезновении — см. аналогичный фикс на экране чатов/
+                // настроек/профиля).
                 Positioned(
-                  top: MediaQuery.of(context).padding.top + 60,
+                  top: 0,
                   left: 0,
                   right: 0,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (!_isNotes)
-                        OngoingCallBanner(peerLogin: widget.peerLogin),
-                      if (_pinnedMessageId != null) _buildPinnedBanner(),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 280),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        transitionBuilder: (child, animation) {
+                          if (child.key == const ValueKey('search_header')) {
+                            return ClipRect(
+                              child: FractionallySizedBox(
+                                alignment: Alignment.centerRight,
+                                widthFactor: animation.value.clamp(0.0, 1.0),
+                                child: FadeTransition(
+                                  opacity: animation,
+                                  child: child,
+                                ),
+                              ),
+                            );
+                          }
+                          return FadeTransition(
+                            opacity: animation,
+                            child: child,
+                          );
+                        },
+                        child: _selectionMode
+                            ? _buildSelectionHeader()
+                            : _searchMode
+                            ? _buildSearchHeader()
+                            : _buildFloatingChatHeader(),
+                      ),
+                      // Панель управления голосовым/видео-сообщением — ПОД
+                      // обычной шапкой чата (см. ТЗ пользователя: не должна
+                      // перекрывать кнопку "назад", логин/статус/фото
+                      // собеседника и кнопку звонка) — растёт/схлопывается
+                      // здесь, шапка при этом остаётся на своём обычном месте.
+                      _buildMediaControlBar(),
                     ],
                   ),
                 ),
-              // Панель ввода — плавающий оверлей ПОВЕРХ списка сообщений
-              // (см. ТЗ пользователя: список должен быть на всю высоту,
-              // сообщения "проплывают" под панелью, а не упираются в неё
-              // как в соседа по Column). Непрозрачна тут только сама
-              // овальная "таблетка" (Container с AppColors.surface внутри
-              // SafeArea ниже) — ни у этого Positioned, ни у Column внутри
-              // него, ни у зазора-спейсера своего фона нет вообще, так что
-              // в промежутках (по бокам таблетки, и особенно в самом
-              // зазоре) список снизу просвечивает.
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (!_composerBlocked && !_searchMode)
-                      _buildComposerBanner(),
-                    SafeArea(
-                      key: _composerAreaKey,
-                      top: false,
-                      bottom: false,
-                      child: _searchMode
-                          ? _buildSearchControlPanel()
-                          : Padding(
-                              padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: AppColors.surface,
-                                  borderRadius: BorderRadius.circular(24),
-                                ),
-                                // right больше left — скрепка/микрофон/камера
-                                // сидели слишком близко к правому краю экрана (см.
-                                // ТЗ пользователя), сдвигаем их левее без смещения
-                                // иконки эмодзи слева.
-                                padding: const EdgeInsets.only(
-                                  left: 2,
-                                  right: 8,
-                                ),
-                                // Высота считается явно (см. _composerHeight)
-                                // и анимируется через AnimatedContainer — без
-                                // явного числа пилюля-контейнер просто
-                                // shrink-wrap'ился бы под текущий Row, а
-                                // строка "в покое"/записи/блокировки имели бы
-                                // РАЗНУЮ натуральную высоту и переключение
-                                // между ними давало бы мгновенный скачок без
-                                // анимации. AnimatedContainer нужен ИМЕННО
-                                // для роста/сжатия при печати многострочного
-                                // текста (см. ТЗ пользователя "Enter — перенос
-                                // строки") — переключение blocked/recording
-                                // само по себе всё так же держит одну и ту же
-                                // _composerBaseHeight, 3D-переворот
-                                // (_FlipSwitcher) для НИХ по-прежнему видит
-                                // константную высоту с обеих сторон.
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 140),
-                                  curve: Curves.easeOut,
-                                  height: _composerHeight,
-                                  child: _FlipSwitcher(
-                                    state: _composerBlocked,
-                                    child: _composerBlocked
-                                        ? Center(
-                                            child: Padding(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 16,
+                // Баннер звонка/закреплённого сообщения — раньше был частью
+                // того же Column, что и список (и потому естественно оказывался
+                // ПОД Scaffold.appBar). Теперь список — самостоятельный
+                // full-height Positioned (см. выше, Expanded внутри Column
+                // больше не начинается ниже шапки — иначе список снова не
+                // заходил бы под неё, а весь смысл этой правки как раз в
+                // обратном). Баннеры поэтому — свой отдельный Positioned, НЕ
+                // влияющий на позицию списка, просто отступающий от верха на
+                // высоту шапки, чтобы не оказаться под её "таблетками".
+                if (!_isNotes || _pinnedMessageId != null)
+                  Positioned(
+                    top: MediaQuery.of(context).padding.top + 60,
+                    left: 0,
+                    right: 0,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (!_isNotes)
+                          OngoingCallBanner(peerLogin: widget.peerLogin),
+                        if (_pinnedMessageId != null) _buildPinnedBanner(),
+                      ],
+                    ),
+                  ),
+                // Панель ввода — плавающий оверлей ПОВЕРХ списка сообщений
+                // (см. ТЗ пользователя: список должен быть на всю высоту,
+                // сообщения "проплывают" под панелью, а не упираются в неё
+                // как в соседа по Column). Непрозрачна тут только сама
+                // овальная "таблетка" (Container с AppColors.surface внутри
+                // SafeArea ниже) — ни у этого Positioned, ни у Column внутри
+                // него, ни у зазора-спейсера своего фона нет вообще, так что
+                // в промежутках (по бокам таблетки, и особенно в самом
+                // зазоре) список снизу просвечивает.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!_composerBlocked && !_searchMode)
+                        _buildComposerBanner(),
+                      SafeArea(
+                        key: _composerAreaKey,
+                        top: false,
+                        bottom: false,
+                        child: _searchMode
+                            ? _buildSearchControlPanel()
+                            : Padding(
+                                padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: AppColors.surface,
+                                    borderRadius: BorderRadius.circular(24),
+                                  ),
+                                  // right больше left — скрепка/микрофон/камера
+                                  // сидели слишком близко к правому краю экрана (см.
+                                  // ТЗ пользователя), сдвигаем их левее без смещения
+                                  // иконки эмодзи слева.
+                                  padding: const EdgeInsets.only(
+                                    left: 2,
+                                    right: 8,
+                                  ),
+                                  // Высота считается явно (см. _composerHeight)
+                                  // и анимируется через AnimatedContainer — без
+                                  // явного числа пилюля-контейнер просто
+                                  // shrink-wrap'ился бы под текущий Row, а
+                                  // строка "в покое"/записи/блокировки имели бы
+                                  // РАЗНУЮ натуральную высоту и переключение
+                                  // между ними давало бы мгновенный скачок без
+                                  // анимации. AnimatedContainer нужен ИМЕННО
+                                  // для роста/сжатия при печати многострочного
+                                  // текста (см. ТЗ пользователя "Enter — перенос
+                                  // строки") — переключение blocked/recording
+                                  // само по себе всё так же держит одну и ту же
+                                  // _composerBaseHeight, 3D-переворот
+                                  // (_FlipSwitcher) для НИХ по-прежнему видит
+                                  // константную высоту с обеих сторон.
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 140),
+                                    curve: Curves.easeOut,
+                                    height: _composerHeight,
+                                    child: _FlipSwitcher(
+                                      state: _composerBlocked,
+                                      child: _composerBlocked
+                                          ? Center(
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 16,
+                                                    ),
+                                                child: Text(
+                                                  _blockedComposerText,
+                                                  textAlign: TextAlign.center,
+                                                  maxLines: 2,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    color: AppColors.textMuted,
+                                                    fontSize: 12.5,
                                                   ),
-                                              child: Text(
-                                                _blockedComposerText,
-                                                textAlign: TextAlign.center,
-                                                maxLines: 2,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                  color: AppColors.textMuted,
-                                                  fontSize: 12.5,
                                                 ),
                                               ),
-                                            ),
-                                          )
-                                        :
-                                          // Stack вместо простого условного Row — поле ввода
-                                          // (со всем состоянием фокуса) теперь НЕ убирается
-                                          // из дерева на время записи, а просто визуально
-                                          // прячется через Offstage. Раньше при входе в
-                                          // запись TextField буквально исчезал из Row (его
-                                          // заменял таймер), а вместе с исчезновением
-                                          // сфокусированного виджета Flutter сам снимает с
-                                          // него фокус — отсюда самопроизвольно закрывалась
-                                          // клавиатура. Offstage держит сам виджет (и его
-                                          // FocusNode) смонтированным всё это время.
-                                          Stack(
-                                            children: [
-                                              Positioned.fill(
-                                                child: Offstage(
-                                                  offstage:
-                                                      _recPhase !=
-                                                      _RecPhase.idle,
-                                                  child: Row(
-                                                    children: [
-                                                      IconButton(
-                                                        padding:
-                                                            const EdgeInsets.all(
-                                                              6,
+                                            )
+                                          :
+                                            // Stack вместо простого условного Row — поле ввода
+                                            // (со всем состоянием фокуса) теперь НЕ убирается
+                                            // из дерева на время записи, а просто визуально
+                                            // прячется через Offstage. Раньше при входе в
+                                            // запись TextField буквально исчезал из Row (его
+                                            // заменял таймер), а вместе с исчезновением
+                                            // сфокусированного виджета Flutter сам снимает с
+                                            // него фокус — отсюда самопроизвольно закрывалась
+                                            // клавиатура. Offstage держит сам виджет (и его
+                                            // FocusNode) смонтированным всё это время.
+                                            Stack(
+                                              children: [
+                                                Positioned.fill(
+                                                  child: Offstage(
+                                                    offstage:
+                                                        _recPhase !=
+                                                        _RecPhase.idle,
+                                                    child: Row(
+                                                      children: [
+                                                        IconButton(
+                                                          padding:
+                                                              const EdgeInsets.all(
+                                                                6,
+                                                              ),
+                                                          constraints:
+                                                              const BoxConstraints(),
+                                                          visualDensity:
+                                                              VisualDensity
+                                                                  .compact,
+                                                          icon: _buildFlipIcon(
+                                                            stateKey:
+                                                                _emojiMode,
+                                                            icon: Icon(
+                                                              _emojiMode
+                                                                  ? Icons
+                                                                        .keyboard
+                                                                  : Icons
+                                                                        .emoji_emotions_outlined,
+                                                              color: AppColors
+                                                                  .textMuted,
                                                             ),
-                                                        constraints:
-                                                            const BoxConstraints(),
-                                                        visualDensity:
-                                                            VisualDensity
-                                                                .compact,
-                                                        icon: _buildFlipIcon(
-                                                          stateKey: _emojiMode,
-                                                          icon: Icon(
-                                                            _emojiMode
-                                                                ? Icons.keyboard
-                                                                : Icons
-                                                                      .emoji_emotions_outlined,
-                                                            color: AppColors
-                                                                .textMuted,
                                                           ),
-                                                        ),
-                                                        onPressed: () {
-                                                          if (_emojiMode) {
-                                                            // Настоящая клавиатура ещё не
-                                                            // поднялась — держим reserved на
-                                                            // месте (_awaitingKeyboardOpen, см.
-                                                            // build()), пока realInset
-                                                            // органически не догонит.
-                                                            _awaitingKeyboardOpen =
-                                                                true;
-                                                            setState(
-                                                              () => _emojiMode =
-                                                                  false,
+                                                          onPressed: () {
+                                                            DebugLog.log(
+                                                              'Chat emoji-icon tap, emojiMode was $_emojiMode',
                                                             );
-                                                            _textFocusNode
-                                                                .requestFocus();
-                                                          } else {
-                                                            _textFocusNode
-                                                                .unfocus();
-                                                            setState(
-                                                              () => _emojiMode =
-                                                                  true,
-                                                            );
-                                                          }
-                                                        },
-                                                      ),
-                                                      const SizedBox(width: 2),
-                                                      Expanded(
-                                                        // Растущее поле —
-                                                        // высота ВСЕЙ пилюли
-                                                        // (см. AnimatedContainer
-                                                        // вместо прежнего
-                                                        // фиксированного
-                                                        // SizedBox(height: 56)
-                                                        // выше) теперь считается
-                                                        // из _composerHeight и
-                                                        // растёт вместе с
-                                                        // количеством строк —
-                                                        // без этого TextField
-                                                        // с minLines/maxLines
-                                                        // просто обрезался бы
-                                                        // родительским фиксом
-                                                        // высоты, как уже было
-                                                        // с прошлым заходом
-                                                        // (expands внутри
-                                                        // фиксированного бокса
-                                                        // на самом деле не мог
-                                                        // расти и визуально
-                                                        // ломался при переносе
-                                                        // строки).
-                                                        child: TextField(
-                                                          controller:
-                                                              _textController,
-                                                          focusNode:
-                                                              _textFocusNode,
-                                                          textCapitalization:
-                                                              TextCapitalization
-                                                                  .sentences,
-                                                          keyboardType:
-                                                              TextInputType
-                                                                  .multiline,
-                                                          textInputAction:
-                                                              TextInputAction
-                                                                  .newline,
-                                                          minLines: 1,
-                                                          maxLines:
-                                                              1 +
-                                                              _composerMaxExtraLines,
-                                                          textAlignVertical:
-                                                              TextAlignVertical
-                                                                  .center,
-                                                          onTap: () {
                                                             if (_emojiMode) {
+                                                              // Настоящая клавиатура ещё не
+                                                              // поднялась — держим reserved на
+                                                              // месте (_awaitingKeyboardOpen, см.
+                                                              // build()), пока realInset
+                                                              // органически не догонит.
+                                                              _awaitingKeyboardOpen =
+                                                                  true;
                                                               setState(
                                                                 () =>
                                                                     _emojiMode =
                                                                         false,
                                                               );
+                                                              _textFocusNode
+                                                                  .requestFocus();
+                                                            } else {
+                                                              _textFocusNode
+                                                                  .unfocus();
+                                                              setState(
+                                                                () =>
+                                                                    _emojiMode =
+                                                                        true,
+                                                              );
                                                             }
                                                           },
-                                                          style: TextStyle(
-                                                            color: AppColors
-                                                                .textPrimary,
-                                                          ),
-                                                          contentInsertionConfiguration:
-                                                              ContentInsertionConfiguration(
-                                                                onContentInserted:
-                                                                    _handleContentInserted,
-                                                              ),
-                                                          decoration: InputDecoration(
-                                                            hintText: tr(
-                                                              'chat.messageHint',
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 2,
+                                                        ),
+                                                        Expanded(
+                                                          // Растущее поле —
+                                                          // высота ВСЕЙ пилюли
+                                                          // (см. AnimatedContainer
+                                                          // вместо прежнего
+                                                          // фиксированного
+                                                          // SizedBox(height: 56)
+                                                          // выше) теперь считается
+                                                          // из _composerHeight и
+                                                          // растёт вместе с
+                                                          // количеством строк —
+                                                          // без этого TextField
+                                                          // с minLines/maxLines
+                                                          // просто обрезался бы
+                                                          // родительским фиксом
+                                                          // высоты, как уже было
+                                                          // с прошлым заходом
+                                                          // (expands внутри
+                                                          // фиксированного бокса
+                                                          // на самом деле не мог
+                                                          // расти и визуально
+                                                          // ломался при переносе
+                                                          // строки).
+                                                          child: TextField(
+                                                            controller:
+                                                                _textController,
+                                                            focusNode:
+                                                                _textFocusNode,
+                                                            textCapitalization:
+                                                                TextCapitalization
+                                                                    .sentences,
+                                                            keyboardType:
+                                                                TextInputType
+                                                                    .multiline,
+                                                            textInputAction:
+                                                                TextInputAction
+                                                                    .newline,
+                                                            minLines: 1,
+                                                            maxLines:
+                                                                1 +
+                                                                _composerMaxExtraLines,
+                                                            textAlignVertical:
+                                                                TextAlignVertical
+                                                                    .center,
+                                                            onTap: () {
+                                                              if (_emojiMode) {
+                                                                // Диагностика "пустая панель эмодзи" —
+                                                                // ЭТА ветка, в отличие от кнопки-иконки
+                                                                // выше, НЕ выставляет
+                                                                // _awaitingKeyboardOpen: реальный фокус
+                                                                // на поле придёт сам собой (тап уже
+                                                                // произошёл по нему), но если он
+                                                                // почему-то задержится — emojiReserved
+                                                                // в build() успеет схлопнуться в 0 ещё
+                                                                // до появления настоящей клавиатуры.
+                                                                DebugLog.log(
+                                                                  'Chat TextField onTap: emojiMode true->false '
+                                                                  '(без _awaitingKeyboardOpen)',
+                                                                );
+                                                                setState(
+                                                                  () =>
+                                                                      _emojiMode =
+                                                                          false,
+                                                                );
+                                                              }
+                                                            },
+                                                            style: TextStyle(
+                                                              color: AppColors
+                                                                  .textPrimary,
                                                             ),
-                                                            border: InputBorder
-                                                                .none,
-                                                            isDense: true,
-                                                            contentPadding:
-                                                                const EdgeInsets.symmetric(
-                                                                  vertical: 10,
+                                                            contentInsertionConfiguration:
+                                                                ContentInsertionConfiguration(
+                                                                  onContentInserted:
+                                                                      _handleContentInserted,
                                                                 ),
-                                                            hintStyle: TextStyle(
+                                                            decoration: InputDecoration(
+                                                              hintText: tr(
+                                                                'chat.messageHint',
+                                                              ),
+                                                              border:
+                                                                  InputBorder
+                                                                      .none,
+                                                              isDense: true,
+                                                              contentPadding:
+                                                                  const EdgeInsets.symmetric(
+                                                                    vertical:
+                                                                        10,
+                                                                  ),
+                                                              hintStyle: TextStyle(
+                                                                color: AppColors
+                                                                    .textMuted,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 2,
+                                                        ),
+                                                        if (_editingMessage !=
+                                                            null)
+                                                          IconButton(
+                                                            padding:
+                                                                const EdgeInsets.all(
+                                                                  6,
+                                                                ),
+                                                            constraints:
+                                                                const BoxConstraints(),
+                                                            visualDensity:
+                                                                VisualDensity
+                                                                    .compact,
+                                                            icon: Icon(
+                                                              Icons.send,
+                                                              color: AppColors
+                                                                  .primary,
+                                                            ),
+                                                            onPressed: _hasText
+                                                                ? _handleSendPressed
+                                                                : null,
+                                                          )
+                                                        else if (_hasText ||
+                                                            (_forwardingTexts
+                                                                    ?.isNotEmpty ??
+                                                                false))
+                                                          IconButton(
+                                                            padding:
+                                                                const EdgeInsets.all(
+                                                                  6,
+                                                                ),
+                                                            constraints:
+                                                                const BoxConstraints(),
+                                                            visualDensity:
+                                                                VisualDensity
+                                                                    .compact,
+                                                            icon: Icon(
+                                                              Icons.send,
+                                                              color: AppColors
+                                                                  .primary,
+                                                            ),
+                                                            onPressed:
+                                                                _handleSendPressed,
+                                                          )
+                                                        else ...[
+                                                          IconButton(
+                                                            key:
+                                                                _attachButtonKey,
+                                                            padding:
+                                                                const EdgeInsets.all(
+                                                                  6,
+                                                                ),
+                                                            constraints:
+                                                                const BoxConstraints(),
+                                                            visualDensity:
+                                                                VisualDensity
+                                                                    .compact,
+                                                            icon: Icon(
+                                                              Icons.attach_file,
                                                               color: AppColors
                                                                   .textMuted,
                                                             ),
+                                                            onPressed:
+                                                                _openAttachmentSheet,
                                                           ),
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 2),
-                                                      if (_editingMessage !=
-                                                          null)
-                                                        IconButton(
-                                                          padding:
-                                                              const EdgeInsets.all(
-                                                                6,
-                                                              ),
-                                                          constraints:
-                                                              const BoxConstraints(),
-                                                          visualDensity:
-                                                              VisualDensity
-                                                                  .compact,
-                                                          icon: Icon(
-                                                            Icons.send,
-                                                            color: AppColors
-                                                                .primary,
-                                                          ),
-                                                          onPressed: _hasText
-                                                              ? _handleSendPressed
-                                                              : null,
-                                                        )
-                                                      else if (_hasText ||
-                                                          (_forwardingTexts
-                                                                  ?.isNotEmpty ??
-                                                              false))
-                                                        IconButton(
-                                                          padding:
-                                                              const EdgeInsets.all(
-                                                                6,
-                                                              ),
-                                                          constraints:
-                                                              const BoxConstraints(),
-                                                          visualDensity:
-                                                              VisualDensity
-                                                                  .compact,
-                                                          icon: Icon(
-                                                            Icons.send,
-                                                            color: AppColors
-                                                                .primary,
-                                                          ),
-                                                          onPressed:
-                                                              _handleSendPressed,
-                                                        )
-                                                      else ...[
-                                                        IconButton(
-                                                          key: _attachButtonKey,
-                                                          padding:
-                                                              const EdgeInsets.all(
-                                                                6,
-                                                              ),
-                                                          constraints:
-                                                              const BoxConstraints(),
-                                                          visualDensity:
-                                                              VisualDensity
-                                                                  .compact,
-                                                          icon: Icon(
-                                                            Icons.attach_file,
-                                                            color: AppColors
-                                                                .textMuted,
-                                                          ),
-                                                          onPressed:
-                                                              _openAttachmentSheet,
-                                                        ),
-                                                        _buildRecordControlButton(),
+                                                          _buildRecordControlButton(),
+                                                        ],
                                                       ],
-                                                    ],
+                                                    ),
                                                   ),
                                                 ),
-                                              ),
-                                              if (_recPhase != _RecPhase.idle)
-                                                // БЕЗ своего непрозрачного фона: Offstage
-                                                // выше уже полностью не рисует строку покоя
-                                                // (не просто прячет за чем-то, а не красит
-                                                // вообще), так что закрывать её отдельным
-                                                // Container(color:) не нужно — а он как раз
-                                                // и был багом со скруглением: его собственный
-                                                // ПРЯМОУГОЛЬНЫЙ непрозрачный фон перекрывал
-                                                // скруглённые углы родительского Container'а
-                                                // (тот их не клипует под себя автоматически),
-                                                // отсюда и "квадратные" углы да "выпуклые"
-                                                // стенки на скриншотах.
-                                                Positioned.fill(
-                                                  child: Row(
-                                                    children:
-                                                        _buildRecordingComposerChildren(),
+                                                if (_recPhase != _RecPhase.idle)
+                                                  // БЕЗ своего непрозрачного фона: Offstage
+                                                  // выше уже полностью не рисует строку покоя
+                                                  // (не просто прячет за чем-то, а не красит
+                                                  // вообще), так что закрывать её отдельным
+                                                  // Container(color:) не нужно — а он как раз
+                                                  // и был багом со скруглением: его собственный
+                                                  // ПРЯМОУГОЛЬНЫЙ непрозрачный фон перекрывал
+                                                  // скруглённые углы родительского Container'а
+                                                  // (тот их не клипует под себя автоматически),
+                                                  // отсюда и "квадратные" углы да "выпуклые"
+                                                  // стенки на скриншотах.
+                                                  Positioned.fill(
+                                                    child: Row(
+                                                      children:
+                                                          _buildRecordingComposerChildren(),
+                                                    ),
                                                   ),
-                                                ),
-                                            ],
-                                          ),
+                                              ],
+                                            ),
+                                    ),
                                   ),
                                 ),
                               ),
+                      ),
+                      // Небольшой зазор до самого низа экрана — без него панель
+                      // ввода (и особенно кнопка записи) сидит впритык к краю, и
+                      // при попытке провести пальцем вверх до замочка (запись
+                      // голосового/видео) вместо этого срабатывает системный
+                      // жест "домой", перехватывающий тачи у самого края экрана.
+                      // Нужен только когда СНИЗУ больше ничего нет — см.
+                      // gapHeight выше: плавно схлопывается в 0, пока клавиатура
+                      // или эмодзи-панель занимают низ экрана. Обычный (не Animated)
+                      // SizedBox — gapHeight уже сама плавная функция живого
+                      // realInset, кадр в кадр с системной анимацией клавиатуры;
+                      // отдельная анимация поверх нужна не была бы даже раньше,
+                      // а теперь ещё и создавала бы ту самую рассинхронизацию
+                      // (см. её разбор у объявления restGap/gapHeight выше).
+                      //
+                      // Системный отступ до жестовой зоны добавляем СВОИМИ
+                      // руками (через viewPadding, а не SafeArea) и тоже только
+                      // в состоянии покоя: MediaQuery.padding у НАСТОЯЩЕЙ
+                      // клавиатуры автоматически зануляется (клавиатура уже
+                      // "занимает" эту зону), а у нашей панели эмодзи — нет,
+                      // ведь для ОС это просто обычный контент, а не системная
+                      // клавиатура. SafeArea использует именно padding, поэтому
+                      // при переключении на эмодзи-панель у неё этот отступ
+                      // внезапно возвращался — ровно то самое "пустое место",
+                      // из-за которого высота панели эмодзи расходилась с
+                      // высотой настоящей клавиатуры.
+                      SizedBox(height: gapHeight),
+                      // Резерв места ТОЛЬКО под эмодзи-панель (см. emojiReserved
+                      // выше) — настоящую клавиатуру больше не нужно ни
+                      // отслеживать, ни резервировать здесь вообще: body уже
+                      // физически сжался вместе с ней (resizeToAvoidBottomInset),
+                      // и вся эта Positioned(bottom: 0) панель ввода сама
+                      // естественно оказывается прямо над клавиатурой, без
+                      // какого-либо отдельного Container/анимации поверх —
+                      // именно та "жёсткая сцепка", которую попросил
+                      // пользователь.
+                      //
+                      // Пока настоящая клавиатура поднята (keyboardVisible),
+                      // держим FullEmojiPicker уже смонтированным, просто
+                      // невидимым (Offstage) — он успевает построить свою
+                      // разметку заранее, пока пользователь печатает, и тап
+                      // по иконке эмодзи просто переключает видимость вместо
+                      // того чтобы строить панель с нуля в этот момент
+                      // (жалоба пользователя на заметную задержку первого
+                      // показа). Не монтируем его вообще, когда клавиатуры
+                      // тоже нет — незачем тратить на это первый кадр
+                      // самого экрана чата.
+                      // Обычный (не Animated) Container, пока в игре
+                      // настоящая клавиатура (realInset>0 ИЛИ
+                      // _awaitingKeyboardOpen — см. её объяснение выше) —
+                      // emojiReserved в этом режиме уже сам по себе плавная,
+                      // покадровая функция realInset, синхронная с системной
+                      // анимацией клавиатуры один в один. Обернуть её ЕЩЁ и
+                      // в AnimatedContainer означало бы заново наступить на
+                      // грабли этой же сессии (см. gapHeight/restGap выше):
+                      // AnimatedContainer сам плавно едет к КАЖДОМУ новому
+                      // целевому значению отдельные 220мс, то есть гнался бы
+                      // за уже плавной кривой — родная жалоба пользователя
+                      // "панель сообщения куда-то прыгает при нажатии на
+                      // эмодзи". А вот для перехода эмодзи-панель <-> состояние
+                      // покоя (настоящая клавиатура вообще не участвует,
+                      // realInset весь переход равен 0 — синхронизировать
+                      // не с чем) собственная 220мс анимация — единственный
+                      // способ показать это плавно, не рывком.
+                      (_awaitingKeyboardOpen || effectiveInset > 0)
+                          ? Container(
+                              height: emojiReserved,
+                              color: AppColors.surface,
+                              child: _buildEmojiPickerChild(keyboardVisible),
+                            )
+                          : AnimatedContainer(
+                              duration: const Duration(milliseconds: 220),
+                              curve: Curves.easeOut,
+                              height: emojiReserved,
+                              color: AppColors.surface,
+                              child: _buildEmojiPickerChild(keyboardVisible),
                             ),
-                    ),
-                    // Небольшой зазор до самого низа экрана — без него панель
-                    // ввода (и особенно кнопка записи) сидит впритык к краю, и
-                    // при попытке провести пальцем вверх до замочка (запись
-                    // голосового/видео) вместо этого срабатывает системный
-                    // жест "домой", перехватывающий тачи у самого края экрана.
-                    // Нужен только когда СНИЗУ больше ничего нет — см.
-                    // gapHeight выше: плавно схлопывается в 0, пока клавиатура
-                    // или эмодзи-панель занимают низ экрана. Обычный (не Animated)
-                    // SizedBox — gapHeight уже сама плавная функция живого
-                    // realInset, кадр в кадр с системной анимацией клавиатуры;
-                    // отдельная анимация поверх нужна не была бы даже раньше,
-                    // а теперь ещё и создавала бы ту самую рассинхронизацию
-                    // (см. её разбор у объявления restGap/gapHeight выше).
-                    //
-                    // Системный отступ до жестовой зоны добавляем СВОИМИ
-                    // руками (через viewPadding, а не SafeArea) и тоже только
-                    // в состоянии покоя: MediaQuery.padding у НАСТОЯЩЕЙ
-                    // клавиатуры автоматически зануляется (клавиатура уже
-                    // "занимает" эту зону), а у нашей панели эмодзи — нет,
-                    // ведь для ОС это просто обычный контент, а не системная
-                    // клавиатура. SafeArea использует именно padding, поэтому
-                    // при переключении на эмодзи-панель у неё этот отступ
-                    // внезапно возвращался — ровно то самое "пустое место",
-                    // из-за которого высота панели эмодзи расходилась с
-                    // высотой настоящей клавиатуры.
-                    SizedBox(height: gapHeight),
-                    // Резерв места ТОЛЬКО под эмодзи-панель (см. emojiReserved
-                    // выше) — настоящую клавиатуру больше не нужно ни
-                    // отслеживать, ни резервировать здесь вообще: body уже
-                    // физически сжался вместе с ней (resizeToAvoidBottomInset),
-                    // и вся эта Positioned(bottom: 0) панель ввода сама
-                    // естественно оказывается прямо над клавиатурой, без
-                    // какого-либо отдельного Container/анимации поверх —
-                    // именно та "жёсткая сцепка", которую попросил
-                    // пользователь.
-                    //
-                    // Пока настоящая клавиатура поднята (keyboardVisible),
-                    // держим FullEmojiPicker уже смонтированным, просто
-                    // невидимым (Offstage) — он успевает построить свою
-                    // разметку заранее, пока пользователь печатает, и тап
-                    // по иконке эмодзи просто переключает видимость вместо
-                    // того чтобы строить панель с нуля в этот момент
-                    // (жалоба пользователя на заметную задержку первого
-                    // показа). Не монтируем его вообще, когда клавиатуры
-                    // тоже нет — незачем тратить на это первый кадр
-                    // самого экрана чата.
-                    // Обычный (не Animated) Container, пока в игре
-                    // настоящая клавиатура (realInset>0 ИЛИ
-                    // _awaitingKeyboardOpen — см. её объяснение выше) —
-                    // emojiReserved в этом режиме уже сам по себе плавная,
-                    // покадровая функция realInset, синхронная с системной
-                    // анимацией клавиатуры один в один. Обернуть её ЕЩЁ и
-                    // в AnimatedContainer означало бы заново наступить на
-                    // грабли этой же сессии (см. gapHeight/restGap выше):
-                    // AnimatedContainer сам плавно едет к КАЖДОМУ новому
-                    // целевому значению отдельные 220мс, то есть гнался бы
-                    // за уже плавной кривой — родная жалоба пользователя
-                    // "панель сообщения куда-то прыгает при нажатии на
-                    // эмодзи". А вот для перехода эмодзи-панель <-> состояние
-                    // покоя (настоящая клавиатура вообще не участвует,
-                    // realInset весь переход равен 0 — синхронизировать
-                    // не с чем) собственная 220мс анимация — единственный
-                    // способ показать это плавно, не рывком.
-                    (_awaitingKeyboardOpen || realInset > 0)
-                        ? Container(
-                            height: emojiReserved,
-                            color: AppColors.surface,
-                            child: _buildEmojiPickerChild(keyboardVisible),
-                          )
-                        : AnimatedContainer(
-                            duration: const Duration(milliseconds: 220),
-                            curve: Curves.easeOut,
-                            height: emojiReserved,
-                            color: AppColors.surface,
-                            child: _buildEmojiPickerChild(keyboardVisible),
-                          ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              if (_recActiveKind == _RecKind.video)
-                Positioned.fill(child: _buildVideoLivePreview()),
-              if (_recPhase == _RecPhase.dragging)
-                Positioned(
-                  right: 18,
-                  // Раньше — фиксированный bottom: 76, посчитанный под
-                  // состояние покоя (клавиатура закрыта). При поднятой
-                  // клавиатуре сама панель ввода (и кнопка микрофона/
-                  // камеры на ней) уезжает вверх намного больше, чем на
-                  // 76px, а замочек — нет, оставаясь под клавиатурой (см.
-                  // жалобу пользователя). Тот же приём, что уже есть у
-                  // кнопки переворота камеры чуть ниже — меряем РЕАЛЬНЫЙ
-                  // верх панели ввода через RenderBox, он уже учитывает
-                  // любое её текущее положение (клавиатура/эмодзи-панель/
-                  // баннер ответа), а не жёстко фиксированное число.
-                  top:
-                      (_composerTopYInBodyStack() ??
-                          MediaQuery.of(context).size.height - 76) -
-                      64 -
-                      10,
-                  child: _buildRecordingLockIndicator(),
-                ),
-              if (_recActiveKind == _RecKind.video &&
-                  _availableCameras.length > 1)
-                Positioned(
-                  left: 12,
-                  top:
-                      (_composerTopYInBodyStack() ??
-                          MediaQuery.of(context).size.height - 76) -
-                      _flipCameraButtonSize -
-                      10,
-                  child: _buildFlipCameraButton(),
-                ),
-            ],
+                if (_recActiveKind == _RecKind.video)
+                  Positioned.fill(child: _buildVideoLivePreview()),
+                if (_recPhase == _RecPhase.dragging)
+                  Positioned(
+                    right: 18,
+                    // Раньше — фиксированный bottom: 76, посчитанный под
+                    // состояние покоя (клавиатура закрыта). При поднятой
+                    // клавиатуре сама панель ввода (и кнопка микрофона/
+                    // камеры на ней) уезжает вверх намного больше, чем на
+                    // 76px, а замочек — нет, оставаясь под клавиатурой (см.
+                    // жалобу пользователя). Тот же приём, что уже есть у
+                    // кнопки переворота камеры чуть ниже — меряем РЕАЛЬНЫЙ
+                    // верх панели ввода через RenderBox, он уже учитывает
+                    // любое её текущее положение (клавиатура/эмодзи-панель/
+                    // баннер ответа), а не жёстко фиксированное число.
+                    top:
+                        (_composerTopYInBodyStack() ??
+                            MediaQuery.of(context).size.height - 76) -
+                        64 -
+                        10,
+                    child: _buildRecordingLockIndicator(),
+                  ),
+                if (_recActiveKind == _RecKind.video &&
+                    _availableCameras.length > 1)
+                  Positioned(
+                    left: 12,
+                    top:
+                        (_composerTopYInBodyStack() ??
+                            MediaQuery.of(context).size.height - 76) -
+                        _flipCameraButtonSize -
+                        10,
+                    child: _buildFlipCameraButton(),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
