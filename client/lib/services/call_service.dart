@@ -74,6 +74,13 @@ class CallService {
   RTCPeerConnection? _peerConnection;
   MediaStream? localStream;
   MediaStreamTrack? _videoTrack;
+  // Фронтальная — камера по умолчанию (см. toggleVideo: facingMode: 'user'
+  // при первом включении видео за звонок) — используется и для решения,
+  // какую камеру запрашивать при следующем switchCamera(), и как источник
+  // состояния для подсветки кнопки разворота на CallScreen (ТЗ
+  // пользователя: по умолчанию не подсвечена, подсвечивается после тапа).
+  bool _usingFrontCamera = true;
+  bool get usingFrontCamera => _usingFrontCamera;
 
   String? _callId;
   String? _peerDeviceId;
@@ -867,6 +874,7 @@ class CallService {
     localStream = null;
     _videoTrack?.stop();
     _videoTrack = null;
+    _usingFrontCamera = true;
     _peerConnection?.close();
     _peerConnection = null;
     _pendingOfferSdp = null;
@@ -990,6 +998,7 @@ class CallService {
         'video': {'facingMode': 'user'},
       });
       _videoTrack = videoStream.getVideoTracks().first;
+      _usingFrontCamera = true;
       localStream?.addTrack(_videoTrack!);
       await _peerConnection?.addTrack(_videoTrack!, localStream!);
       // addTrack сам вызовет onRenegotiationNeeded — отдельно дожимать не нужно.
@@ -1002,30 +1011,61 @@ class CallService {
   }
 
   // Реальный кейс с эмулятора (см. debug_log + logcat): быстрый повторный
-  // тап по кнопке разворота камеры, пока предыдущий Helper.switchCamera()
-  // ещё не отработал — приводит к "switchCamera(): Switching camera
-  // failed" в logcat, а следом ВЕСЬ процесс намертво зависает (ANR
-  // "Oshinobu isn't responding", подтверждено — даже VM Service перестаёт
-  // отвечать на getIsolate для основного изолята, значит завис нативный
-  // слой, а не только Dart). Судя по всему — гонка внутри нативного
-  // Camera2-слоя flutter_webrtc при повторном открытии камеры поверх ещё
-  // не закрытой предыдущей сессии. Гвардом не чиним саму гонку в плагине,
-  // но перестаём её провоцировать — второй вызов, пока первый ещё не
-  // завершился, просто игнорируем.
+  // тап по кнопке разворота камеры, пока предыдущее переключение ещё не
+  // отработало, — раньше приводило к гонке в нативном Camera2-слое и
+  // самим зависанием всего процесса (ANR). Гвардом саму гонку внутри
+  // плагина не чиним, но перестаём её провоцировать — второй вызов, пока
+  // первый ещё не завершился, просто игнорируем.
   bool _switchingCamera = false;
 
-  /// Переключает фронтальную/тыловую камеру на уже открытой видео-дорожке
-  /// (flutter_webrtc сам умеет это через нативный слой — ничего заново
-  /// захватывать/пересоздавать не нужно). Имеет смысл вызывать, только
-  /// пока видео включено — если дорожки ещё нет, тихо ничего не делает.
+  /// Переключает фронтальную/тыловую камеру.
+  ///
+  /// Раньше — Helper.switchCamera(track) (штатный способ flutter_webrtc,
+  /// без пересоздания дорожки). На практике (см. debug_log с эмулятора)
+  /// это оказалось ненадёжно: САМЫЙ ПЕРВЫЙ вызов за звонок отрабатывал
+  /// нормально, а КАЖДЫЙ последующий валился с "Switching camera failed"
+  /// за 1-2мс, то есть плагин даже не пытался всерьёз открыть камеру —
+  /// похоже на баг во внутреннем состоянии плагина (список устройств/
+  /// текущий выбор), а не на нехватку самой камеры. Теперь вместо
+  /// "переключить" делаем "остановить старую дорожку и запросить новую" —
+  /// тот же самый вызов getUserMedia(facingMode:), что уже используется
+  /// при первом включении видео (см. toggleVideo), только на дорожку с
+  /// ДРУГИМ facingMode. sender.replaceTrack() подменяет исходящую дорожку
+  /// в уже согласованном соединении БЕЗ renegotiation (в отличие от
+  /// addTrack/removeTrack) — собеседник просто увидит новый кадр в том же
+  /// видеопотоке.
   Future<void> switchCamera() async {
-    final track = _videoTrack;
-    if (track == null || _switchingCamera) return;
+    final oldTrack = _videoTrack;
+    if (oldTrack == null || _switchingCamera || _peerConnection == null) {
+      return;
+    }
     _switchingCamera = true;
-    DebugLog.log('CallService switchCamera() start');
+    final nextFacingMode = _usingFrontCamera ? 'environment' : 'user';
+    DebugLog.log(
+      'CallService switchCamera() start, currentlyFront=$_usingFrontCamera '
+      '-> requesting facingMode=$nextFacingMode',
+    );
     try {
-      await Helper.switchCamera(track);
-      DebugLog.log('CallService switchCamera() done');
+      final newStream = await navigator.mediaDevices.getUserMedia({
+        'video': {'facingMode': nextFacingMode},
+      });
+      final newTrack = newStream.getVideoTracks().first;
+
+      final senders = await _peerConnection!.getSenders();
+      for (final sender in senders) {
+        if (sender.track?.id == oldTrack.id) {
+          await sender.replaceTrack(newTrack);
+        }
+      }
+
+      await localStream?.removeTrack(oldTrack);
+      await localStream?.addTrack(newTrack);
+      oldTrack.stop();
+      _videoTrack = newTrack;
+      _usingFrontCamera = !_usingFrontCamera;
+      DebugLog.log(
+        'CallService switchCamera() done, nowFront=$_usingFrontCamera',
+      );
     } catch (e) {
       DebugLog.log('CallService switchCamera() FAILED error=$e');
     } finally {

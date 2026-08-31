@@ -394,10 +394,18 @@ class _CallScreenState extends State<CallScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       if (_call.videoEnabled) ...[
+                        // По умолчанию (фронтальная камера, как и при
+                        // самом первом включении видео) — БЕЗ подсветки;
+                        // подсвечивается только после того, как реально
+                        // развернули на тыловую (см. ТЗ пользователя).
                         _controlButton(
                           icon: Icons.cameraswitch,
-                          highlighted: true,
-                          onTap: () => _call.switchCamera(),
+                          highlighted: !_call.usingFrontCamera,
+                          onTap: () async {
+                            await _call.switchCamera();
+                            _syncLocalRenderer();
+                            if (mounted) setState(() {});
+                          },
                         ),
                         const SizedBox(height: 8),
                       ],
