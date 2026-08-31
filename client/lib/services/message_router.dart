@@ -696,6 +696,26 @@ class MessageRouter {
     await prefs.remove(_failureCountKey(senderDeviceId));
   }
 
+  /// Публичные обёртки над _onDecryptFailure/_clearFailureCount — см.
+  /// CallService._decryptCallSignal. Раньше сигналы звонка сознательно НЕ
+  /// участвовали в этом счётчике (комментарий там объяснял: "сессия общая
+  /// с обычными сообщениями, самолечение уже покрыто здесь"). На практике
+  /// это предположение подвело: реальный кейс — рассинхронизированная
+  /// сессия ловится именно на call_offer (SecretBoxAuthenticationError,
+  /// "wrong MAC"), а если между этими двумя устройствами в этот момент
+  /// почти не идёт обычная переписка (например, тестируют именно звонки),
+  /// счётчик обычных сообщений никогда не набирает порог — звонок
+  /// оказывается обречён биться в мёртвую сессию бесконечно, никакого
+  /// самолечения так и не происходит. Deliver-id тут всегда null — ack за
+  /// сам конверт call_offer уже отправлен раньше, безусловно, в
+  /// websocket_service.dart (см. комментарий там), второй раз это делать
+  /// не нужно.
+  static Future<void> reportSignalDecryptFailure(String senderDeviceId) =>
+      _onDecryptFailure(senderDeviceId, null);
+
+  static Future<void> reportSignalDecryptSuccess(String senderDeviceId) =>
+      _clearFailureCount(senderDeviceId);
+
   /// true, если пора сдаться и подтвердить эту доставку серверу, а не ждать
   /// снова. Первый раз просто запоминает момент — ничего не подтверждает,
   /// давая шанс гонке доставки разрешиться самой (см. _noSessionGiveUpDelay

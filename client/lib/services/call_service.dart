@@ -23,6 +23,7 @@ import '../storage/chat_store.dart';
 import '../storage/peer_account_store.dart';
 import '../storage/peer_identity_store.dart';
 import 'debug_log.dart';
+import 'message_router.dart';
 import 'peer_messenger.dart';
 import 'peer_profile_cache.dart';
 import 'pip_service.dart';
@@ -616,14 +617,19 @@ class CallService {
     }
   }
 
-  /// Обратная сторона _encryptCallSignal. В отличие от MessageRouter (см.
-  /// _onDecryptFailure там) НЕ заводит счётчик неудач/авто-сброс сессии на
-  /// сбойной расшифровке — сигналы звонка терпимы к потере одного кадра
-  /// (WebRTC и так рассчитан на потерю отдельных ICE-кандидатов), а если
-  /// сессия с этим устройством реально рассинхронизировалась — это та же
-  /// самая сессия, что и у обычных сообщений, и её самолечение (3 подряд
-  /// неудачи → session_reset) уже покрыто message_router.dart, отдельно
-  /// дублировать эту логику здесь незачем.
+  /// Обратная сторона _encryptCallSignal. Раньше НЕ заводила собственный
+  /// счётчик неудач/авто-сброс сессии — расчёт был на то, что сессия общая
+  /// с обычными сообщениями, и её самолечение (3 подряд неудачи →
+  /// session_reset, см. MessageRouter._onDecryptFailure) уже покрыто там.
+  /// На практике (реальный кейс — звонок не проходит, "не было экрана
+  /// звонка" на принимающей стороне) это предположение подвело: если между
+  /// собеседниками в этот момент почти не идёт обычная переписка (типично
+  /// как раз при тестировании звонков), счётчик текстовых сообщений
+  /// никогда не набирает порог — сессия остаётся мёртвой бесконечно, а
+  /// звонок каждый раз бьётся именно об неё. Теперь неудачи/успехи
+  /// расшифровки сигналов звонка тоже участвуют в ТОМ ЖЕ счётчике (см.
+  /// MessageRouter.reportSignalDecryptFailure/Success) — общая сессия,
+  /// значит и самолечение должно быть общим, откуда бы неудача ни пришла.
   Future<Map<String, dynamic>?> _decryptCallSignal(
     String senderDeviceId,
     Map<String, dynamic> envelope,
@@ -647,6 +653,7 @@ class CallService {
       final messageKey = await state.nextReceivingKey(envelope);
       final rawInner = await decryptMessage(messageKey, envelope);
       await SessionStore.saveState(senderDeviceId, state);
+      unawaited(MessageRouter.reportSignalDecryptSuccess(senderDeviceId));
       return jsonDecode(rawInner) as Map<String, dynamic>;
     } on AlreadyProcessedException catch (e) {
       DebugLog.log(
@@ -655,6 +662,7 @@ class CallService {
       return null;
     } catch (e) {
       DebugLog.log('CallService decrypt-FAILED from=$senderDeviceId error=$e');
+      unawaited(MessageRouter.reportSignalDecryptFailure(senderDeviceId));
       return null;
     }
   }
@@ -755,34 +763,56 @@ class CallService {
     await _send('call_offer', {'sdp': offer.sdp});
   }
 
+  // Реальный кейс с устройства: два независимых пути ведут сюда — кнопка
+  // "Ответить" в push-уведомлении (см. _autoAcceptAndOpenScreen) и кнопка
+  // "Принять" на IncomingCallScreen — если оба успевают сработать для
+  // ОДНОГО и того же звонка (например, тап по уведомлению уже поднял
+  // автопринятие, а следом успевает отрисоваться и сам экран входящего
+  // вызова), acceptCall() запускался ПОВТОРНО поверх уже принятого звонка:
+  // второй createPeerConnection()+createAnswer() отправлял звонящему ещё
+  // один call_answer через доли секунды после первого — именно это на
+  // стороне звонящего роняло "Called in wrong state: stable" (см. гвард в
+  // _handleSignal / case 'call_answer' выше). Тут — вторая половина того
+  // же исправления: не создавать дубль вообще, а не только не давать ему
+  // уронить приложение у собеседника.
+  bool _accepting = false;
+
   Future<void> acceptCall() async {
-    if (_pendingOfferSdp == null) return;
+    if (_pendingOfferSdp == null || _accepting) return;
+    // Уже приняли/уже разговариваем — тот же случай, что и выше, но когда
+    // предыдущий acceptCall() успел полностью завершиться до того, как
+    // сработал второй путь.
+    if (_state == CallState.connected) return;
+    _accepting = true;
+    try {
+      micEnabled = true;
+      videoEnabled = false;
+      remoteVideoEnabled = false;
 
-    micEnabled = true;
-    videoEnabled = false;
-    remoteVideoEnabled = false;
+      _setStatus(tr('call.securingConnection'));
+      await _createPeerConnection();
+      await _peerConnection!.setRemoteDescription(
+        RTCSessionDescription(_pendingOfferSdp!, 'offer'),
+      );
+      _remoteDescriptionSet = true;
+      for (final candidate in _pendingRemoteCandidates) {
+        await _peerConnection!.addCandidate(candidate);
+      }
+      _pendingRemoteCandidates.clear();
 
-    _setStatus(tr('call.securingConnection'));
-    await _createPeerConnection();
-    await _peerConnection!.setRemoteDescription(
-      RTCSessionDescription(_pendingOfferSdp!, 'offer'),
-    );
-    _remoteDescriptionSet = true;
-    for (final candidate in _pendingRemoteCandidates) {
-      await _peerConnection!.addCandidate(candidate);
+      _setStatus(tr('call.enablingMic'));
+      await _openLocalAudio();
+
+      _setStatus(tr('call.buildingAnswer'));
+      final answer = await _peerConnection!.createAnswer();
+      await _peerConnection!.setLocalDescription(answer);
+
+      await _send('call_answer', {'sdp': answer.sdp});
+      _setStatus(tr('call.connecting'));
+      _setState(CallState.connected);
+    } finally {
+      _accepting = false;
     }
-    _pendingRemoteCandidates.clear();
-
-    _setStatus(tr('call.enablingMic'));
-    await _openLocalAudio();
-
-    _setStatus(tr('call.buildingAnswer'));
-    final answer = await _peerConnection!.createAnswer();
-    await _peerConnection!.setLocalDescription(answer);
-
-    await _send('call_answer', {'sdp': answer.sdp});
-    _setStatus(tr('call.connecting'));
-    _setState(CallState.connected);
   }
 
   Future<void> declineCall() async {
@@ -971,14 +1001,36 @@ class CallService {
     await _updateWakelock();
   }
 
+  // Реальный кейс с эмулятора (см. debug_log + logcat): быстрый повторный
+  // тап по кнопке разворота камеры, пока предыдущий Helper.switchCamera()
+  // ещё не отработал — приводит к "switchCamera(): Switching camera
+  // failed" в logcat, а следом ВЕСЬ процесс намертво зависает (ANR
+  // "Oshinobu isn't responding", подтверждено — даже VM Service перестаёт
+  // отвечать на getIsolate для основного изолята, значит завис нативный
+  // слой, а не только Dart). Судя по всему — гонка внутри нативного
+  // Camera2-слоя flutter_webrtc при повторном открытии камеры поверх ещё
+  // не закрытой предыдущей сессии. Гвардом не чиним саму гонку в плагине,
+  // но перестаём её провоцировать — второй вызов, пока первый ещё не
+  // завершился, просто игнорируем.
+  bool _switchingCamera = false;
+
   /// Переключает фронтальную/тыловую камеру на уже открытой видео-дорожке
   /// (flutter_webrtc сам умеет это через нативный слой — ничего заново
   /// захватывать/пересоздавать не нужно). Имеет смысл вызывать, только
   /// пока видео включено — если дорожки ещё нет, тихо ничего не делает.
   Future<void> switchCamera() async {
     final track = _videoTrack;
-    if (track == null) return;
-    await Helper.switchCamera(track);
+    if (track == null || _switchingCamera) return;
+    _switchingCamera = true;
+    DebugLog.log('CallService switchCamera() start');
+    try {
+      await Helper.switchCamera(track);
+      DebugLog.log('CallService switchCamera() done');
+    } catch (e) {
+      DebugLog.log('CallService switchCamera() FAILED error=$e');
+    } finally {
+      _switchingCamera = false;
+    }
   }
 
   Future<void> toggleSpeaker() async {
@@ -1135,6 +1187,22 @@ class CallService {
       case 'call_answer':
         final sdp = payload['sdp'] as String?;
         if (sdp == null || _peerConnection == null) return;
+        // Реальный кейс с устройства: "Called in wrong state: stable" —
+        // повторно доставленный (ретрай/переподключение) call_answer для
+        // уже отвеченного звонка. После первого успешного
+        // setRemoteDescription(answer) peerConnection переходит в
+        // signalingState=stable, и WebRTC сам не даёт применить answer
+        // ещё раз поверх него (валидно только из have-local-offer) —
+        // раньше это било необработанным исключением прямо в лог.
+        // _remoteDescriptionSet — тот же флаг, что уже используется чуть
+        // ниже для очереди ICE-кандидатов, тут просто как гвард
+        // идемпотентности первого применения.
+        if (_remoteDescriptionSet) {
+          DebugLog.log(
+            'CallService call_answer: remote description уже установлена — дубль, игнорирую',
+          );
+          return;
+        }
         await _peerConnection!.setRemoteDescription(
           RTCSessionDescription(sdp, 'answer'),
         );
