@@ -213,6 +213,144 @@ class ApiClient {
     }
   }
 
+  /// POST /upload-media/init — начать докачку большого файла по кусочкам
+  /// (см. media_upload.dart). Сервер сам выбирает media_id и фиксированный
+  /// размер части — возвращает их вместе с upload_id, который дальше нужен
+  /// каждому следующему вызову части/списка частей/завершения.
+  Future<({String mediaId, String uploadId, int partSize})> initChunkedUpload(
+    String token,
+    int sizeBytes,
+  ) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/upload-media/init'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({'size_bytes': sizeBytes}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.uploadFailed'));
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return (
+      mediaId: data['media_id'] as String,
+      uploadId: data['upload_id'] as String,
+      partSize: data['part_size'] as int,
+    );
+  }
+
+  /// PUT /upload-media/{mediaId}/part/{partNumber} — залить одну часть файла
+  /// (part_number начинается с 1, как того требует сам S3/MinIO).
+  Future<void> uploadChunkedPart(
+    String token,
+    String mediaId,
+    String uploadId,
+    int partNumber,
+    Uint8List data, {
+    dio.CancelToken? cancelToken,
+    void Function(double percent)? onProgress,
+  }) async {
+    final client = _mediaDioClient();
+    try {
+      final response = await client.put(
+        '${ApiConfig.baseUrl}/upload-media/$mediaId/part/$partNumber',
+        data: data,
+        options: dio.Options(
+          headers: {
+            'Authorization': 'Bearer $token',
+            dio.Headers.contentLengthHeader: data.length,
+          },
+          responseType: dio.ResponseType.plain,
+        ),
+        queryParameters: {'upload_id': uploadId},
+        cancelToken: cancelToken,
+        onSendProgress: (sent, total) {
+          final effectiveTotal = total > 0 ? total : data.length;
+          if (effectiveTotal > 0 && onProgress != null) {
+            onProgress(sent / effectiveTotal * 100);
+          }
+        },
+      );
+      if (response.statusCode != 200) {
+        throw ApiException(tr('error.uploadFailed'));
+      }
+    } on dio.DioException catch (e) {
+      if (e.type == dio.DioExceptionType.cancel) {
+        throw ApiException(tr('error.cancelledByUser'));
+      }
+      throw ApiException(tr('error.uploadFailed'));
+    }
+  }
+
+  /// GET /upload-media/{mediaId}/parts — какие части уже долетели раньше
+  /// (используется при возврате к прерванной докачке — см. media_upload.dart).
+  /// Источник правды — сам MinIO, сервер здесь ничего своего не хранит.
+  Future<Set<int>> listChunkedParts(
+    String token,
+    String mediaId,
+    String uploadId,
+  ) async {
+    final response = await http.get(
+      Uri.parse(
+        '${ApiConfig.baseUrl}/upload-media/$mediaId/parts?upload_id=$uploadId',
+      ),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.uploadFailed'));
+    }
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .map((e) => (e as Map<String, dynamic>)['part_number'] as int)
+        .toSet();
+  }
+
+  /// POST /upload-media/{mediaId}/complete — собрать все залитые части в
+  /// готовый объект в MinIO и создать запись о файле в БД. Именно этот шаг
+  /// делает файл видимым/скачиваемым для получателя.
+  Future<void> completeChunkedUpload(
+    String token,
+    String mediaId,
+    String uploadId,
+    String recipientAccountId,
+  ) async {
+    final response = await http.post(
+      Uri.parse(
+        '${ApiConfig.baseUrl}/upload-media/$mediaId/complete?upload_id=$uploadId',
+      ),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({'recipient_account_id': recipientAccountId}),
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.uploadFailed'));
+    }
+  }
+
+  /// POST /upload-media/{mediaId}/abort — отменить незавершённую докачку
+  /// (например, пользователь удалил ещё не отправленное сообщение). Не
+  /// критично, если вызов не удался — брошенные multipart-загрузки убирает
+  /// lifecycle-политика бакета на стороне инфраструктуры.
+  Future<void> abortChunkedUpload(
+    String token,
+    String mediaId,
+    String uploadId,
+  ) async {
+    try {
+      await http.post(
+        Uri.parse(
+          '${ApiConfig.baseUrl}/upload-media/$mediaId/abort?upload_id=$uploadId',
+        ),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    } catch (_) {
+      // намеренно проглатываем — см. комментарий выше
+    }
+  }
+
   /// dio.download сам пишет ответ сервера прямо в файл по мере получения,
   /// не накапливая его целиком в памяти — критично для файлов до 500 МБ.
   Future<void> downloadEncryptedMediaToFile(
@@ -745,6 +883,7 @@ class ApiClient {
     String token,
     String mediaId, {
     void Function(double percent)? onProgress,
+    dio.CancelToken? cancelToken,
   }) async {
     final client = _mediaDioClient();
     try {
@@ -754,6 +893,7 @@ class ApiClient {
           headers: {'Authorization': 'Bearer $token'},
           responseType: dio.ResponseType.bytes,
         ),
+        cancelToken: cancelToken,
         onReceiveProgress: (received, total) {
           if (total > 0 && onProgress != null) {
             onProgress(received / total * 100);
@@ -764,7 +904,10 @@ class ApiClient {
         throw ApiException(tr('error.downloadFailed'));
       }
       return Uint8List.fromList(response.data!);
-    } on dio.DioException {
+    } on dio.DioException catch (e) {
+      if (e.type == dio.DioExceptionType.cancel) {
+        throw ApiException(tr('error.cancelledByUser'));
+      }
       throw ApiException(tr('error.downloadFailed'));
     }
   }

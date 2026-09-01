@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
 import '../services/keyboard_height_store.dart';
+import '../services/keyboard_insets.dart';
 import '../theme/app_theme.dart';
 import 'full_emoji_picker.dart';
 
@@ -33,6 +34,15 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
     KeyboardHeightStore.getKnownHeight().then((height) {
       if (mounted) setState(() => _keyboardHeight = height);
     });
+    // См. KeyboardInsets/ChatScreen — тот же нативный источник высоты
+    // клавиатуры (ТЗ пользователя: "сделай тоже самое, что и в чате").
+    // ValueNotifier сам по себе не встроен в дерево виджетов, перестройку
+    // по его изменению нужно попросить явно.
+    KeyboardInsets.heightPx.addListener(_onKeyboardInsetsChanged);
+  }
+
+  void _onKeyboardInsetsChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onFocusChange() {
@@ -49,6 +59,7 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
   void dispose() {
     _keyboardHeightSettleTimer?.cancel();
     _focusNode.removeListener(_onFocusChange);
+    KeyboardInsets.heightPx.removeListener(_onKeyboardInsetsChanged);
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -56,7 +67,7 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
 
   @override
   Widget build(BuildContext context) {
-    final realInset = MediaQuery.of(context).viewInsets.bottom;
+    final realInset = KeyboardInsets.resolveInsetPx(context);
     final keyboardVisible = realInset > 50;
 
     // Измеряем высоту клавиатуры только когда она перестала МЕНЯТЬСЯ — см.
@@ -68,7 +79,7 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
       _keyboardHeightSettleTimer?.cancel();
       _keyboardHeightSettleTimer = Timer(_keyboardHeightSettleDelay, () {
         if (!mounted) return;
-        final settled = MediaQuery.of(context).viewInsets.bottom;
+        final settled = KeyboardInsets.resolveInsetPx(context);
         if (settled <= 50) return;
         if ((settled - _keyboardHeight).abs() > 1) {
           setState(() => _keyboardHeight = settled);
@@ -90,7 +101,24 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
         (keyboardVisible && _focusNode.hasFocus) ||
         _emojiMode ||
         _awaitingKeyboardOpen;
-    final reserved = anyPanelOpen ? _keyboardHeight : 0.0;
+    // РЕАЛЬНЫЙ баг (жалоба пользователя: "поднимается не так же плавно,
+    // как панель сообщения в чате") — раньше reserved скачком принимал
+    // фиксированное закэшированное _keyboardHeight целиком, в тот же кадр,
+    // что и anyPanelOpen становился true, вместо того чтобы плавно
+    // следовать за живой, покадровой анимацией настоящей клавиатуры (см.
+    // realInset — тот самый нативный источник, см. KeyboardInsets). Тот же
+    // приём, что и в ChatScreen.build(): для НАСТОЯЩЕЙ клавиатуры резерв —
+    // это сам realInset (растёт/убывает вместе с ней, кадр в кадр), а
+    // _keyboardHeight используется только как компенсация ПОКА идёт переход
+    // клавиатура<->эмодзи-панель (emojiReserved) — эмодзи-панель не
+    // системная, живого сигнала анимации у неё в принципе нет, но сумма
+    // realInset+emojiReserved всё равно всегда равна _keyboardHeight, без
+    // единого скачка на стыке.
+    final realOnly = (keyboardVisible && _focusNode.hasFocus) ? realInset : 0.0;
+    final emojiReserved = (_emojiMode || _awaitingKeyboardOpen)
+        ? (_keyboardHeight - realInset).clamp(0.0, _keyboardHeight)
+        : 0.0;
+    final reserved = realOnly + emojiReserved;
 
     return PopScope(
       canPop: !_emojiMode,
@@ -181,14 +209,15 @@ class _CaptionInputBarState extends State<CaptionInputBar> {
                 ? 0
                 : MediaQuery.of(context).viewPadding.bottom,
           ),
-          // Клавиатура и эмодзи-панель — фиксированная, заранее известная
-          // высота, БЕЗ анимации (пока, по той же причине, что и в чате —
-          // сначала проверяем сам механизм). Этот блок — часть Column
-          // ВНУТРИ CaptionInputBar (текстовая форма выше него никогда не
-          // перекрывается), а сам CaptionInputBar снаружи кладётся поверх
-          // контента через Stack/Positioned(bottom: 0) — так что вырастая,
-          // он не поднимает и не сжимает то, что под ним (см.
-          // camera_capture_screen.dart/media_picker_sheet.dart).
+          // reserved (см. её вычисление выше) — либо живой realInset
+          // (настоящая клавиатура, кадр в кадр её собственной системной
+          // анимации), либо закэшированная _keyboardHeight (эмодзи-панель —
+          // не системная, живого сигнала у неё нет). Этот блок — часть
+          // Column ВНУТРИ CaptionInputBar (текстовая форма выше него
+          // никогда не перекрывается), а сам CaptionInputBar снаружи
+          // кладётся поверх контента через Stack/Positioned(bottom: 0) —
+          // так что вырастая, он не поднимает и не сжимает то, что под ним
+          // (см. camera_capture_screen.dart/media_picker_sheet.dart).
           Container(
             height: reserved,
             color: AppColors.surface,

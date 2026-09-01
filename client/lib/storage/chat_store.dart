@@ -45,6 +45,19 @@ class StoredMessage {
   final String status;
   final String? processingStep;
   final String? localPreviewPath;
+
+  /// Путь к ИСХОДНОМУ файлу, который пользователь выбрал/записал для
+  /// отправки — видео/файл/голосовое/видео-заметка (для обычного фото эту
+  /// роль играет сам localPreviewPath, см. его комментарий и
+  /// _mediaExistsLocally в chat_screen.dart). У этих типов localPreviewPath
+  /// — это ТОЛЬКО превью-кадр (картинка), не сам файл, поэтому нужен
+  /// отдельный путь: если MediaCache очищен, а этот файл ещё физически жив
+  /// на диске (обычно так и есть — тот же выбор пользователя из
+  /// галереи/пикера, что и у фото), берём его напрямую вместо повторной
+  /// закачки с сервера СВОЕГО ЖЕ только что отправленного файла (жалоба
+  /// пользователя: "queued"/недоступность своего видео и файла после
+  /// очистки кэша).
+  final String? localSourcePath;
   final String? groupId;
 
   /// Запись о звонке — каждое устройство по-прежнему пишет её на основе
@@ -102,6 +115,7 @@ class StoredMessage {
     this.status = 'sent',
     this.processingStep,
     this.localPreviewPath,
+    this.localSourcePath,
     this.groupId,
     this.isCallLog = false,
     this.callDirection,
@@ -165,6 +179,7 @@ class StoredMessage {
           ? null
           : (processingStep ?? this.processingStep),
       localPreviewPath: localPreviewPath,
+      localSourcePath: localSourcePath,
       groupId: groupId,
       isCallLog: isCallLog,
       callDirection: callDirection,
@@ -203,6 +218,7 @@ class StoredMessage {
     'status': status,
     'step': processingStep,
     'local_preview': localPreviewPath,
+    'local_source': localSourcePath,
     'group_id': groupId,
     'is_call_log': isCallLog,
     'call_direction': callDirection,
@@ -238,6 +254,7 @@ class StoredMessage {
     status: j['status'] as String? ?? 'sent',
     processingStep: j['step'] as String?,
     localPreviewPath: j['local_preview'] as String?,
+    localSourcePath: j['local_source'] as String?,
     groupId: j['group_id'] as String?,
     isCallLog: j['is_call_log'] as bool? ?? false,
     callDirection: j['call_direction'] as String?,
@@ -621,6 +638,25 @@ class ChatStore {
             newStatus == 'failed' ||
             newStatus == 'queued',
       ),
+    );
+  }
+
+  /// Отмечает упавшее сообщение "отправляется снова" — ТЗ пользователя:
+  /// по нажатию "Повторить отправку" восклицательный знак должен смениться
+  /// на часики РОВНО в момент запуска повтора (а не молча провисеть
+  /// "failed" весь повтор целиком, пока PendingSendRetrier не доложит об
+  /// итоге). Один _replace сразу на оба поля — status и processingStep,
+  /// теми же значениями, что и у самого первого (не повторного) отправления
+  /// (см. _sendPickedMedia/_sendRecordedMessage в chat_screen.dart).
+  static Future<void> markRetrying(
+    String peerLogin,
+    String messageId,
+    String processingStep,
+  ) {
+    return _replace(
+      peerLogin,
+      messageId,
+      (old) => old.copyWith(status: 'sending', processingStep: processingStep),
     );
   }
 

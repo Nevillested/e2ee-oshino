@@ -12,6 +12,15 @@
 <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+<!-- Без этого разрешения тап по скачанному .apk (см. OpenWithChooser в
+     MainActivity.kt) ничего видимого не делает на Android 8+: Package
+     Installer у ACTION_VIEW-интента без REQUEST_INSTALL_PACKAGES у
+     вызывающего приложения либо тихо отказывает, либо системный экран
+     "разрешить установку неизвестных приложений" для НАШЕГО приложения
+     вообще недоступен для включения в настройках. Само разрешение не
+     требует диалога при старте — пользователь получит обычный системный
+     запрос именно в момент попытки установить файл. -->
+<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <application
         android:label="Oshinobu"
         android:name=".OshinobuApplication"

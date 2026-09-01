@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'navigator_key.dart';
 import 'screens/splash_screen.dart';
 import 'services/debug_log.dart';
+import 'services/keyboard_insets.dart';
 import 'storage/locale_store.dart';
 import 'storage/text_scale_store.dart';
 import 'storage/theme_store.dart';
@@ -30,6 +31,10 @@ class _AppState extends State<_App> {
     ThemeStore.init();
     LocaleStore.init();
     TextScaleStore.init();
+    // См. KeyboardInsets — как можно раньше, чтобы нативный поток высоты
+    // клавиатуры уже был подписан к моменту, когда пользователь впервые
+    // откроет чат и коснётся поля ввода.
+    KeyboardInsets.start();
     // Разовая чистка разросшегося debug_log.txt у уже установленных
     // пользователей (см. DebugLog.resetOnceIfNeeded) — не блокирует старт.
     DebugLog.resetOnceIfNeeded();

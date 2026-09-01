@@ -19,7 +19,6 @@ import '../storage/media_cache.dart';
 import '../services/my_email_store.dart';
 import '../services/my_profile_store.dart';
 import '../services/peer_profile_cache.dart';
-import '../services/pending_send_retrier.dart';
 import '../services/pip_service.dart';
 import '../services/debug_log.dart';
 import '../services/prekey_replenisher.dart';
@@ -570,11 +569,20 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   // даже после того, как пользователь открыл приложение и увидел
   // сообщение своими глазами — нигде в клиенте не было ни одного
   // WidgetsBindingObserver, чтобы вообще заметить возврат в foreground.
+  //
+  // ТЗ пользователя: "онлайн" должно значить "сам открыл приложение", а
+  // не "просто тихо висит подключённым в фоне" — см.
+  // WebSocketService.sendForegroundState. resumed — единственное по-
+  // настоящему "на переднем плане" состояние; всё остальное
+  // (inactive/paused/hidden/detached) для presence считаем не-foreground —
+  // тот же принцип, что и Android/iOS используют для "приложение сейчас
+  // реально видно пользователю".
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       localNotifications.cancelAll();
     }
+    _webSocketService.sendForegroundState(state == AppLifecycleState.resumed);
   }
 
   Future<void> _connect() async {
@@ -585,7 +593,11 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     _webSocketService.connect(token, deviceId);
     MessageRouter.start();
     SendQueueProcessor.instance.start();
-    PendingSendRetrier.instance.start();
+    // PendingSendRetrier больше НЕ запускается автоматически (ТЗ
+    // пользователя: никакого фонового автоповтора упавших отправок) — см.
+    // её класс-комментарий. Единственный способ повторить —
+    // PendingSendRetrier.instance.retryNow(id) по явному нажатию
+    // "Повторить отправку" (см. chat_screen.dart).
     ChatStore.changes.listen((_) => _refreshChats());
     // Разово чинит галочки прочтения для чатов, заведённых ДО появления
     // этой фичи (см. ChatStore.backfillLastMessageMeta) — сама допишет в
@@ -1190,7 +1202,18 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
           secondaryAnimation: secondaryAnimation,
           transitionType: SharedAxisTransitionType.horizontal,
           fillColor: AppColors.background,
-          child: child,
+          // SharedAxisTransition сам оборачивает child в непрозрачный
+          // ColoredBox(fillColor) — а ListTile (их полно во всех трёх
+          // вкладках: SettingsContent/MyProfileContent/списке чатов) красит
+          // фон и всплеск от тапа на БЛИЖАЙШЕМ Material-предке. Без
+          // собственного Material прямо здесь ближайшим оказывается тот,
+          // что выше Scaffold — а ColoredBox от самого SharedAxisTransition
+          // между ним и ListTile полностью перекрывает и то, и другое (см.
+          // предупреждение Flutter "ListTile background color or ink
+          // splashes may be invisible" — реальный кейс с устройства).
+          // type: transparency — не рисует собственный фон поверх контента,
+          // только даёт ListTile ближайшего "хозяина" для эффектов.
+          child: Material(type: MaterialType.transparency, child: child),
         );
       },
       child: KeyedSubtree(key: ValueKey(_selectedTab), child: child),

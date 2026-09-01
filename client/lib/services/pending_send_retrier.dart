@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import '../crypto/message_envelope.dart';
+import '../l10n/app_strings.dart';
 import '../models/picked_media.dart';
 import '../session.dart';
 import '../storage/chat_store.dart';
@@ -10,7 +11,6 @@ import 'debug_log.dart';
 import 'media_upload.dart';
 import 'message_resend.dart';
 import 'upload_progress_bus.dart';
-import 'websocket_service.dart';
 
 /// Отличает "файла больше нет, повторять бессмысленно" (задание убираем
 /// насовсем) от обычного сетевого сбоя (задание остаётся, повторится само
@@ -32,13 +32,17 @@ enum RetryOutcome { sent, permanentlyFailed, willRetryLater, notFound }
 /// Досылает сообщения, которые не удалось даже поставить в
 /// SendQueueProcessor — сбой сети ДО готового конверта (загрузка медиа/
 /// голосового на сервер, либо получение prekey-бандла для самой первой
-/// сессии с собеседником). Раньше такой сбой был окончательным: пузырь
-/// навсегда оставался 'failed', даже когда сеть возвращалась (см. разбор
-/// пользовательских логов voice-сообщения — ТЗ пользователя). Запускается
-/// тем же сигналом, что и сам SendQueueProcessor — реконнект WebSocket —
-/// плюс один раз при старте, на случай холодного старта с уже накопленной
-/// с прошлого раза очередью (SharedPreferences/secure storage переживают
-/// перезапуск процесса).
+/// сессии с собеседником).
+///
+/// ВАЖНО (ТЗ пользователя): раньше здесь ещё был автоматический фоновый
+/// повтор — по реконнекту WebSocket и раз в 20с (см. историю правок,
+/// start()/_sweep() ниже) — молча досылал зависшие задания сам, без
+/// участия пользователя. Пользователь явно попросил это убрать: заново
+/// отправлять — ТОЛЬКО по его собственному нажатию "Повторить отправку"
+/// на упавшем сообщении (см. retryNow ниже, единственная оставшаяся точка
+/// входа). Задание из PendingSendStore теперь просто лежит и ждёт —
+/// сколько угодно, хоть до следующего холодного старта приложения — пока
+/// пользователь сам не решит повторить.
 ///
 /// Группы файлов (см. ChatScreen._sendGroupNetwork) тоже покрыты — если
 /// ЛЮБОЙ файл группы не пережил сбой сети, вся группа сдаётся окончательно
@@ -46,63 +50,14 @@ enum RetryOutcome { sent, permanentlyFailed, willRetryLater, notFound }
 class PendingSendRetrier {
   PendingSendRetrier._();
   static final instance = PendingSendRetrier._();
-
-  bool _started = false;
   final Set<String> _inFlight = {};
 
-  // Реальный кейс с устройства: группа из 3 фото не смогла уйти офлайн —
-  // загрузка ПЕРВОГО файла зависла на плохой сети (ещё живой TCP, но без
-  // ответа) дольше, чем шёл реконнект WebSocket. Задание попадает в
-  // PendingSendStore только когда ЭТА конкретная попытка внутри
-  // ChatScreen._sendGroupNetwork наконец провалится и долетит до catch —
-  // а к этому моменту момент для авто-повтора "по реконнекту" уже упущен:
-  // WS давно снова connected, второго такого события ждать неоткуда, пока
-  // либо не разорвётся СЛЕДУЮЩИЙ раз, либо пользователь не перезапустит
-  // приложение (holodный старт тоже делает sweep). Тот же класс проблемы
-  // уже чинили на сервере (см. server/internal/api/websocket.go —
-  // startPendingMessageSweeper): полагаться ТОЛЬКО на события реконнекта
-  // недостаточно, нужна периодическая подстраховка. 20с — тот же интервал,
-  // что и у серверного sweeper'а, для единообразия.
-  static const _periodicSweepInterval = Duration(seconds: 20);
-
-  // Не сохраняем Timer в поле для последующей отмены — start() вызывается
-  // ровно один раз за всё время жизни процесса (см. _started выше, и его
-  // единственный вызов в home_placeholder_screen.dart), отдельного stop()
-  // у этого синглтона как и у SendQueueProcessor нет и не предполагается.
-  void start() {
-    if (_started) return;
-    _started = true;
-    WebSocketService.instance.statusUpdates.listen((status) {
-      if (status == ConnectionStatus.connected) {
-        DebugLog.log('PendingSendRetrier sweep triggered by reconnect');
-        unawaited(_sweep());
-      }
-    });
-    Timer.periodic(_periodicSweepInterval, (_) {
-      // Не дёргаем сеть впустую, пока соединения всё равно нет — попытка
-      // заведомо провалится тем же способом, каким и попало в очередь.
-      if (WebSocketService.instance.isConnected) {
-        unawaited(_sweep());
-      }
-    });
-    unawaited(_sweep());
-  }
-
-  Future<void> _sweep() async {
-    final jobs = await PendingSendStore.getAll();
-    if (jobs.isEmpty) return;
-    DebugLog.log('PendingSendRetrier sweep: ${jobs.length} job(s) pending');
-    for (final job in jobs) {
-      unawaited(_attempt(job));
-    }
-  }
-
-  /// Ручной повтор ОДНОГО конкретного задания прямо сейчас — по нажатию
-  /// "Повторить отправку" в контекстном меню сообщения (см. ТЗ
-  /// пользователя), а не по ожиданию следующего реконнекта. id — messageId
-  /// одиночного сообщения или groupId группы (см. PendingSendStore.add в
-  /// ChatScreen — job['id'] всегда один из этих двух). Тихий no-op, если
-  /// задания уже нет (например, фоновый sweep успел забрать его первым).
+  /// Единственный способ повторить упавшее задание — по нажатию "Повторить
+  /// отправку" в контекстном меню сообщения (ТЗ пользователя: никакого
+  /// фонового автоповтора, только явное действие пользователя). id —
+  /// messageId одиночного сообщения или groupId группы (см.
+  /// PendingSendStore.add в ChatScreen — job['id'] всегда один из этих
+  /// двух). notFound — задания уже нет (например, сообщение удалено).
   Future<RetryOutcome> retryNow(String id) async {
     final jobs = await PendingSendStore.getAll();
     Map<String, dynamic>? job;
@@ -123,6 +78,19 @@ class PendingSendRetrier {
     // уже идущей для одного и того же id.
     if (_inFlight.contains(id)) return RetryOutcome.willRetryLater;
     _inFlight.add(id);
+    final peerLogin = job['peer_login'] as String?;
+    // ТЗ пользователя: "восклицательный знак сменяется на часики, и
+    // отправка повторяется ещё раз" — отмечаем ВСЕ затрагиваемые этим
+    // заданием сообщения как "отправляется снова" ДО начала самой попытки
+    // (а не только по её итогу), и возвращаем обратно в 'failed', если
+    // попытка не удалась — единая точка для всех видов заданий (см.
+    // _messageIdsFor), вместо дублирования в каждом _retryXxx.
+    final messageIds = _messageIdsFor(job);
+    if (peerLogin != null) {
+      for (final mid in messageIds) {
+        await ChatStore.markRetrying(peerLogin, mid, tr('chat.queued'));
+      }
+    }
     try {
       final kind = job['kind'] as String;
       switch (kind) {
@@ -150,10 +118,20 @@ class PendingSendRetrier {
       DebugLog.log('PendingSendRetrier id=$id sent successfully');
       return RetryOutcome.sent;
     } on _PermanentRetryFailure catch (e) {
+      if (peerLogin != null) {
+        for (final mid in messageIds) {
+          await ChatStore.updateMessageStatus(peerLogin, mid, 'failed');
+        }
+      }
       await PendingSendStore.remove(id);
       DebugLog.log('PendingSendRetrier id=$id permanently abandoned: $e');
       return RetryOutcome.permanentlyFailed;
     } catch (e) {
+      if (peerLogin != null) {
+        for (final mid in messageIds) {
+          await ChatStore.updateMessageStatus(peerLogin, mid, 'failed');
+        }
+      }
       DebugLog.log(
         'PendingSendRetrier id=$id retry-FAILED error=$e — will retry on next reconnect',
       );
@@ -161,6 +139,21 @@ class PendingSendRetrier {
     } finally {
       _inFlight.remove(id);
     }
+  }
+
+  /// Все messageId, которые затрагивает это задание — одиночное сообщение
+  /// (text/voice/video_note/media, id самого задания и есть его messageId)
+  /// либо группа (media_group — свой messageId у каждого файла плюс,
+  /// отдельно, у текста-подписи, если она была).
+  List<String> _messageIdsFor(Map<String, dynamic> job) {
+    if (job['kind'] == 'media_group') {
+      final items = (job['items'] as List).cast<Map<String, dynamic>>();
+      final ids = items.map((i) => i['message_id'] as String).toList();
+      final textId = job['text_message_id'] as String?;
+      if (textId != null) ids.add(textId);
+      return ids;
+    }
+    return [job['id'] as String];
   }
 
   Future<void> _retryText(Map<String, dynamic> job) async {

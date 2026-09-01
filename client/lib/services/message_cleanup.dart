@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 import '../storage/chat_store.dart';
+import '../storage/chunked_upload_session_store.dart';
 import '../storage/media_cache.dart';
 import '../storage/pending_send_store.dart';
 import '../storage/send_queue_store.dart';
@@ -31,6 +33,34 @@ Future<void> purgeMessageArtifacts(StoredMessage msg) async {
     try {
       final file = File(localPreview);
       if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+  // См. StoredMessage.localSourcePath — тот же принцип, что и у
+  // localPreviewPath выше, просто для видео/файла/голосового/видео-заметки.
+  final localSource = msg.localSourcePath;
+  if (localSource != null) {
+    try {
+      final file = File(localSource);
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
+  // Незавершённая докачка большого файла по кусочкам (media_upload.dart) —
+  // локальная зашифрованная копия и запись о сессии на сервере (media_id/
+  // upload_id). Сам объект в MinIO (частично залитый) здесь не отменяем —
+  // это не потеря данных, только временно занятое место; она вычищается
+  // lifecycle-политикой бакета на стороне инфраструктуры (см. комментарий
+  // в upload_media_chunked.go на сервере), не стоит рисковать сетевым
+  // вызовом (нужен токен, которого здесь нет) в и без того "путь удаления".
+  final chunkedSession = await ChunkedUploadSessionStore.get(msg.messageId);
+  if (chunkedSession != null) {
+    await ChunkedUploadSessionStore.clear(msg.messageId);
+    try {
+      final appDir = await getApplicationSupportDirectory();
+      final encTempFile = File(
+        '${appDir.path}/chunked_uploads/enc_${msg.messageId}.bin',
+      );
+      if (await encTempFile.exists()) await encTempFile.delete();
     } catch (_) {}
   }
 

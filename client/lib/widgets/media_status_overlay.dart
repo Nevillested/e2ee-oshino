@@ -21,12 +21,19 @@ class MediaStatusOverlay extends StatelessWidget {
   final double size;
   final BorderRadius? borderRadius;
 
+  /// ТЗ пользователя: кнопка отмены скачивания — везде, где оно происходит.
+  /// null — отмена недоступна в этом состоянии (например, идёт отправка на
+  /// сервер, а не приём — см. её отдельный путь через UploadCancelRegistry
+  /// и "Отменить отправку" в контекстном меню, не этот виджет).
+  final VoidCallback? onCancel;
+
   const MediaStatusOverlay({
     super.key,
     required this.statusText,
     required this.percent,
     required this.size,
     this.borderRadius,
+    this.onCancel,
   });
 
   @override
@@ -68,6 +75,31 @@ class MediaStatusOverlay extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
+            if (onCancel != null) ...[
+              const SizedBox(height: 6),
+              GestureDetector(
+                // opaque — сама плитка снаружи тоже кликабельна (обычно
+                // "тап = открыть/начать скачивание"), кнопка отмены внутри
+                // не должна дополнительно триггерить тот же тап поверх себя.
+                behavior: HitTestBehavior.opaque,
+                onTap: onCancel,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Icon(
+                    Icons.close,
+                    color: Colors.white,
+                    size: size < 150 ? 14 : 16,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

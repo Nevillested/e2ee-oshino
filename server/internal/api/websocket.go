@@ -29,6 +29,13 @@ type WSMsgFrom struct {
 	// сам откроет чат — будить его ради неё незачем). Само сообщение
 	// всё равно встаёт в очередь и будет доставлено как обычно.
 	Silent bool `json:"Silent"`
+	// Foreground — только для Type == "presence_foreground" (см.
+	// ConnectionRegistry.SetForeground): клиент явно сообщает переход
+	// AppLifecycleState.resumed (true) / paused и т.п. (false). Остальным
+	// типам сообщений это поле не нужно, но переиспользуем один и тот же
+	// уже парсящийся на каждое сообщение struct — та же экономия, что и у
+	// ToDeviceId в presence_subscribe/unsubscribe чуть ниже.
+	Foreground bool `json:"Foreground"`
 }
 
 type WSMsgRelay struct {
@@ -631,6 +638,35 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 
 			if MessageType == "presence_unsubscribe" {
 				registry.UnsubscribePresence(DeviceID, NewWSMsgFrom.ToDeviceId)
+				continue
+			}
+
+			if MessageType == "presence_foreground" {
+				// ТЗ пользователя: "онлайн" — это когда пользователь САМ
+				// открыл приложение, а не когда оно просто тихо
+				// подключилось и висит в фоне (реальная жалоба —
+				// заблокированный, нетронутый часами телефон показывался
+				// online). Соединение НЕ трогаем (нужно и дальше доставлять
+				// сообщения/звонки в фоне как обычно, см. Get/IsOnline) —
+				// меняется только то, что видят presence-подписчики.
+				online, changed := registry.SetForeground(DeviceID, NewWSMsgFrom.Foreground)
+				log.Printf(
+					"presence_foreground: device=%s foreground=%v -> online=%v changed=%v",
+					DeviceID, NewWSMsgFrom.Foreground, online, changed,
+				)
+				if changed {
+					var lastSeenMs int64
+					if !online {
+						lastSeenMs = time.Now().UnixMilli()
+						var deviceUUID pgtype.UUID
+						if err := deviceUUID.Scan(DeviceID); err == nil {
+							if err := queries.UpdateDeviceLastSeen(r.Context(), deviceUUID); err != nil {
+								log.Printf("ошибка обновления last_seen при уходе с переднего плана: %v", err)
+							}
+						}
+					}
+					notifyPresenceSubscribers(r.Context(), registry, DeviceID, online, lastSeenMs)
+				}
 				continue
 			}
 

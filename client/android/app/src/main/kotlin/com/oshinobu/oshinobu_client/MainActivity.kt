@@ -1,21 +1,65 @@
 package com.oshinobu.oshinobu_client
 
 import android.app.PictureInPictureParams
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.database.Cursor
+import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import android.util.Rational
 import android.view.WindowManager
+import android.webkit.MimeTypeMap
+import androidx.core.content.FileProvider
+import androidx.core.view.OnApplyWindowInsetsListener
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsAnimationCompat
+import androidx.core.view.WindowInsetsCompat
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 private const val TAG = "MainActivity"
 private const val PIP_CHANNEL = "oshinobu/pip"
+
+// См. setupKeyboardInsetsTracking() — обходит известный баг рассинхронизации
+// MediaQuery.viewInsets с настоящей клавиатурой на Android (edge-to-edge +
+// системный back-жест, см. flutter/flutter#168768 и связанные issues:
+// #89914, #131152, #116836). Вместо того чтобы полагаться на то, как Flutter
+// сам довозит это значение до Dart (в этом сценарии ненадёжно — либо
+// зависает на старом значении, либо приходит одним прыжком заметно позже
+// настоящей системной анимации), читаем ВЫСОТУ IME напрямую с нативной
+// стороны через WindowInsetsAnimationCallback — покадрово, включая
+// промежуточные значения ВО ВРЕМЯ самой системной анимации.
+private const val KEYBOARD_INSETS_CHANNEL = "oshinobu/keyboard_insets"
+
+// См. openWithChooser() — ТЗ пользователя: тап по файлу должен всегда
+// открывать системное меню "через какое приложение открыть", а не молча
+// открывать в приложении, назначенном по умолчанию (обычное поведение
+// ACTION_VIEW без обёртки в Intent.createChooser — плагин open_file именно
+// так и делает, см. его OpenFilePlugin.startActivity()). Тот же
+// FileProvider authority, что уже регистрирует сам плагин open_file в
+// своём AndroidManifest.xml (мёрджится в общий манифест автоматически) —
+// отдельный provider заводить не нужно, пути (весь filesDir/cacheDir)
+// уже открыты его же filepaths.xml.
+private const val OPEN_WITH_CHOOSER_CHANNEL = "oshinobu/open_with_chooser"
+private const val OPEN_FILE_PROVIDER_AUTHORITY_SUFFIX = ".fileProvider.com.crazecoder.openfile"
+
+// См. saveToDownloads() — ТЗ пользователя: "Сохранить на устройство" должно
+// класть файл в предсказуемое фиксированное место (Downloads/Oshinobu), а
+// не открывать системный SAF-диалог "Сохранить как" (тот на части устройств/
+// эмуляторов — без нормального Files-провайдера — просто ничего не
+// показывает, см. разбор с пользователем).
+private const val SAVE_TO_DOWNLOADS_CHANNEL = "oshinobu/save_to_downloads"
+private const val DOWNLOADS_SUBFOLDER = "Oshinobu"
 
 // Те же ключи используются в CallRingService/call_ring_plugin (отдельный
 // Gradle-модуль, поэтому не общие константы, а просто одинаковые строки в
@@ -48,6 +92,16 @@ class MainActivity : FlutterFragmentActivity() {
     // без повторного создания MethodChannel на лету.
     private var pipChannel: MethodChannel? = null
     private var callActive = false
+
+    // См. KEYBOARD_INSETS_CHANNEL выше — простое поле класса, а не состояние
+    // внутри самого EventChannel.StreamHandler: тот же приём, что и у
+    // pipChannel — configureFlutterEngine() может отработать повторно для
+    // ТОЙ ЖЕ Dart-стороны (см. shouldDestroyEngineWithHost=false выше),
+    // тогда пересоздаётся сам объект EventChannel/handler, но Dart уже мог
+    // подписаться раньше и заново onListen() не позовёт — храня sink здесь,
+    // а не внутри одноразового handler'а, emitKeyboardHeight() продолжает
+    // работать независимо от того, когда именно Dart подписался.
+    private var keyboardInsetsSink: EventChannel.EventSink? = null
 
     // Автовход в PiP при сворачивании имеет смысл ТОЛЬКО если собеседник
     // сейчас реально передаёт видео — иначе сворачивать в плавающее окошко
@@ -286,6 +340,236 @@ class MainActivity : FlutterFragmentActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, OPEN_WITH_CHOOSER_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "open" -> {
+                    val path = call.argument<String>("path")
+                    val mimeType = call.argument<String>("mimeType")
+                    if (path == null) {
+                        result.error("open_with_chooser", "path is null", null)
+                    } else {
+                        result.success(openWithChooser(path, mimeType))
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SAVE_TO_DOWNLOADS_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "save" -> {
+                    val sourcePath = call.argument<String>("sourcePath")
+                    val fileName = call.argument<String>("fileName")
+                    if (sourcePath == null || fileName == null) {
+                        result.error("save_to_downloads", "sourcePath/fileName is null", null)
+                    } else {
+                        result.success(saveToDownloads(sourcePath, fileName))
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, KEYBOARD_INSETS_CHANNEL).setStreamHandler(
+            object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    keyboardInsetsSink = events
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    keyboardInsetsSink = null
+                }
+            },
+        )
+        setupKeyboardInsetsTracking()
+    }
+
+    // Возвращает true, если чем-то удалось открыть (пусть даже единственным
+    // подходящим приложением — Intent.createChooser показывает диалог и
+    // тогда, если вариант всего один, просто без выбора нечего показывать),
+    // false — на устройстве вообще нет ни одного приложения для этого типа
+    // файла (ActivityNotFoundException) — вызывающая сторона в этом случае
+    // покажет свою собственную ошибку.
+    private fun openWithChooser(path: String, mimeType: String?): Boolean {
+        return try {
+            val file = File(path)
+            val authority = "$packageName$OPEN_FILE_PROVIDER_AUTHORITY_SUFFIX"
+            val uri = FileProvider.getUriForFile(this, authority, file)
+            val resolvedType = mimeType
+                ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+                ?: "*/*"
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, resolvedType)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val chooser = Intent.createChooser(viewIntent, null).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(chooser)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "openWithChooser: не удалось открыть $path: $e")
+            false
+        }
+    }
+
+    // Копирует уже расшифрованный файл (sourcePath — временная копия из
+    // MediaCache/localSourcePath, см. chat_screen.dart) в постоянную папку
+    // Download/Oshinobu — фиксированное, предсказуемое место, без
+    // SAF-диалога "Сохранить как" (тот на части устройств/эмуляторов без
+    // нормального Files-провайдера просто ничего не показывает — реальный
+    // кейс с эмулятора, разбор с пользователем). Возвращает
+    // человекочитаемый путь для снэкбара ("Download/Oshinobu/файл.pdf") —
+    // либо null при ошибке.
+    //
+    // API 29+ (Q) — только через MediaStore.Downloads: прямая запись в
+    // Environment.DIRECTORY_DOWNLOADS обычным File API запрещена scoped
+    // storage. API ниже 29 — WRITE_EXTERNAL_STORAGE (см. манифест,
+    // maxSdkVersion=28) всё ещё разрешает обычный File.
+    private fun saveToDownloads(sourcePath: String, fileName: String): String? {
+        val sourceFile = File(sourcePath)
+        if (!sourceFile.exists()) return null
+        val (baseName, ext) = splitNameAndExtension(fileName)
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                saveToDownloadsMediaStore(sourceFile, baseName, ext)
+            } else {
+                saveToDownloadsLegacy(sourceFile, baseName, ext)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "saveToDownloads: не удалось сохранить $fileName: $e")
+            null
+        }
+    }
+
+    private fun splitNameAndExtension(fileName: String): Pair<String, String> {
+        val dot = fileName.lastIndexOf('.')
+        if (dot <= 0 || dot == fileName.length - 1) return Pair(fileName, "")
+        return Pair(fileName.substring(0, dot), fileName.substring(dot + 1))
+    }
+
+    private fun candidateName(baseName: String, ext: String, attempt: Int): String {
+        val name = if (attempt == 0) baseName else "$baseName ($attempt)"
+        return if (ext.isEmpty()) name else "$name.$ext"
+    }
+
+    private fun saveToDownloadsMediaStore(
+        sourceFile: File,
+        baseName: String,
+        ext: String,
+    ): String? {
+        val resolver = contentResolver
+        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/$DOWNLOADS_SUBFOLDER"
+        // Дедупликация имён — та же папка вполне может уже содержать файл с
+        // таким же именем (пересохранили ещё раз, или два разных файла в
+        // чате случайно называются одинаково); молча перезаписывать чужой
+        // файл не должны, поэтому ищем первое свободное "имя (N).расш".
+        var finalName = candidateName(baseName, ext, 0)
+        var attempt = 1
+        while (mediaStoreFileExists(resolver, finalName, relativePath)) {
+            finalName = candidateName(baseName, ext, attempt)
+            attempt++
+        }
+        val mimeType = if (ext.isNotEmpty()) {
+            MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
+        } else {
+            null
+        }
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, finalName)
+            put(MediaStore.Downloads.RELATIVE_PATH, relativePath)
+            put(MediaStore.Downloads.IS_PENDING, 1)
+            if (mimeType != null) put(MediaStore.Downloads.MIME_TYPE, mimeType)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+        resolver.openOutputStream(uri)?.use { out ->
+            sourceFile.inputStream().use { input -> input.copyTo(out) }
+        } ?: return null
+        values.clear()
+        values.put(MediaStore.Downloads.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
+        return "$relativePath/$finalName"
+    }
+
+    private fun mediaStoreFileExists(resolver: android.content.ContentResolver, displayName: String, relativePath: String): Boolean {
+        val projection = arrayOf(MediaStore.Downloads._ID)
+        val selection = "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.RELATIVE_PATH} = ?"
+        val args = arrayOf(displayName, "$relativePath/")
+        var cursor: Cursor? = null
+        return try {
+            cursor = resolver.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI, projection, selection, args, null)
+            (cursor?.count ?: 0) > 0
+        } finally {
+            cursor?.close()
+        }
+    }
+
+    private fun saveToDownloadsLegacy(sourceFile: File, baseName: String, ext: String): String {
+        @Suppress("DEPRECATION")
+        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), DOWNLOADS_SUBFOLDER)
+        if (!dir.exists()) dir.mkdirs()
+        var finalName = candidateName(baseName, ext, 0)
+        var attempt = 1
+        while (File(dir, finalName).exists()) {
+            finalName = candidateName(baseName, ext, attempt)
+            attempt++
+        }
+        val destFile = File(dir, finalName)
+        sourceFile.copyTo(destFile)
+        // Без этого файл невидим для других приложений (в т.ч. системного
+        // "Файлы") до следующей перезагрузки/полного пересканирования —
+        // MediaScannerConnection сообщает системе о новом файле сразу.
+        MediaScannerConnection.scanFile(this, arrayOf(destFile.absolutePath), null, null)
+        return "$DOWNLOADS_SUBFOLDER/$finalName"
+    }
+
+    // См. KEYBOARD_INSETS_CHANNEL выше — два независимых источника, оба шлют
+    // в один и тот же sink:
+    // 1) OnApplyWindowInsetsListener — срабатывает на КАЖДУЮ доставку
+    //    insets'ов, включая мгновенные (не анимированные) изменения и
+    //    начало/конец анимации — гарантирует, что настоящее итоговое
+    //    значение долетит, даже если по какой-то причине анимация вообще не
+    //    запустилась (в этом и была родная проблема — Flutter сам иногда
+    //    вообще не получает промежуточные кадры, только один прыжок в конце,
+    //    иногда с опозданием; здесь же читаем прямо у системы).
+    // 2) WindowInsetsAnimationCompat.Callback.onProgress — покадрово, ПОКА
+    //    системная анимация клавиатуры реально идёт, что и даёт плавность
+    //    там, где она есть в самой системе (а не только там, где Flutter её
+    //    сам придумал поверх).
+    // DISPATCH_MODE_STOP — не пропускаем insets дальше по дереву самостоятельно
+    // (Flutter ниже по дереву их всё равно не резервирует под это никак).
+    private fun setupKeyboardInsetsTracking() {
+        val root = window.decorView
+        ViewCompat.setOnApplyWindowInsetsListener(
+            root,
+            OnApplyWindowInsetsListener { _, insets ->
+                emitKeyboardHeight(insets.getInsets(WindowInsetsCompat.Type.ime()).bottom)
+                insets
+            },
+        )
+        ViewCompat.setWindowInsetsAnimationCallback(
+            root,
+            object : WindowInsetsAnimationCompat.Callback(WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_STOP) {
+                override fun onProgress(
+                    insets: WindowInsetsCompat,
+                    runningAnimations: MutableList<WindowInsetsAnimationCompat>,
+                ): WindowInsetsCompat {
+                    val imeAnimating = runningAnimations.any {
+                        (it.typeMask and WindowInsetsCompat.Type.ime()) != 0
+                    }
+                    if (imeAnimating) {
+                        emitKeyboardHeight(insets.getInsets(WindowInsetsCompat.Type.ime()).bottom)
+                    }
+                    return insets
+                }
+            },
+        )
+    }
+
+    private fun emitKeyboardHeight(px: Int) {
+        keyboardInsetsSink?.success(px.toDouble())
     }
 
     private fun clearShowWhenLocked() {

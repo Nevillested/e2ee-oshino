@@ -8,10 +8,28 @@ import (
 	"github.com/coder/websocket"
 )
 
+// connEntry — одно живое соединение + отдельно его "видимый статус"
+// (foreground). ТЗ пользователя, реальная жалоба: устройство показывалось
+// "онлайн" часами, пока лежало заблокированным на зарядке — раньше
+// "онлайн" значило буквально "есть открытый сокет", а клиент сознательно
+// НЕ закрывает сокет при сворачивании/блокировке (держит его живым ради
+// мгновенной доставки в фоне — это правильно и остаётся как есть). Раз
+// сам факт соединения — это не то же самое, что "пользователь сейчас
+// реально смотрит в приложение", статус "онлайн" для presence-подписчиков
+// (что ВИДЯТ другие) и сам факт подключения (по которому решается, куда
+// доставлять сообщения/звонки — им факт открытого сокета как раз нужен,
+// вне зависимости от foreground) теперь разделены: foreground — отдельный
+// флаг, который клиент выставляет явно (см. "presence_foreground" в
+// websocket.go) при переходах в AppLifecycleState.resumed/paused.
+type connEntry struct {
+	conn       *websocket.Conn
+	foreground bool
+}
+
 // структура хранения подключенных пользователей к серверу
 type ConnectionRegistry struct {
 	mu    sync.Mutex
-	conns map[string]*websocket.Conn
+	conns map[string]*connEntry
 	// presenceSubs[targetDeviceID] = набор deviceID, которые сейчас смотрят
 	// на экран чата с targetDeviceID и хотят живые обновления о его
 	// онлайн/офлайн статусе (см. NewWebSocketHandler, "presence_subscribe").
@@ -34,6 +52,12 @@ type ConnectionRegistry struct {
 // это время реестр может считать устройство "офлайн" сразу после того,
 // как старое соединение уже отвалилось, но до того, как это стало
 // заметно самому серверу.
+// foreground по умолчанию true — новое соединение почти всегда означает
+// "пользователь только что открыл приложение" (см. connEntry — клиент
+// устанавливает WS именно при построении главного экрана, а не тихо в
+// фоне), и клиент почти сразу следом пришлёт явный "presence_foreground"
+// со своим реальным состоянием — так подписчики не видят ложное "офлайн"
+// на тот короткий промежуток до первого явного сигнала.
 func (reg *ConnectionRegistry) Add(deviceID string, conn *websocket.Conn) {
 
 	//блокируем
@@ -45,18 +69,18 @@ func (reg *ConnectionRegistry) Add(deviceID string, conn *websocket.Conn) {
 	old, hadOld := reg.conns[deviceID]
 
 	//добавлеяем запись вида: "deviceID": "ID_вебсокет_подключения"
-	reg.conns[deviceID] = conn
+	reg.conns[deviceID] = &connEntry{conn: conn, foreground: true}
 
 	reg.mu.Unlock()
 
-	if hadOld && old != conn {
+	if hadOld && old.conn != conn {
 		// Диагностика ложного "онлайн"/дублей — если это происходит часто
 		// (а не разово, при обрыве сети), значит устройство ЧАСТО
 		// переоткрывает соединение параллельно ещё не отвалившемуся
 		// старому, что и могло бы объяснять лишние online/offline
 		// колебания у подписчиков (см. notifyPresenceSubscribers).
 		log.Printf("registry.Add: device=%s заменил ещё не закрытое старое соединение (zombie/дубль)", deviceID)
-		old.Close(websocket.StatusPolicyViolation, "reconnected from a new connection")
+		old.conn.Close(websocket.StatusPolicyViolation, "reconnected from a new connection")
 	}
 }
 
@@ -74,6 +98,13 @@ func (reg *ConnectionRegistry) Remove(deviceID string) {
 }
 
 // метод для type ConnectionRegistry, который выдает инфу, подключен ли пользователь к серверу или нет
+//
+// ВАЖНО: возвращает true при ЛЮБОМ живом соединении, вне зависимости от
+// foreground (см. connEntry) — используется везде, где решается, КУДА
+// физически доставить сообщение/сигнал звонка, а не что показать другим
+// пользователям. Пока сокет открыт (даже в фоне, с погашенным экраном) —
+// доставка должна работать как обычно, у неё нет причины зависеть от
+// того, смотрит ли пользователь в этот момент на экран.
 func (reg *ConnectionRegistry) Get(deviceID string) (*websocket.Conn, bool) {
 
 	//блокируем
@@ -83,10 +114,13 @@ func (reg *ConnectionRegistry) Get(deviceID string) (*websocket.Conn, bool) {
 	defer reg.mu.Unlock()
 
 	//проверяем есть ли такой пользователь в списке подключенных или нет
-	conn, ok := reg.conns[deviceID]
+	entry, ok := reg.conns[deviceID]
+	if !ok {
+		return nil, false
+	}
 
 	//возвращаем результат
-	return conn, ok
+	return entry.conn, true
 }
 
 // чтобы каждое подключение работало не со своей копией, а с общей структурой - возвращаем указатель на структуру. Так с одной структурой будет работать весь сервер
@@ -96,20 +130,22 @@ func NewConnectionRegistry() *ConnectionRegistry {
 	var NewRegistry ConnectionRegistry
 
 	//инициализация второго поля переменной, тк по умолчанию это nil
-	NewRegistry.conns = make(map[string]*websocket.Conn)
+	NewRegistry.conns = make(map[string]*connEntry)
 	NewRegistry.presenceSubs = make(map[string]map[string]bool)
 
 	//возврат
 	return &NewRegistry
 }
 
-// IsOnline — то же самое, что и Get, но без отдачи самого соединения —
-// нужно там, где важен только сам факт "подключён ли он сейчас".
+// IsOnline — ТЗ пользователя: "онлайн" — это когда пользователь САМ
+// открыл приложение, а не когда оно просто тихо подключилось и висит в
+// фоне (см. connEntry) — в отличие от Get выше, требует ОБА условия:
+// живое соединение И foreground.
 func (reg *ConnectionRegistry) IsOnline(deviceID string) bool {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
-	_, ok := reg.conns[deviceID]
-	return ok
+	entry, ok := reg.conns[deviceID]
+	return ok && entry.foreground
 }
 
 // Snapshot — копия device_id всех сейчас подключённых устройств, без
@@ -131,7 +167,8 @@ func (reg *ConnectionRegistry) Snapshot() []string {
 // SubscribePresence — subscriberID хочет живые обновления о статусе
 // targetID (открыл экран чата с ним). Возвращает true, если targetID
 // сейчас в сети — этим значением вызывающая сторона сразу отвечает
-// подписчику, не дожидаясь следующего изменения статуса.
+// подписчику, не дожидаясь следующего изменения статуса. "В сети" тут —
+// то же самое, что и в IsOnline (foreground, а не просто открытый сокет).
 func (reg *ConnectionRegistry) SubscribePresence(subscriberID, targetID string) bool {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
@@ -141,9 +178,30 @@ func (reg *ConnectionRegistry) SubscribePresence(subscriberID, targetID string) 
 	}
 	reg.presenceSubs[targetID][subscriberID] = true
 
-	_, online := reg.conns[targetID]
+	entry, hasConn := reg.conns[targetID]
+	online := hasConn && entry.foreground
 	log.Printf("presence subscribe: %s -> %s (текущий online=%v)", subscriberID, targetID, online)
 	return online
+}
+
+// SetForeground — клиент явно сообщил, перешло ли приложение на передний
+// план (AppLifecycleState.resumed) или ушло с него (paused и т.п.) — см.
+// "presence_foreground" в websocket.go. Возвращает (online, changed):
+// online — актуальный статус ПОСЛЕ обновления (соединение всё ещё должно
+// быть живо — если устройство уже отключилось, менять нечего); changed —
+// действительно ли статус online изменился (вызывающая сторона рассылает
+// подписчикам только настоящие изменения, не на каждый вызов).
+func (reg *ConnectionRegistry) SetForeground(deviceID string, foreground bool) (online bool, changed bool) {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	entry, ok := reg.conns[deviceID]
+	if !ok {
+		return false, false
+	}
+	wasOnline := entry.foreground
+	entry.foreground = foreground
+	return foreground, wasOnline != foreground
 }
 
 // UnsubscribePresence — обратное действие (ушёл с экрана чата).
@@ -200,7 +258,7 @@ func (reg *ConnectionRegistry) RemoveIfCurrent(deviceID string, conn *websocket.
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 
-	if reg.conns[deviceID] == conn {
+	if entry, ok := reg.conns[deviceID]; ok && entry.conn == conn {
 		delete(reg.conns, deviceID)
 		return true
 	}
@@ -220,8 +278,8 @@ func (reg *ConnectionRegistry) RemoveIfCurrent(deviceID string, conn *websocket.
 func (reg *ConnectionRegistry) Broadcast(ctx context.Context, msgBytes []byte) {
 	reg.mu.Lock()
 	conns := make([]*websocket.Conn, 0, len(reg.conns))
-	for _, conn := range reg.conns {
-		conns = append(conns, conn)
+	for _, entry := range reg.conns {
+		conns = append(conns, entry.conn)
 	}
 	reg.mu.Unlock()
 
@@ -239,13 +297,13 @@ func (reg *ConnectionRegistry) Broadcast(ctx context.Context, msgBytes []byte) {
 */
 func (reg *ConnectionRegistry) CloseAndRemove(deviceID string) {
 	reg.mu.Lock()
-	conn, ok := reg.conns[deviceID]
+	entry, ok := reg.conns[deviceID]
 	if ok {
 		delete(reg.conns, deviceID)
 	}
 	reg.mu.Unlock()
 
 	if ok {
-		conn.Close(websocket.StatusPolicyViolation, "logged in on another device")
+		entry.conn.Close(websocket.StatusPolicyViolation, "logged in on another device")
 	}
 }

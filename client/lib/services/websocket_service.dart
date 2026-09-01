@@ -180,7 +180,9 @@ class WebSocketService {
       pingInterval: const Duration(seconds: 45),
     );
     _channel = channel;
-    DebugLog.log('WS _openConnection() opening channel=${identityHashCode(channel)}');
+    DebugLog.log(
+      'WS _openConnection() opening channel=${identityHashCode(channel)}',
+    );
 
     // connect() возвращает канал сразу, а само подключение (включая DNS)
     // происходит асинхронно — если сети нет ("Failed host lookup" и т.п.),
@@ -204,6 +206,15 @@ class WebSocketService {
             'isCurrent=${identical(_channel, channel)}',
           );
           _setStatus(ConnectionStatus.connected);
+          // Сервер по умолчанию считает свежее соединение "на переднем
+          // плане" (см. registry.Add на сервере) — верно почти всегда
+          // (WS поднимается именно при открытии приложения), НО не при
+          // переподключении после сетевого сбоя, пока приложение всё ещё
+          // свёрнуто/заблокировано: тогда дефолт был бы неверным, а никакой
+          // ДРУГОЙ сигнал сюда бы не пришёл (didChangeAppLifecycleState
+          // срабатывает только на настоящий переход, а не на реконнект).
+          // Досылаем актуальное состояние явно при КАЖДОМ подключении.
+          sendForegroundState(_lastKnownForeground);
         })
         .catchError((Object e) {
           // Могли успеть переподключиться другим циклом, пока эта, уже
@@ -258,7 +269,10 @@ class WebSocketService {
             final accountId = outer['AccountId'] as String?;
             final field = outer['Field'] as String?;
             if (accountId != null && field != null) {
-              _profileChangedController.add((accountId: accountId, field: field));
+              _profileChangedController.add((
+                accountId: accountId,
+                field: field,
+              ));
             }
             return;
           }
@@ -510,10 +524,32 @@ class WebSocketService {
 
   void unsubscribePresence(String peerDeviceId) {
     _channel?.sink.add(
-      jsonEncode({
-        'Type': 'presence_unsubscribe',
-        'ToDeviceId': peerDeviceId,
-      }),
+      jsonEncode({'Type': 'presence_unsubscribe', 'ToDeviceId': peerDeviceId}),
+    );
+  }
+
+  /// ТЗ пользователя: "онлайн" должно значить "пользователь сам открыл
+  /// приложение", а не "у него просто тихо висит открытый сокет" (реальная
+  /// жалоба — заблокированный, нетронутый часами телефон показывался
+  /// online: клиент специально НЕ закрывает WS при сворачивании — держит
+  /// живым ради мгновенной доставки в фоне, это остаётся как есть — но
+  /// сам факт соединения перестал быть тем же самым, что и "онлайн" для
+  /// статуса, который видят другие). Вызывается из
+  /// HomePlaceholderScreen.didChangeAppLifecycleState на каждый переход
+  /// resumed/paused — соединение (доставку сообщений/звонков) это никак
+  /// не затрагивает, только то, что видят подписчики на presence (см.
+  /// SetForeground на сервере).
+  ///
+  /// Запоминается в _lastKnownForeground и досылается заново при КАЖДОМ
+  /// (пере)подключении — см. её вызов в _openConnection: сервер иначе
+  /// по умолчанию считал бы свежее соединение "на переднем плане", что
+  /// неверно, если реконнект случился, пока приложение всё ещё свёрнуто.
+  bool _lastKnownForeground = true;
+
+  void sendForegroundState(bool foreground) {
+    _lastKnownForeground = foreground;
+    _channel?.sink.add(
+      jsonEncode({'Type': 'presence_foreground', 'Foreground': foreground}),
     );
   }
 
@@ -524,5 +560,4 @@ class WebSocketService {
       jsonEncode({'Type': 'typing', 'ToDeviceId': peerDeviceId}),
     );
   }
-
 }

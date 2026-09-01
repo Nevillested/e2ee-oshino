@@ -94,6 +94,35 @@ class CallService {
   DateTime? _connectedAt;
   bool _isOutgoingCall = false;
 
+  // "Perfect negotiation" (см. case 'call_offer' ниже и _renegotiate) —
+  // реальный кейс с двух живых телефонов: оба собеседника включили видео
+  // почти одновременно (в пределах пары секунд), оба вызвали createOffer()
+  // и оба оказались в signalingState=have-local-offer. Когда офер
+  // собеседника пришёл, локальный peerConnection был занят СВОИМ ещё не
+  // подтверждённым офером — setRemoteDescription() падал нативной ошибкой
+  // "Called in wrong state: have-local-offer" (видно в логе обоих
+  // устройств), answer на чужой офер никогда не отправлялся, и видео
+  // "второго" собеседника застревало навсегда. Чтобы разрешать такие
+  // коллизии детерминированно на обеих сторонах без сговора по сети,
+  // ровно как в стандартном паттерне WebRTC "perfect negotiation": одна
+  // сторона звонка всегда "вежливая" (polite) — откатывает свой офер и
+  // принимает чужой, другая — "невежливая" (impolite) — игнорирует чужой
+  // коллизионный офер и ждёт ответа на свой. Каждый звонок имеет ровно
+  // одного инициатора и одного принимающего, так что _isOutgoingCall
+  // (уже проставляется во всех местах, где меняется его значение) сама по
+  // себе на обеих сторонах звонка всегда взаимно-противоположна — этого
+  // достаточно, отдельная синхронизация ролей по сети не нужна.
+  bool get _polite => !_isOutgoingCall;
+
+  // true между createOffer()/setLocalDescription() внутри _renegotiate() и
+  // их завершением — нужен для полноценного определения коллизии на
+  // "вежливой" стороне (см. offerCollision ниже): её локальный
+  // signalingState в момент получения чужого офера может ещё быть
+  // "stable" (если сам createOffer/setLocalDescription этой стороны ещё не
+  // успел выполниться), но офер уже "в процессе создания" — без этого
+  // флага такая гонка осталась бы необнаруженной.
+  bool _makingOffer = false;
+
   /// Момент реального ответа на звонок — источник истины для счётчика
   /// длительности на экране звонка и для лога звонка в чате (везде, где
   /// фиксируется длительность, она считается именно от этого момента).
@@ -383,6 +412,7 @@ class CallService {
 
   void _setState(CallState s) {
     debugPrint('CallService: _setState: $_state -> $s');
+    DebugLog.log('CallService _setState: $_state -> $s');
     _state = s;
     _stateController.add(s);
 
@@ -688,6 +718,10 @@ class CallService {
     };
 
     _peerConnection!.onTrack = (event) {
+      DebugLog.log(
+        'CallService onTrack: kind=${event.track.kind} trackId=${event.track.id} '
+        'streams=${event.streams.length}',
+      );
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams.first;
         _remoteStreamController.add(_remoteStream);
@@ -695,6 +729,7 @@ class CallService {
     };
 
     _peerConnection!.onConnectionState = (connState) {
+      DebugLog.log('CallService onConnectionState: $connState');
       if (connState == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         _setState(CallState.connected);
       } else if (connState ==
@@ -703,20 +738,53 @@ class CallService {
       }
     };
 
+    // Раньше нигде не слушались — а именно ICE connection state честно
+    // показывает, реально ли идёт медиа (RTCPeerConnectionState иногда
+    // остаётся "connected" даже когда сам ICE потом уходит в disconnected/
+    // failed и восстанавливается) и signaling state — тот самый, вокруг
+    // которого построена вся защита от коллизий renegotiation выше
+    // (_polite/_makingOffer) — полезно видеть его смену целиком, а не
+    // только в отдельных местах, где мы сами его логируем point-in-time.
+    _peerConnection!.onIceConnectionState = (iceState) {
+      DebugLog.log('CallService onIceConnectionState: $iceState');
+    };
+    _peerConnection!.onSignalingState = (signalingState) {
+      DebugLog.log('CallService onSignalingState: $signalingState');
+    };
+
     // Срабатывает, когда мы добавляем/убираем дорожку (например, включаем
     // видео посреди разговора) — соединение уже установлено, поэтому
     // нужно провести повторное согласование (renegotiation), а не полный
     // новый звонок.
     _peerConnection!.onRenegotiationNeeded = () async {
+      DebugLog.log('CallService onRenegotiationNeeded fired, state=$_state');
       if (_state != CallState.connected) return;
       await _renegotiate();
     };
   }
 
   Future<void> _renegotiate() async {
-    final offer = await _peerConnection!.createOffer();
-    await _peerConnection!.setLocalDescription(offer);
-    await _send('call_offer', {'sdp': offer.sdp, 'renegotiation': true});
+    final signalingBefore = _peerConnection?.signalingState;
+    DebugLog.log(
+      'CallService _renegotiate() start signalingState=$signalingBefore',
+    );
+    _makingOffer = true;
+    try {
+      final offer = await _peerConnection!.createOffer();
+      await _peerConnection!.setLocalDescription(offer);
+      await _send('call_offer', {'sdp': offer.sdp, 'renegotiation': true});
+      DebugLog.log(
+        'CallService _renegotiate() offer отправлен, '
+        'signalingState=${_peerConnection!.signalingState}',
+      );
+    } catch (e, st) {
+      DebugLog.log(
+        'CallService _renegotiate() FAILED (был signalingState=$signalingBefore): $e',
+      );
+      debugPrint('CallService _renegotiate() FAILED: $e\n$st');
+    } finally {
+      _makingOffer = false;
+    }
   }
 
   /// Открываем ТОЛЬКО микрофон при старте звонка — камера не трогается
@@ -744,6 +812,7 @@ class CallService {
   }
 
   Future<void> startCall(String peerDeviceId) async {
+    DebugLog.log('CallService startCall() peerDeviceId=$peerDeviceId');
     _callId = _uuid.v4();
     _peerDeviceId = peerDeviceId;
     micEnabled = true;
@@ -785,11 +854,21 @@ class CallService {
   bool _accepting = false;
 
   Future<void> acceptCall() async {
-    if (_pendingOfferSdp == null || _accepting) return;
+    if (_pendingOfferSdp == null || _accepting) {
+      DebugLog.log(
+        'CallService acceptCall() SKIP — pendingOfferSdp='
+        '${_pendingOfferSdp != null}, accepting=$_accepting',
+      );
+      return;
+    }
     // Уже приняли/уже разговариваем — тот же случай, что и выше, но когда
     // предыдущий acceptCall() успел полностью завершиться до того, как
     // сработал второй путь.
-    if (_state == CallState.connected) return;
+    if (_state == CallState.connected) {
+      DebugLog.log('CallService acceptCall() SKIP — уже state=connected');
+      return;
+    }
+    DebugLog.log('CallService acceptCall() старт, peerDeviceId=$_peerDeviceId');
     _accepting = true;
     try {
       micEnabled = true;
@@ -817,6 +896,11 @@ class CallService {
       await _send('call_answer', {'sdp': answer.sdp});
       _setStatus(tr('call.connecting'));
       _setState(CallState.connected);
+      DebugLog.log('CallService acceptCall() успешно завершён');
+    } catch (e, st) {
+      DebugLog.log('CallService acceptCall() FAILED error=$e');
+      debugPrint('CallService acceptCall() FAILED: $e\n$st');
+      rethrow;
     } finally {
       _accepting = false;
     }
@@ -826,12 +910,18 @@ class CallService {
     debugPrint(
       'CallService: declineCall() вызван, state=$_state, peerDeviceId=$_peerDeviceId, callId=$_callId',
     );
+    DebugLog.log(
+      'CallService declineCall() state=$_state peerDeviceId=$_peerDeviceId callId=$_callId',
+    );
     await _send('call_reject', {});
     await _resetLocal();
     debugPrint('CallService: declineCall() завершён, state=$_state');
   }
 
   Future<void> cancelCall() async {
+    DebugLog.log(
+      'CallService cancelCall() peerDeviceId=$_peerDeviceId callId=$_callId',
+    );
     await _send('call_cancel', {});
     await _resetLocal();
   }
@@ -840,6 +930,10 @@ class CallService {
     debugPrint(
       'CallService: endCall() вызван, notifyRemote=$notifyRemote, '
       'state=$_state, peerDeviceId=$_peerDeviceId, callId=$_callId',
+    );
+    DebugLog.log(
+      'CallService endCall() notifyRemote=$notifyRemote state=$_state '
+      'peerDeviceId=$_peerDeviceId callId=$_callId',
     );
     if (notifyRemote && _peerDeviceId != null) {
       await _send('call_end', {});
@@ -851,6 +945,10 @@ class CallService {
   Future<void> _resetLocal({bool peerWasUnavailable = false}) async {
     debugPrint(
       'CallService: _resetLocal() старт, state=$_state, peerWasUnavailable=$peerWasUnavailable',
+    );
+    DebugLog.log(
+      'CallService _resetLocal() старт, state=$_state, '
+      'peerWasUnavailable=$peerWasUnavailable, signalingState=${_peerConnection?.signalingState}',
     );
     // На всякий случай — если по какой-то причине нативный
     // foreground-service звонка ещё активен, гасим его вместе с обычным
@@ -992,8 +1090,14 @@ class CallService {
   /// enabled на уже существующей дорожке, без повторного захвата камеры.
   Future<void> toggleVideo() async {
     videoEnabled = !videoEnabled;
+    final firstTimeThisCall = videoEnabled && _videoTrack == null;
+    DebugLog.log(
+      'CallService toggleVideo() -> $videoEnabled '
+      '(firstTimeThisCall=$firstTimeThisCall, '
+      'signalingState=${_peerConnection?.signalingState})',
+    );
 
-    if (videoEnabled && _videoTrack == null) {
+    if (firstTimeThisCall) {
       final videoStream = await navigator.mediaDevices.getUserMedia({
         'video': {'facingMode': 'user'},
       });
@@ -1034,22 +1138,57 @@ class CallService {
   /// в уже согласованном соединении БЕЗ renegotiation (в отличие от
   /// addTrack/removeTrack) — собеседник просто увидит новый кадр в том же
   /// видеопотоке.
+  ///
+  /// ВАЖНО (реальный кейс с Pixel 3, см. debug_log + logcat): раньше
+  /// новая камера запрашивалась через getUserMedia() ДО остановки старой
+  /// дорожки — по логу видно, что на этом устройстве Camera2-слой не
+  /// может держать одновременно открытыми фронтальную И тыловую камеру:
+  /// "Camera device could not be opened because there are too many other
+  /// open camera devices". Получившийся (сломанный) трек всё равно
+  /// подставлялся в рендерер, который из-за отсутствия новых кадров
+  /// просто застывал на последнем кадре старой камеры — разворот внешне
+  /// выглядел так, будто "ничего не произошло, картинка зависла". Теперь
+  /// старая камера явно останавливается ПЕРВОЙ, и только потом
+  /// запрашивается новая.
   Future<void> switchCamera() async {
     final oldTrack = _videoTrack;
     if (oldTrack == null || _switchingCamera || _peerConnection == null) {
       return;
     }
     _switchingCamera = true;
-    final nextFacingMode = _usingFrontCamera ? 'environment' : 'user';
+    final wasFront = _usingFrontCamera;
+    final nextFacingMode = wasFront ? 'environment' : 'user';
     DebugLog.log(
-      'CallService switchCamera() start, currentlyFront=$_usingFrontCamera '
+      'CallService switchCamera() start, currentlyFront=$wasFront '
       '-> requesting facingMode=$nextFacingMode',
     );
     try {
-      final newStream = await navigator.mediaDevices.getUserMedia({
-        'video': {'facingMode': nextFacingMode},
-      });
-      final newTrack = newStream.getVideoTracks().first;
+      // Сначала отпускаем старую камеру — см. комментарий выше метода.
+      await localStream?.removeTrack(oldTrack);
+      oldTrack.stop();
+
+      var actualFacingMode = nextFacingMode;
+      MediaStreamTrack newTrack;
+      try {
+        final newStream = await navigator.mediaDevices.getUserMedia({
+          'video': {'facingMode': nextFacingMode},
+        });
+        newTrack = newStream.getVideoTracks().first;
+      } catch (e) {
+        // Новую камеру открыть не удалось (например, та же нехватка
+        // ресурсов Camera2 по другой причине) — старая уже остановлена,
+        // так что пытаемся вернуть хотя бы её, лишь бы не остаться вовсе
+        // без видео из-за неудачного разворота.
+        DebugLog.log(
+          'CallService switchCamera() getUserMedia($nextFacingMode) FAILED: $e '
+          '— пробую вернуть исходную facingMode=${wasFront ? 'user' : 'environment'}',
+        );
+        actualFacingMode = wasFront ? 'user' : 'environment';
+        final revertStream = await navigator.mediaDevices.getUserMedia({
+          'video': {'facingMode': actualFacingMode},
+        });
+        newTrack = revertStream.getVideoTracks().first;
+      }
 
       final senders = await _peerConnection!.getSenders();
       for (final sender in senders) {
@@ -1058,11 +1197,9 @@ class CallService {
         }
       }
 
-      await localStream?.removeTrack(oldTrack);
       await localStream?.addTrack(newTrack);
-      oldTrack.stop();
       _videoTrack = newTrack;
-      _usingFrontCamera = !_usingFrontCamera;
+      _usingFrontCamera = actualFacingMode == 'user';
       DebugLog.log(
         'CallService switchCamera() done, nowFront=$_usingFrontCamera',
       );
@@ -1148,6 +1285,14 @@ class CallService {
     // его переносим, чтобы остальной код ниже читал его из одного места.
     payload['call_id'] = envelope['call_id'];
 
+    // Общая точка входа для ВСЕХ успешно расшифрованных сигналов звонка —
+    // даёт цельную временную шкалу (кто/что/когда пришло) даже для типов,
+    // которые ниже по отдельности не логируются в файл.
+    DebugLog.log(
+      'CallService _handleSignal: type=$type from=$senderDeviceId state=$_state '
+      'signalingState=${_peerConnection?.signalingState}',
+    );
+
     switch (type) {
       case 'call_offer':
         final isRenegotiation = payload['renegotiation'] == true;
@@ -1168,12 +1313,69 @@ class CallService {
           // собеседник только что включил видео) — не новый вызов.
           final sdp = payload['sdp'] as String?;
           if (sdp == null) return;
-          await _peerConnection!.setRemoteDescription(
-            RTCSessionDescription(sdp, 'offer'),
+          // Диагностика жалобы "видео у ВТОРОГО включившего не доходит до
+          // собеседника" — раньше этот путь был полностью немым, никакого
+          // способа узнать, дошло ли повторное согласование до конца, или
+          // упало где-то по пути (например, signalingState в момент
+          // применения offer'а — за пределами 'stable'/'have-local-offer'
+          // WebRTC саму заявку может отклонить).
+          final signalingBefore = _peerConnection!.signalingState;
+
+          // Коллизия ("glare"): оба собеседника включили видео почти
+          // одновременно, у нас у самих либо уже есть неподтверждённый
+          // локальный офер (signalingState=have-local-offer), либо мы прямо
+          // сейчас его создаём (_makingOffer, см. _renegotiate) — подтверждено
+          // логами с двух живых устройств: именно это давало нативную
+          // ошибку "Called in wrong state: have-local-offer", answer на
+          // офер собеседника не отправлялся, и его видео пропадало
+          // насовсем. См. _polite/_makingOffer — стандартный паттерн
+          // WebRTC "perfect negotiation".
+          final offerCollision =
+              _makingOffer ||
+              signalingBefore != RTCSignalingState.RTCSignalingStateStable;
+          if (offerCollision && !_polite) {
+            // "Невежливая" сторона просто игнорирует чужой коллизионный
+            // офер — наш собственный офер уже letит собеседнику, он его
+            // (как "вежливая" сторона) применит вместо своего откаченного
+            // и пришлёт нам answer штатно.
+            DebugLog.log(
+              'CallService renegotiation OFFER from=$senderDeviceId — '
+              'коллизия (signalingState=$signalingBefore, makingOffer=$_makingOffer), '
+              'мы impolite — игнорируем чужой offer',
+            );
+            return;
+          }
+          DebugLog.log(
+            'CallService renegotiation OFFER from=$senderDeviceId '
+            'signalingState=$signalingBefore collision=$offerCollision polite=$_polite',
           );
-          final answer = await _peerConnection!.createAnswer();
-          await _peerConnection!.setLocalDescription(answer);
-          await _send('call_answer', {'sdp': answer.sdp});
+          try {
+            if (offerCollision) {
+              // "Вежливая" сторона откатывает свой ещё не подтверждённый
+              // локальный офер — трек (например, только что включённое
+              // своё видео), уже добавленный в peerConnection, никуда не
+              // девается, и onRenegotiationNeeded сработает для него снова
+              // сам, как только соединение вернётся в stable.
+              await _peerConnection!.setLocalDescription(
+                RTCSessionDescription('', 'rollback'),
+              );
+            }
+            await _peerConnection!.setRemoteDescription(
+              RTCSessionDescription(sdp, 'offer'),
+            );
+            final answer = await _peerConnection!.createAnswer();
+            await _peerConnection!.setLocalDescription(answer);
+            await _send('call_answer', {'sdp': answer.sdp});
+            DebugLog.log(
+              'CallService renegotiation: answer отправлен, '
+              'signalingState=${_peerConnection!.signalingState}',
+            );
+          } catch (e, st) {
+            DebugLog.log(
+              'CallService renegotiation FAILED (был signalingState=$signalingBefore): $e',
+            );
+            debugPrint('CallService renegotiation FAILED: $e\n$st');
+          }
           return;
         }
 
@@ -1229,17 +1431,32 @@ class CallService {
         if (sdp == null || _peerConnection == null) return;
         // Реальный кейс с устройства: "Called in wrong state: stable" —
         // повторно доставленный (ретрай/переподключение) call_answer для
-        // уже отвеченного звонка. После первого успешного
+        // уже отвеченного звонка. После успешного
         // setRemoteDescription(answer) peerConnection переходит в
         // signalingState=stable, и WebRTC сам не даёт применить answer
         // ещё раз поверх него (валидно только из have-local-offer) —
         // раньше это било необработанным исключением прямо в лог.
-        // _remoteDescriptionSet — тот же флаг, что уже используется чуть
-        // ниже для очереди ICE-кандидатов, тут просто как гвард
-        // идемпотентности первого применения.
-        if (_remoteDescriptionSet) {
+        //
+        // ВАЖНО: раньше здесь гвардом стоял _remoteDescriptionSet (просто
+        // bool, "уже применяли хоть раз") — он ловил дубль ПЕРВОГО ответа,
+        // но НАВСЕГДА блокировал бы и все последующие, легитимные ответы
+        // на повторные согласования (см. _renegotiate — например,
+        // собеседник включает видео ВТОРЫМ по счёту посреди звонка): флаг
+        // выставляется один раз и никогда не сбрасывается, хотя
+        // signalingState между звонком и этими renegotiation-циклами
+        // абсолютно нормально бывает то stable, то have-local-offer.
+        // Проверяем СЕЙЧАС актуальное signalingState вместо одноразового
+        // флага — answer валиден ТОЛЬКО из have-local-offer, ровно то же
+        // самое условие, что и у самого WebRTC внутри, поэтому дубль
+        // ловится (state уже stable после первого применения), а
+        // легитимный ответ на новое согласование — нет (state снова
+        // have-local-offer к моменту его прихода).
+        final signalingState = _peerConnection!.signalingState;
+        if (signalingState !=
+            RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
           DebugLog.log(
-            'CallService call_answer: remote description уже установлена — дубль, игнорирую',
+            'CallService call_answer: signalingState=$signalingState '
+            '(не have-local-offer) — дубль или устаревший ответ, игнорирую',
           );
           return;
         }
@@ -1262,12 +1479,23 @@ class CallService {
         if (_remoteDescriptionSet && _peerConnection != null) {
           await _peerConnection!.addCandidate(candidate);
         } else {
+          // Реальный диагностический интерес — сколько кандидатов
+          // накопилось в очереди до того, как remote description вообще
+          // применилась: если их аномально много, стоит присмотреться к
+          // задержке между call_offer/call_answer и этим кадром.
           _pendingRemoteCandidates.add(candidate);
+          DebugLog.log(
+            'CallService call_ice: remote description ещё не установлена — '
+            'ставлю в очередь (queued=${_pendingRemoteCandidates.length})',
+          );
         }
         break;
 
       case 'call_video_state':
         remoteVideoEnabled = payload['enabled'] as bool? ?? false;
+        DebugLog.log(
+          'CallService call_video_state: remoteVideoEnabled=$remoteVideoEnabled',
+        );
         _remoteVideoStateController.add(remoteVideoEnabled);
         PipService.setRemoteVideoActive(remoteVideoEnabled);
         await _updateWakelock();

@@ -672,6 +672,18 @@ class AppStrings {
       AppLocale.ru: 'Сохранено в галерею',
       AppLocale.en: 'Saved to gallery',
     },
+    'chat.saveToDevice': {
+      AppLocale.ru: 'Сохранить на устройство',
+      AppLocale.en: 'Save to device',
+    },
+    'chat.savedToDevice': {
+      AppLocale.ru: 'Сохранено на устройство',
+      AppLocale.en: 'Saved to device',
+    },
+    'chat.saveToDeviceFailed': {
+      AppLocale.ru: 'Не удалось сохранить файл',
+      AppLocale.en: 'Failed to save the file',
+    },
     'mediaViewer.saveFailed': {
       AppLocale.ru: 'Не удалось сохранить',
       AppLocale.en: 'Failed to save',

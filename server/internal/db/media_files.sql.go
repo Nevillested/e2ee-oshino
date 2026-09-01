@@ -69,3 +69,41 @@ func (q *Queries) SaveMediaFile(ctx context.Context, arg SaveMediaFileParams) (M
 	)
 	return i, err
 }
+
+const saveMediaFileWithID = `-- name: SaveMediaFileWithID :one
+INSERT INTO media_files (id, uploaded_by_account_id, recipient_account_id, object_key, size_bytes)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, uploaded_by_account_id, recipient_account_id, object_key, size_bytes, created_at
+`
+
+type SaveMediaFileWithIDParams struct {
+	ID                  pgtype.UUID
+	UploadedByAccountID pgtype.UUID
+	RecipientAccountID  pgtype.UUID
+	ObjectKey           string
+	SizeBytes           int64
+}
+
+// докачка по кусочкам (upload_media_chunked.go): id объекта в MinIO выбирает
+// сам сервер ещё на шаге /init (до того, как файл целиком долетел), поэтому
+// здесь id передаётся явно, а не генерируется базой — строка в БД создаётся
+// только при успешном /complete, тот же id, что и ключ объекта в MinIO.
+func (q *Queries) SaveMediaFileWithID(ctx context.Context, arg SaveMediaFileWithIDParams) (MediaFile, error) {
+	row := q.db.QueryRow(ctx, saveMediaFileWithID,
+		arg.ID,
+		arg.UploadedByAccountID,
+		arg.RecipientAccountID,
+		arg.ObjectKey,
+		arg.SizeBytes,
+	)
+	var i MediaFile
+	err := row.Scan(
+		&i.ID,
+		&i.UploadedByAccountID,
+		&i.RecipientAccountID,
+		&i.ObjectKey,
+		&i.SizeBytes,
+		&i.CreatedAt,
+	)
+	return i, err
+}

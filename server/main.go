@@ -87,6 +87,12 @@ func main() {
 	mux.HandleFunc("GET /accounts/{login}/devices", api.NewGetDevicesByLoginHandler(queries))
 	mux.HandleFunc("GET /devices/{device_id}/owner", api.NewGetDeviceOwnerHandler(queries))
 	mux.HandleFunc("POST /upload-media", api.NewUploadMediaHandler(queries, minioClient))
+	//докачка больших файлов по кусочкам — см. upload_media_chunked.go
+	mux.HandleFunc("POST /upload-media/init", api.NewInitChunkedUploadHandler(queries, minioClient))
+	mux.HandleFunc("PUT /upload-media/{media_id}/part/{part_number}", api.NewUploadChunkedPartHandler(queries, minioClient))
+	mux.HandleFunc("GET /upload-media/{media_id}/parts", api.NewListChunkedPartsHandler(queries, minioClient))
+	mux.HandleFunc("POST /upload-media/{media_id}/complete", api.NewCompleteChunkedUploadHandler(queries, minioClient))
+	mux.HandleFunc("POST /upload-media/{media_id}/abort", api.NewAbortChunkedUploadHandler(queries, minioClient))
 	mux.HandleFunc("GET /media/{id}", api.NewGetMediaHandler(queries, minioClient))
 	mux.HandleFunc("GET /session/check", api.NewSessionCheckHandler(queries))
 	mux.HandleFunc("DELETE /account", api.NewDeleteAccountHandler(queries))
