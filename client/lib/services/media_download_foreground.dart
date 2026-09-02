@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+import '../l10n/app_strings.dart';
 import 'debug_log.dart';
 
 /// Обёртка над нативным MediaDownloadForegroundService (Android): тонкий
@@ -23,11 +24,18 @@ class MediaDownloadForeground {
 
   static bool _running = false;
 
-  static Future<void> start(String text) async {
+  static Future<void> start() async {
     if (!Platform.isAndroid || _running) return;
     _running = true;
     try {
-      await _channel.invokeMethod<void>('start', {'text': text});
+      // Все тексты уведомления передаём с Dart-стороны через tr() — движок
+      // скачивания живёт в основном изоляте, где AppStrings.locale уже
+      // соответствует выбранному в приложении языку (см. LocaleStore).
+      await _channel.invokeMethod<void>('start', {
+        'text': tr('notification.downloadingFiles'),
+        'channelName': tr('notification.downloadsChannelName'),
+        'channelDescription': tr('notification.downloadsChannelDescription'),
+      });
     } catch (e) {
       _running = false;
       DebugLog.log('MediaDownloadForeground.start failed: $e');

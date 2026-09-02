@@ -276,7 +276,7 @@ class MediaDownloadManager {
     if (want == _fgsOn) return;
     _fgsOn = want;
     if (want) {
-      unawaited(MediaDownloadForeground.start('Загрузка файлов'));
+      unawaited(MediaDownloadForeground.start());
     } else {
       unawaited(MediaDownloadForeground.stop());
     }

@@ -638,6 +638,18 @@ class AppStrings {
       AppLocale.ru: 'Новые сообщения',
       AppLocale.en: 'New messages',
     },
+    'notification.downloadingFiles': {
+      AppLocale.ru: 'Загрузка файлов',
+      AppLocale.en: 'Downloading files',
+    },
+    'notification.downloadsChannelName': {
+      AppLocale.ru: 'Загрузка файлов',
+      AppLocale.en: 'File downloads',
+    },
+    'notification.downloadsChannelDescription': {
+      AppLocale.ru: 'Пока приложение свёрнуто, продолжается скачивание файлов',
+      AppLocale.en: 'Downloads keep running while the app is in the background',
+    },
     'deleteMessage.title': {
       AppLocale.ru: 'Удалить сообщение?',
       AppLocale.en: 'Delete message?',

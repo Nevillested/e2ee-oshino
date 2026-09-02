@@ -35,11 +35,20 @@ class MediaDownloadForegroundService : Service() {
         const val ACTION_START = "com.oshinobu.oshinobu_client.media_dl.START"
         const val ACTION_STOP = "com.oshinobu.oshinobu_client.media_dl.STOP"
         const val EXTRA_TEXT = "text"
+        const val EXTRA_CHANNEL_NAME = "channelName"
+        const val EXTRA_CHANNEL_DESC = "channelDescription"
 
-        fun start(context: Context, text: String) {
+        fun start(
+            context: Context,
+            text: String,
+            channelName: String,
+            channelDescription: String,
+        ) {
             val intent = Intent(context, MediaDownloadForegroundService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_TEXT, text)
+                putExtra(EXTRA_CHANNEL_NAME, channelName)
+                putExtra(EXTRA_CHANNEL_DESC, channelDescription)
             }
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -78,7 +87,9 @@ class MediaDownloadForegroundService : Service() {
         }
 
         val text = intent?.getStringExtra(EXTRA_TEXT) ?: "Загрузка файлов"
-        ensureChannel()
+        val channelName = intent?.getStringExtra(EXTRA_CHANNEL_NAME) ?: "Загрузка файлов"
+        val channelDescription = intent?.getStringExtra(EXTRA_CHANNEL_DESC) ?: ""
+        ensureChannel(channelName, channelDescription)
         val notification = buildNotification(text)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -117,20 +128,21 @@ class MediaDownloadForegroundService : Service() {
             .build()
     }
 
-    private fun ensureChannel() {
+    private fun ensureChannel(name: String, description: String) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (mgr.getNotificationChannel(CHANNEL_ID) == null) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Загрузка файлов",
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply {
-                setShowBadge(false)
-                description = "Пока приложение свёрнуто, продолжается скачивание файлов"
-            }
-            mgr.createNotificationChannel(channel)
+        // createNotificationChannel с тем же ID обновляет имя/описание —
+        // так канал в системных настройках переедет на язык, выбранный в
+        // приложении, если пользователь его сменит.
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            name,
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            setShowBadge(false)
+            if (description.isNotEmpty()) this.description = description
         }
+        mgr.createNotificationChannel(channel)
     }
 
     private fun stopForegroundCompat() {

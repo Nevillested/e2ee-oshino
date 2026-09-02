@@ -381,7 +381,11 @@ class MainActivity : FlutterFragmentActivity() {
             when (call.method) {
                 "start" -> {
                     val text = call.argument<String>("text") ?: "Загрузка файлов"
-                    MediaDownloadForegroundService.start(applicationContext, text)
+                    val channelName = call.argument<String>("channelName") ?: "Загрузка файлов"
+                    val channelDescription = call.argument<String>("channelDescription") ?: ""
+                    MediaDownloadForegroundService.start(
+                        applicationContext, text, channelName, channelDescription,
+                    )
                     result.success(null)
                 }
                 "stop" -> {
