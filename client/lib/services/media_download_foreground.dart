@@ -23,21 +23,30 @@ class MediaDownloadForeground {
   );
 
   static bool _running = false;
+  static String? _currentText;
 
-  static Future<void> start() async {
-    if (!Platform.isAndroid || _running) return;
+  /// [text] — заголовок уведомления, зависит от того, что сейчас идёт
+  /// (скачивание / выгрузка / и то и другое) — см.
+  /// MediaDownloadManager._syncForegroundService. Повторный вызов с новым
+  /// текстом обновляет уже показанное уведомление (нативный onStartCommand
+  /// снова зовёт startForeground с новой строкой).
+  static Future<void> start({required String text}) async {
+    if (!Platform.isAndroid) return;
+    if (_running && _currentText == text) return;
     _running = true;
+    _currentText = text;
     try {
       // Все тексты уведомления передаём с Dart-стороны через tr() — движок
-      // скачивания живёт в основном изоляте, где AppStrings.locale уже
+      // передач живёт в основном изоляте, где AppStrings.locale уже
       // соответствует выбранному в приложении языку (см. LocaleStore).
       await _channel.invokeMethod<void>('start', {
-        'text': tr('notification.downloadingFiles'),
-        'channelName': tr('notification.downloadsChannelName'),
-        'channelDescription': tr('notification.downloadsChannelDescription'),
+        'text': text,
+        'channelName': tr('notification.transfersChannelName'),
+        'channelDescription': tr('notification.transfersChannelDescription'),
       });
     } catch (e) {
       _running = false;
+      _currentText = null;
       DebugLog.log('MediaDownloadForeground.start failed: $e');
     }
   }
@@ -45,6 +54,7 @@ class MediaDownloadForeground {
   static Future<void> stop() async {
     if (!Platform.isAndroid || !_running) return;
     _running = false;
+    _currentText = null;
     try {
       await _channel.invokeMethod<void>('stop');
     } catch (e) {

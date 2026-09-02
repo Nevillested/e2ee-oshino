@@ -7,6 +7,7 @@ import 'package:dio/dio.dart' as dio;
 import '../api/api_client.dart';
 import '../crypto/media_cipher.dart';
 import '../crypto/streaming_file_cipher.dart';
+import '../l10n/app_strings.dart';
 import '../session.dart';
 import '../storage/download_queue_store.dart';
 import '../storage/media_cache.dart';
@@ -542,15 +543,30 @@ class MediaDownloadManager {
   }
 
   bool _fgsOn = false;
+  String? _fgsText;
   void _syncForegroundService() {
-    final want = _manualQueue.isNotEmpty || _fileUploadActive;
-    if (want == _fgsOn) return;
-    _fgsOn = want;
-    if (want) {
-      unawaited(MediaDownloadForeground.start());
-    } else {
-      unawaited(MediaDownloadForeground.stop());
+    // «Скачивание» = непустая ручная очередь (авто-очередь FGS не держит).
+    // «Выгрузка» = активная загрузка файла в воркере PendingSendRetrier.
+    final downloading = _manualQueue.isNotEmpty;
+    final uploading = _fileUploadActive;
+    if (!downloading && !uploading) {
+      if (_fgsOn) {
+        _fgsOn = false;
+        _fgsText = null;
+        unawaited(MediaDownloadForeground.stop());
+      }
+      return;
     }
+    final key = downloading && uploading
+        ? 'notification.downloadingAndUploadingFiles'
+        : uploading
+        ? 'notification.uploadingFiles'
+        : 'notification.downloadingFiles';
+    final text = tr(key);
+    if (_fgsOn && text == _fgsText) return;
+    _fgsOn = true;
+    _fgsText = text;
+    unawaited(MediaDownloadForeground.start(text: text));
   }
 
   DownloadSnapshot snapshot() {

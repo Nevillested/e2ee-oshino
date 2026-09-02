@@ -86,8 +86,11 @@ class MediaDownloadForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        val text = intent?.getStringExtra(EXTRA_TEXT) ?: "Загрузка файлов"
-        val channelName = intent?.getStringExtra(EXTRA_CHANNEL_NAME) ?: "Загрузка файлов"
+        // Тексты всегда приходят с Dart-стороны уже локализованными
+        // (см. MediaDownloadForeground) — фолбэки тут только на случай
+        // отсутствия extra, до пользователя доходить не должны.
+        val text = intent?.getStringExtra(EXTRA_TEXT) ?: "File transfers"
+        val channelName = intent?.getStringExtra(EXTRA_CHANNEL_NAME) ?: "File transfers"
         val channelDescription = intent?.getStringExtra(EXTRA_CHANNEL_DESC) ?: ""
         ensureChannel(channelName, channelDescription)
         val notification = buildNotification(text)

@@ -86,6 +86,20 @@ private const val EXTRA_OPEN_CALL_SCREEN = "oshinobu.OPEN_CALL_SCREEN"
 // ЖИВОЙ движок из кэша и зовёт его напрямую.
 private const val MAIN_ENGINE_ID = "main_engine"
 
+// Процессно-глобальный признак "прямо сейчас идёт звонок" (Dart шлёт его
+// через setCallActive). Именно и ТОЛЬКО ради переживания звонком
+// смахивания задачи из "недавних" мы держим FlutterEngine живым между
+// Activity (см. shouldDestroyEngineWithHost / provideFlutterEngine ниже).
+// Вне звонка удержание движка не нужно и вредно: если процесс уцелел
+// (например, из-за foreground-сервиса скачивания), но Activity была
+// пересоздана, переиспользование уже частично отсоединённого движка роняет
+// приложение в FlutterJNI.setViewportMetrics → "not attached to native"
+// (реальный кейс с устройства: поставил файлы на скачивание, свернул,
+// смахнул уведомление — при следующем запуске чёрный экран). Поле
+// класса callActive для этого не годится — оно умирает вместе с Activity;
+// нужен именно процессный флаг. Все обращения — с главного потока.
+private var callActiveProcessWide = false
+
 // FlutterFragmentActivity (не обычная FlutterActivity) — обязательное
 // требование local_auth на Android: системный BiometricPrompt (отпечаток/
 // распознавание лица, см. app_lock_store.dart) работает только через
@@ -153,16 +167,39 @@ class MainActivity : FlutterFragmentActivity() {
     // (например, банальная нехватка памяти без активного foreground-сервиса),
     // кэш умирает вместе с ним, и следующий запуск как обычно поднимет всё
     // с нуля.
-    override fun shouldDestroyEngineWithHost(): Boolean = false
+    // Движок держим живым между Activity ТОЛЬКО пока идёт звонок — см.
+    // callActiveProcessWide. Вне звонка ведём себя как обычная Flutter-
+    // Activity: движок уничтожается вместе с хостом, следующий запуск
+    // поднимает всё с нуля (иначе — краш "FlutterJNI not attached" при
+    // переиспользовании отсоединённого движка после пересоздания Activity).
+    override fun shouldDestroyEngineWithHost(): Boolean = !callActiveProcessWide
 
     override fun provideFlutterEngine(context: Context): FlutterEngine? {
-        val cached = FlutterEngineCache.getInstance().get(MAIN_ENGINE_ID)
-        if (cached != null) {
-            Log.d(TAG, "provideFlutterEngine: переиспользую закэшированный движок $cached")
-            return cached
+        if (callActiveProcessWide) {
+            val cached = FlutterEngineCache.getInstance().get(MAIN_ENGINE_ID)
+            if (cached != null) {
+                Log.d(TAG, "provideFlutterEngine: звонок активен — переиспользую закэшированный движок $cached")
+                return cached
+            }
         }
-        Log.d(TAG, "provideFlutterEngine: кэш пуст, создаю новый движок как обычно")
+        Log.d(TAG, "provideFlutterEngine: создаю новый движок как обычно")
         return super.provideFlutterEngine(context)
+    }
+
+    // Движок уничтожается вместе с Activity (вне звонка) — убираем за собой
+    // ставшую висячей ссылку из кэша, иначе следующий provideFlutterEngine
+    // во время звонка достал бы уже мёртвый движок.
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        super.cleanUpFlutterEngine(flutterEngine)
+        // Только когда движок реально уничтожается вместе с Activity и в
+        // кэше висит именно он (во время звонка движок сохраняется — его
+        // трогать нельзя, по нему работает кнопка "Завершить" в уведомлении).
+        if (shouldDestroyEngineWithHost() &&
+            FlutterEngineCache.getInstance().get(MAIN_ENGINE_ID) === flutterEngine
+        ) {
+            FlutterEngineCache.getInstance().remove(MAIN_ENGINE_ID)
+            Log.d(TAG, "cleanUpFlutterEngine: висячая ссылка на движок убрана из кэша")
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -294,6 +331,9 @@ class MainActivity : FlutterFragmentActivity() {
             when (call.method) {
                 "setCallActive" -> {
                     callActive = call.argument<Boolean>("active") ?: false
+                    // Процессный флаг — от него зависит, переживёт ли движок
+                    // смахивание задачи (см. shouldDestroyEngineWithHost).
+                    callActiveProcessWide = callActive
                     updatePipParams()
                     result.success(null)
                 }

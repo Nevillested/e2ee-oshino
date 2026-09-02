@@ -3628,7 +3628,67 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Тёмная плашка с размером файла в левом-нижнем углу медиа-плитки.
+  /// ТЗ пользователя: размер виден ВСЕГДА — и до скачивания, и после,
+  /// у фото/видео (у файлов размер идёт текстом в самой строке). Отличать
+  /// скачанное от нескачанного пользователь будет по стрелке загрузки в
+  /// центре плитки (только для > 3 МБ; мелкие качаются сами, стрелки нет).
+  Widget _withSizePlaque(Widget tile, int bytes) {
+    if (bytes <= 0) return tile;
+    return Stack(
+      children: [
+        tile,
+        Positioned(
+          left: 6,
+          bottom: 6,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              child: Text(
+                formatFileSize(bytes),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                  height: 1.1,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Размер медиа как строчный текст (голосовые/видео-сообщения — там нет
+  /// квадратной плитки под плашку, размер встаёт в строку метаданных).
+  Widget _mediaSizeInline(StoredMessage msg, {bool onColoredBubble = true}) {
+    if (msg.fileSize <= 0) return const SizedBox.shrink();
+    return Text(
+      formatFileSize(msg.fileSize),
+      style: TextStyle(
+        color: onColoredBubble
+            ? _bubbleMutedColor(msg.isMine)
+            : AppColors.textMuted,
+        fontSize: 10,
+      ),
+    );
+  }
+
   Widget _buildAttachmentBubble(StoredMessage msg, {double size = 220}) {
+    final body = _attachmentBubbleBody(msg, size: size);
+    // Плашка с размером — только для фото/видео-плиток. У файлов размер
+    // показывается текстом внутри самой строки (см. _clickableFileRow /
+    // _downloadPromptRow).
+    if (msg.isFile) return body;
+    return _withSizePlaque(body, msg.fileSize);
+  }
+
+  Widget _attachmentBubbleBody(StoredMessage msg, {double size = 220}) {
     // Файлы (в отличие от фото/видео) никогда не показываются квадратным
     // превью — ни во время отправки, ни при ошибке: своей картинки у них
     // нет, только имя+иконка по типу (см. _clickableFileRow ниже).
@@ -3813,8 +3873,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 downloading
                     ? (isActive
                           ? '${tr('media.downloading')} '
-                                '${(_downloadProgress[msg.mediaId!] ?? 0).round()}%'
-                          : tr('chat.queued'))
+                                '${(_downloadProgress[msg.mediaId!] ?? 0).round()}% · '
+                                '${formatFileSize(msg.fileSize)}'
+                          : '${tr('chat.queued')} · ${formatFileSize(msg.fileSize)}')
                     : formatFileSize(msg.fileSize),
                 style: TextStyle(color: AppColors.textMuted, fontSize: 11),
               ),
@@ -4008,6 +4069,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   right: 2,
                   child: _saveFileMenu(msg, color: Colors.white, badge: true),
                 ),
+              // Размер — ВСЕГДА (ТЗ), даже на компактной плитке файла в
+              // групповой сетке, где имени файла нет.
+              if (msg.fileSize > 0)
+                Positioned(
+                  left: 2,
+                  right: 2,
+                  bottom: 3,
+                  child: Text(
+                    formatFileSize(msg.fileSize),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 9,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -4048,15 +4127,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              // Вторая строка есть ВСЕГДА: статус+% во время передачи,
-              // иначе — размер файла (ТЗ: размер виден и до, и после
-              // скачивания).
+              // Вторая строка есть ВСЕГДА и в ней ВСЕГДА есть размер (ТЗ:
+              // размер виден до, во время и после передачи); во время
+              // передачи к нему добавляется статус и %.
               Text(
                 statusText != null
                     ? (percent != null
-                          ? '$statusText ${percent.round()}%'
-                          : statusText)
+                          ? '$statusText ${percent.round()}% · '
+                                '${formatFileSize(msg.fileSize)}'
+                          : '$statusText · ${formatFileSize(msg.fileSize)}')
                     : formatFileSize(msg.fileSize),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: failed
                       ? Colors.redAccent
@@ -5463,7 +5545,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         const SizedBox(height: 4),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: _buildMetaRow(msg, onColoredBubble: false),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _mediaSizeInline(msg, onColoredBubble: false),
+              if (msg.fileSize > 0) const SizedBox(width: 6),
+              _buildMetaRow(msg, onColoredBubble: false),
+            ],
+          ),
         ),
       ],
     );
@@ -5529,7 +5618,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       messageId: msg.messageId,
                     ),
                     const SizedBox(height: 4),
-                    _buildMetaRow(msg),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _mediaSizeInline(msg),
+                        if (msg.fileSize > 0) const SizedBox(width: 6),
+                        _buildMetaRow(msg),
+                      ],
+                    ),
                   ],
                 )
               : msg.isMedia
@@ -5756,12 +5852,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         children: [
           _headerPill(
             padding: EdgeInsets.zero,
-            child: IconButton(
-              padding: iconPadding,
-              constraints: iconConstraints,
-              visualDensity: VisualDensity.compact,
-              icon: Icon(Icons.arrow_back, color: AppColors.textPrimary),
-              onPressed: () => _handleBackAction(emojiOnlyVisible: _emojiMode),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  padding: iconPadding,
+                  constraints: iconConstraints,
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.arrow_back, color: AppColors.textPrimary),
+                  onPressed: () =>
+                      _handleBackAction(emojiOnlyVisible: _emojiMode),
+                ),
+                IconButton(
+                  padding: iconPadding,
+                  constraints: iconConstraints,
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.swap_vert, color: AppColors.textPrimary),
+                  onPressed: _openTransfers,
+                ),
+              ],
             ),
           ),
           const SizedBox(width: 8),
@@ -5786,13 +5895,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(
-                  padding: iconPadding,
-                  constraints: iconConstraints,
-                  visualDensity: VisualDensity.compact,
-                  icon: Icon(Icons.swap_vert, color: AppColors.textPrimary),
-                  onPressed: _openTransfers,
-                ),
                 if (!_isNotes)
                   IconButton(
                     padding: iconPadding,
@@ -6820,32 +6922,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       // собеседника и кнопку звонка) — растёт/схлопывается
                       // здесь, шапка при этом остаётся на своём обычном месте.
                       _buildMediaControlBar(),
+                      // Баннер звонка / закреплённого сообщения — В ТОЙ ЖЕ
+                      // колонке, СРАЗУ ПОД панелью воспроизведения (раньше
+                      // висел отдельным Positioned с жёстким top-отступом в
+                      // высоту одной лишь шапки и потому наезжал на
+                      // развёрнутую панель воспроизведения — жалоба
+                      // пользователя). Колонка — оверлей Positioned(top:0),
+                      // на высоту списка под ней не влияет.
+                      if (!_isNotes)
+                        OngoingCallBanner(peerLogin: widget.peerLogin),
+                      if (_pinnedMessageId != null) _buildPinnedBanner(),
                     ],
                   ),
                 ),
-                // Баннер звонка/закреплённого сообщения — раньше был частью
-                // того же Column, что и список (и потому естественно оказывался
-                // ПОД Scaffold.appBar). Теперь список — самостоятельный
-                // full-height Positioned (см. выше, Expanded внутри Column
-                // больше не начинается ниже шапки — иначе список снова не
-                // заходил бы под неё, а весь смысл этой правки как раз в
-                // обратном). Баннеры поэтому — свой отдельный Positioned, НЕ
-                // влияющий на позицию списка, просто отступающий от верха на
-                // высоту шапки, чтобы не оказаться под её "таблетками".
-                if (!_isNotes || _pinnedMessageId != null)
-                  Positioned(
-                    top: MediaQuery.of(context).padding.top + 60,
-                    left: 0,
-                    right: 0,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (!_isNotes)
-                          OngoingCallBanner(peerLogin: widget.peerLogin),
-                        if (_pinnedMessageId != null) _buildPinnedBanner(),
-                      ],
-                    ),
-                  ),
                 // Панель ввода — плавающий оверлей ПОВЕРХ списка сообщений
                 // (см. ТЗ пользователя: список должен быть на всю высоту,
                 // сообщения "проплывают" под панелью, а не упираются в неё

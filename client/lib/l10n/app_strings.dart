@@ -639,16 +639,26 @@ class AppStrings {
       AppLocale.en: 'New messages',
     },
     'notification.downloadingFiles': {
-      AppLocale.ru: 'Загрузка файлов',
+      AppLocale.ru: 'Скачивание файлов',
       AppLocale.en: 'Downloading files',
     },
-    'notification.downloadsChannelName': {
-      AppLocale.ru: 'Загрузка файлов',
-      AppLocale.en: 'File downloads',
+    'notification.uploadingFiles': {
+      AppLocale.ru: 'Выгрузка файлов',
+      AppLocale.en: 'Uploading files',
     },
-    'notification.downloadsChannelDescription': {
-      AppLocale.ru: 'Пока приложение свёрнуто, продолжается скачивание файлов',
-      AppLocale.en: 'Downloads keep running while the app is in the background',
+    'notification.downloadingAndUploadingFiles': {
+      AppLocale.ru: 'Скачивание и выгрузка файлов',
+      AppLocale.en: 'Downloading and uploading files',
+    },
+    'notification.transfersChannelName': {
+      AppLocale.ru: 'Передача файлов',
+      AppLocale.en: 'File transfers',
+    },
+    'notification.transfersChannelDescription': {
+      AppLocale.ru:
+          'Пока приложение свёрнуто, продолжается передача файлов',
+      AppLocale.en:
+          'File transfers keep running while the app is in the background',
     },
     'transfers.title': {AppLocale.ru: 'Передачи', AppLocale.en: 'Transfers'},
     'transfers.upload': {AppLocale.ru: 'Отправка', AppLocale.en: 'Upload'},
