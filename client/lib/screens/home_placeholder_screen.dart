@@ -12,6 +12,7 @@ import '../services/avatar_cache.dart';
 import '../services/call_service.dart';
 import '../services/control_message_sender.dart';
 import '../services/local_notifications.dart';
+import '../services/media_download_manager.dart';
 import '../services/message_cleanup.dart';
 import '../services/message_router.dart';
 import '../services/my_avatar_store.dart';
@@ -19,6 +20,7 @@ import '../storage/media_cache.dart';
 import '../services/my_email_store.dart';
 import '../services/my_profile_store.dart';
 import '../services/peer_profile_cache.dart';
+import '../services/pending_send_retrier.dart';
 import '../services/pip_service.dart';
 import '../services/debug_log.dart';
 import '../services/prekey_replenisher.dart';
@@ -41,6 +43,7 @@ import '../widgets/ongoing_call_banner.dart';
 import '../widgets/peer_name_text.dart';
 import '../widgets/swipe_back_page_route.dart';
 import '../widgets/theme_reactive.dart';
+import '../widgets/transfers_panel.dart';
 import 'chat_screen.dart';
 import 'incoming_call_screen.dart';
 import 'my_profile_screen.dart';
@@ -221,6 +224,8 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   // закрывать поиск, выставляется в onSubmitted непосредственно перед тем,
   // как это самое исчезновение клавиатуры произойдёт.
   bool _suppressNextSearchKeyboardClose = false;
+
+  void _openTransfers() => showTransfersPanel(context);
 
   void _openSearch() {
     setState(() => _searchActive = true);
@@ -593,6 +598,14 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     _webSocketService.connect(token, deviceId);
     MessageRouter.start();
     SendQueueProcessor.instance.start();
+    // Персистентные очереди скачивания (ручная + авто) — поднять и
+    // продолжить докачку с места обрыва после перезапуска. Здесь, а не в
+    // main.dart: нужен уже залогиненный пользователь (иначе первое же
+    // задание упало бы «not logged in» и вылетело из очереди).
+    unawaited(MediaDownloadManager.instance.init());
+    // Воркер очереди файлов (отправка любого сообщения с файлом) — тоже
+    // подхватывает прерванные загрузки и чистит застрявшие 'sending'.
+    PendingSendRetrier.instance.start();
     // PendingSendRetrier больше НЕ запускается автоматически (ТЗ
     // пользователя: никакого фонового автоповтора упавших отправок) — см.
     // её класс-комментарий. Единственный способ повторить —
@@ -1092,6 +1105,11 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                   ),
                 ),
                 actions: [
+                  IconButton(
+                    icon: const Icon(Icons.swap_vert),
+                    tooltip: tr('transfers.title'),
+                    onPressed: _openTransfers,
+                  ),
                   _BouncyIconButton(
                     icon: _searchActive ? Icons.close : Icons.search,
                     onPressed: _searchActive ? _closeSearch : _openSearch,

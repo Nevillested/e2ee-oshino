@@ -8,217 +8,317 @@ import '../api/api_client.dart';
 import '../crypto/media_cipher.dart';
 import '../crypto/streaming_file_cipher.dart';
 import '../session.dart';
+import '../storage/download_queue_store.dart';
 import '../storage/media_cache.dart';
 import '../storage/partial_download_store.dart';
 import 'debug_log.dart';
 import 'media_download_foreground.dart';
 
-/// Всё, что движку нужно знать про один файл, чтобы скачать и расшифровать
-/// его без участия экрана чата — строится из StoredMessage вызывающей
-/// стороной (см. chat_screen.dart).
+/// Всё, что движку нужно, чтобы скачать и расшифровать один файл без экрана
+/// чата. Строится из StoredMessage вызывающей стороной и персистится в
+/// DownloadQueueStore (переживает перезапуск приложения).
 class DownloadSpec {
   final String mediaId;
   final String keyBase64;
   final bool chunked;
 
-  /// nonce/mac — только для НЕчанкованных файлов (один GCM-блок целиком,
-  /// см. media_cipher.dart). У чанкованных (streaming_file_cipher.dart)
-  /// каждый блок несёт свой тег внутри, тут null.
+  /// nonce/mac — только для НЕчанкованных файлов; у чанкованных null.
   final String? nonceBase64;
   final String? macBase64;
 
-  /// Размер ОТКРЫТОГО файла (StoredMessage.fileSize) — по нему решается,
-  /// брать ли файл в автоочередь: авто только < 3 МБ, крупнее — лишь по
-  /// явному запросу пользователя (ТЗ).
+  /// Размер ОТКРЫТОГО файла — по нему решается, годится ли файл в
+  /// авто-очередь (< 3 МБ).
   final int plaintextSize;
+
+  /// Для панели передач: с кем чат и что за файл.
+  final String peerLogin;
+  final String label;
 
   const DownloadSpec({
     required this.mediaId,
     required this.keyBase64,
     required this.chunked,
     required this.plaintextSize,
+    required this.peerLogin,
+    required this.label,
     this.nonceBase64,
     this.macBase64,
   });
+
+  Map<String, dynamic> toMap() => {
+    'mediaId': mediaId,
+    'key': keyBase64,
+    'chunked': chunked,
+    'nonce': nonceBase64,
+    'mac': macBase64,
+    'size': plaintextSize,
+    'peer': peerLogin,
+    'label': label,
+  };
+
+  static DownloadSpec fromMap(Map<String, dynamic> m) => DownloadSpec(
+    mediaId: m['mediaId'] as String,
+    keyBase64: m['key'] as String,
+    chunked: m['chunked'] as bool? ?? false,
+    nonceBase64: m['nonce'] as String?,
+    macBase64: m['mac'] as String?,
+    plaintextSize: m['size'] as int? ?? 0,
+    peerLogin: m['peer'] as String? ?? '',
+    label: m['label'] as String? ?? '',
+  );
 }
 
-enum _Tier { user, auto }
-
-enum _Outcome { completed, failed, cancelled, preempted }
-
-class _PreemptedException implements Exception {
-  const _PreemptedException();
+/// Одна строка в панели передач.
+class DownloadRow {
+  final String mediaId;
+  final String peerLogin;
+  final String label;
+  final double percent; // 0..100
+  final bool active; // качается прямо сейчас
+  const DownloadRow({
+    required this.mediaId,
+    required this.peerLogin,
+    required this.label,
+    required this.percent,
+    required this.active,
+  });
 }
 
-/// Единый, независимый от жизненного цикла экрана чата движок скачивания
-/// медиа. Две очереди (ТЗ пользователя):
+class DownloadSnapshot {
+  final List<DownloadRow> manual;
+  final List<DownloadRow> auto;
+  const DownloadSnapshot(this.manual, this.auto);
+}
+
+/// Движок скачивания медиа. **Два независимых потока** (ТЗ пользователя):
 ///
-///  * **пользовательская** — файлы, по иконке скачивания которых человек
-///    нажал сам. Всегда приоритетнее авто; новый тап встаёт в НАЧАЛО и
-///    вытесняет текущую загрузку (её хвост сохраняется на диске).
-///  * **автоматическая** — только файлы < 3 МБ, которые появлялись на
-///    экране. Порядок — «кого видели позже, того раньше»: повторно
-///    показавшийся на экране файл прыгает в начало. Не чистится при
-///    прокрутке (раз попал — рано или поздно скачается), но работает
-///    только когда пользовательская очередь пуста.
+///  * **ручной** — файлы, по иконке скачивания которых человек нажал сам.
+///    Строгий FIFO: нажал файл1, файл2, файл3 → так и качаются. Без
+///    ограничения по числу и размеру. ✕ = стоп + удалить скачанное + файл
+///    выбывает из очереди.
+///  * **авто** — файлы < 3 МБ, которые пользователь пролистал в чате.
+///    Строгий FIFO в порядке появления снизу экрана. Не чистится при
+///    прокрутке (раз попал — рано или поздно скачается).
 ///
-/// Строго ПО ОДНОМУ файлу за раз — у проекта один сервер в Москве и
-/// хранилище в Японии, параллелить сеть смысла нет.
+/// Потоки работают ПАРАЛЛЕЛЬНО и не вытесняют друг друга. Внутри потока —
+/// строго по очереди, без вытеснения. Обе очереди персистятся
+/// (DownloadQueueStore) + недокачанные байты (PartialDownloadStore,
+/// `.part`) — на старте приложения обе докачиваются с места обрыва.
 ///
-/// Докачка: недокачанный зашифрованный хвост лежит в PartialDownloadStore,
-/// возобновление — через HTTP Range (см. ApiClient.downloadEncryptedMediaResumable).
-/// Переживает переключение на другой файл, выход из чата и — Stage 2 —
-/// сворачивание приложения (движок переедет в фоновый изолят).
+/// Ратчета не касается вообще: файл шифруется отдельным AES-ключом, ключ
+/// пришёл в уже расшифрованном конверте (message_router, там приём
+/// сериализован). Никакого общего изменяемого крипто-состояния между
+/// потоками нет.
 class MediaDownloadManager {
   MediaDownloadManager._();
   static final MediaDownloadManager instance = MediaDownloadManager._();
 
   static const int autoDownloadLimitBytes = 3 * 1024 * 1024; // 3 МБ
+  static const int _networkRetries = 3;
+  static const Duration _failCooldown = Duration(seconds: 20);
 
   final ApiClient _api = ApiClient();
 
   final Map<String, DownloadSpec> _specs = {};
-  final List<String> _userQueue = []; // [0] = самый свежий тап
-  final List<String> _autoQueue = []; // [0] = кого видели позже всех
-  final Set<String> _visible = {}; // сейчас на экране (только < 3 МБ)
+  final List<String> _manualQueue = []; // [0] = активный/следующий
+  final List<String> _autoQueue = [];
   final Set<String> _userCancelled = {};
+  final Map<String, DateTime> _failedAt = {}; // кулдаун авто-повторов
+  final Set<String> _dropPartial = {}; // отменённые — снести хвост
   final Set<String> _forgotten = {}; // сообщение удалено во время загрузки
 
-  // Недавно упавшие авто-загрузки: чтобы плитка, висящая на экране, не
-  // молотила по серверу заново каждые 350 мс (см. setVisible). Явный тап
-  // пользователя этот кулдаун игнорирует.
-  final Map<String, DateTime> _failedAt = {};
-  static const Duration _failCooldown = Duration(seconds: 20);
-
-  bool _inCooldown(String mediaId) {
-    final t = _failedAt[mediaId];
-    return t != null && DateTime.now().difference(t) < _failCooldown;
-  }
-
-  String? _activeId;
-  _Tier? _activeTier;
-  dio.CancelToken? _activeCancel;
-  bool _preemptRequested = false;
-  bool _busy = false;
+  String? _manualActive;
+  String? _autoActive;
+  dio.CancelToken? _manualCancel;
+  dio.CancelToken? _autoCancel;
+  bool _manualBusy = false;
+  bool _autoBusy = false;
 
   final Map<String, double> _progress = {};
   final Map<String, List<Completer<File>>> _waiters = {};
 
-  final StreamController<String> _progressCtl = StreamController.broadcast();
-  final StreamController<String> _doneCtl = StreamController.broadcast();
-  final StreamController<String> _failedCtl = StreamController.broadcast();
+  final _progressCtl = StreamController<String>.broadcast();
+  final _doneCtl = StreamController<String>.broadcast();
+  final _failedCtl = StreamController<String>.broadcast();
+  final _snapshotCtl = StreamController<void>.broadcast();
 
-  /// mediaId, у которого только что поменялся процент.
   Stream<String> get progressChanges => _progressCtl.stream;
-
-  /// mediaId, чей расшифрованный файл только что лёг в MediaCache.
   Stream<String> get done => _doneCtl.stream;
-
-  /// mediaId, чья загрузка сорвалась (хвост сохранён, повторный тап
-  /// продолжит с места обрыва).
   Stream<String> get failed => _failedCtl.stream;
 
+  /// Панель передач слушает это + progressChanges.
+  Stream<void> get snapshotChanges => _snapshotCtl.stream;
+
+  Timer? _persistTimer;
+  bool _initDone = false;
+
+  /// upload-менеджер сообщает, идёт ли сейчас загрузка файла — нужно для
+  /// решения, держать ли foreground-сервис (ТЗ: FGS живёт, пока непуста
+  /// ручная очередь скачивания ИЛИ идёт загрузка файла).
+  bool _fileUploadActive = false;
+  void setFileUploadActive(bool active) {
+    if (_fileUploadActive == active) return;
+    _fileUploadActive = active;
+    _syncForegroundService();
+  }
+
   double? progressOf(String mediaId) => _progress[mediaId];
-  String? get activeId => _activeId;
-  bool isActive(String mediaId) => _activeId == mediaId;
+  bool isActive(String mediaId) =>
+      _manualActive == mediaId || _autoActive == mediaId;
   bool isQueued(String mediaId) =>
-      _userQueue.contains(mediaId) || _autoQueue.contains(mediaId);
-  bool isWorking(String mediaId) => isActive(mediaId) || isQueued(mediaId);
+      (_manualQueue.contains(mediaId) || _autoQueue.contains(mediaId)) &&
+      !isActive(mediaId);
+  bool isWorking(String mediaId) =>
+      _manualQueue.contains(mediaId) || _autoQueue.contains(mediaId);
+
+  // ---- запуск / персист ----
+
+  Future<void> init() async {
+    if (_initDone) return;
+    _initDone = true;
+    final saved = await DownloadQueueStore.load();
+    for (final m in [...saved.manual, ...saved.auto]) {
+      try {
+        final spec = DownloadSpec.fromMap(m);
+        _specs[spec.mediaId] = spec;
+      } catch (_) {}
+    }
+    _manualQueue.addAll(
+      saved.manual
+          .map((m) => m['mediaId'] as String?)
+          .whereType<String>()
+          .where(_specs.containsKey),
+    );
+    _autoQueue.addAll(
+      saved.auto
+          .map((m) => m['mediaId'] as String?)
+          .whereType<String>()
+          .where(_specs.containsKey),
+    );
+    _kickManual();
+    _kickAuto();
+    _emitSnapshot();
+    _syncForegroundService();
+  }
+
+  void _schedulePersist() {
+    _persistTimer?.cancel();
+    _persistTimer = Timer(const Duration(milliseconds: 500), _persistNow);
+  }
+
+  Future<void> _persistNow() async {
+    List<Map<String, dynamic>> dump(List<String> q) => q
+        .map((id) => _specs[id]?.toMap())
+        .whereType<Map<String, dynamic>>()
+        .toList();
+    await DownloadQueueStore.save(dump(_manualQueue), dump(_autoQueue));
+  }
+
+  void _emitSnapshot() {
+    if (!_snapshotCtl.isClosed) _snapshotCtl.add(null);
+  }
 
   // ---- вход от экрана чата ----
 
-  /// Пользователь нажал на иконку скачивания. Вытесняет всё, встаёт в
-  /// начало пользовательской очереди.
+  /// Пользователь нажал на иконку скачивания — в конец РУЧНОЙ очереди.
   void requestUserDownload(DownloadSpec spec) {
     _specs[spec.mediaId] = spec;
     _userCancelled.remove(spec.mediaId);
-    _failedAt.remove(spec.mediaId); // явный тап игнорирует кулдаун
+    _failedAt.remove(spec.mediaId);
     _autoQueue.remove(spec.mediaId);
-    _userQueue.remove(spec.mediaId);
-    _userQueue.insert(0, spec.mediaId);
-    _reconcile();
+    if (!_manualQueue.contains(spec.mediaId)) _manualQueue.add(spec.mediaId);
+    _schedulePersist();
+    _emitSnapshot();
+    _kickManual();
+    _syncForegroundService();
   }
 
-  /// Экран чата сообщает актуальный набор медиа на экране (уже
-  /// отдебаунсенный вызывающей стороной). Только файлы < 3 МБ реально
-  /// попадают в автоочередь.
+  /// Экран чата сообщает медиа, которые СЕЙЧАС на экране, в порядке снизу
+  /// вверх. Мелкие (< 3 МБ) не свои нескачанные добавляются в КОНЕЦ
+  /// авто-очереди, если их там ещё нет (без переупорядочивания).
   void setVisible(Iterable<DownloadSpec> specs) {
-    final ids = <String>{};
+    var changed = false;
     for (final s in specs) {
       _specs[s.mediaId] = s;
       if (s.plaintextSize >= autoDownloadLimitBytes) continue;
-      ids.add(s.mediaId);
-      if (_userQueue.contains(s.mediaId)) continue;
       if (_userCancelled.contains(s.mediaId)) continue;
       if (_inCooldown(s.mediaId)) continue;
-      _autoQueue.remove(s.mediaId);
-      _autoQueue.insert(0, s.mediaId);
+      if (_manualQueue.contains(s.mediaId)) continue;
+      if (_autoQueue.contains(s.mediaId)) continue;
+      if (MediaCache.existsSync(s.mediaId)) continue;
+      _autoQueue.add(s.mediaId);
+      changed = true;
     }
-    _visible
-      ..clear()
-      ..addAll(ids);
-    _reconcile();
+    if (changed) {
+      _schedulePersist();
+      _emitSnapshot();
+      _kickAuto();
+    }
   }
 
-  /// Пользователь нажал ✕ — отказался от файла. Хвост УДАЛЯЕМ (в отличие
-  /// от переключения/выхода — там сохраняется).
+  /// ✕ в панели / в чате: стоп + удалить скачанное + выбывает из очереди.
   void cancelUserDownload(String mediaId) {
-    _userQueue.remove(mediaId);
-    _autoQueue.remove(mediaId);
     _userCancelled.add(mediaId);
+    _dropPartial.add(mediaId);
     _progress.remove(mediaId);
-    if (_activeId == mediaId) {
-      _activeCancel?.cancel('user cancelled');
-    } else {
+    final wasManual = _manualQueue.remove(mediaId);
+    final wasAuto = _autoQueue.remove(mediaId);
+    if (_manualActive == mediaId) {
+      _manualCancel?.cancel('user cancelled');
+    } else if (_autoActive == mediaId) {
+      _autoCancel?.cancel('user cancelled');
+    } else if (wasManual || wasAuto) {
       unawaited(PartialDownloadStore.discard(mediaId));
+      _dropPartial.remove(mediaId);
       _failWaiters(mediaId, ApiException('cancelled'));
     }
-    _progressCtl.add(mediaId);
+    _schedulePersist();
+    _emitSnapshot();
     _syncForegroundService();
   }
 
-  /// Сообщение удалено — забыть про его файл целиком: снять с очередей,
-  /// прервать активную загрузку, снести недокачанный хвост. В отличие от
-  /// cancelUserDownload НЕ помечает mediaId «отменённым пользователем»
-  /// (файла больше не существует, помечать нечего).
+  /// Сообщение удалено — забыть про файл целиком (в т.ч. снести хвост).
   void forget(String mediaId) {
-    _userQueue.remove(mediaId);
-    _autoQueue.remove(mediaId);
-    _visible.remove(mediaId);
+    _forgotten.add(mediaId);
+    _dropPartial.add(mediaId);
     _userCancelled.remove(mediaId);
-    _specs.remove(mediaId);
     _progress.remove(mediaId);
-    if (_activeId == mediaId) {
-      _forgotten.add(mediaId);
-      _activeCancel?.cancel('forgotten');
+    _manualQueue.remove(mediaId);
+    _autoQueue.remove(mediaId);
+    if (_manualActive == mediaId) {
+      _manualCancel?.cancel('forgotten');
+    } else if (_autoActive == mediaId) {
+      _autoCancel?.cancel('forgotten');
     } else {
+      _specs.remove(mediaId);
       unawaited(PartialDownloadStore.discard(mediaId));
+      _dropPartial.remove(mediaId);
+      _forgotten.remove(mediaId);
       _failWaiters(mediaId, ApiException('message deleted'));
     }
+    _schedulePersist();
+    _emitSnapshot();
     _syncForegroundService();
   }
 
-  /// Императивный путь для «открыть файл / сохранить / проиграть /
-  /// просмотрщик / кадр-превью»: гарантирует, что расшифрованный файл
-  /// лежит в MediaCache, скачивая при необходимости. [userInitiated]
-  /// true — как явный тап (высший приоритет, вытесняет), false — тихо, в
-  /// начало автоочереди (используется для превью того, что и так на
-  /// экране).
+  /// Императивный путь «открыть / проиграть / просмотрщик / кадр-превью».
+  /// userInitiated true — как явный тап (ручная очередь); false — тихо в
+  /// авто-очередь (для превью того, что и так на экране).
   Future<File> ensureDownloaded(
-    DownloadSpec spec, {
-    bool userInitiated = true,
-  }) async {
+    DownloadSpec spec,
+    {bool userInitiated = true}
+  ) async {
     final cache = await MediaCache.fileFor(spec.mediaId);
     if (await cache.exists()) return cache;
 
-    // Не свой запрос + файл недавно не скачался -> не дёргаем сервер ещё
-    // раз прямо сейчас; вызывающая сторона (FutureBuilder плитки) получит
-    // ошибку и покажет "повторить", а следующий showVisible после кулдауна
-    // подхватит сам.
     if (!userInitiated &&
-        _inCooldown(spec.mediaId) &&
-        !_userQueue.contains(spec.mediaId) &&
-        _activeId != spec.mediaId) {
+        !_manualQueue.contains(spec.mediaId) &&
+        !isActive(spec.mediaId) &&
+        (_inCooldown(spec.mediaId) ||
+            _userCancelled.contains(spec.mediaId))) {
+      // Не дёргаем сервер прямо сейчас — вызывающий (FutureBuilder плитки)
+      // получит ошибку и покажет «повторить», а setVisible после кулдауна
+      // подхватит сам.
       throw ApiException('download on cooldown');
     }
 
@@ -229,167 +329,136 @@ class MediaDownloadManager {
 
     if (userInitiated) {
       _failedAt.remove(spec.mediaId);
-      _userQueue.remove(spec.mediaId);
       _autoQueue.remove(spec.mediaId);
-      _userQueue.insert(0, spec.mediaId);
-    } else if (!_userQueue.contains(spec.mediaId)) {
-      _autoQueue.remove(spec.mediaId);
-      _autoQueue.insert(0, spec.mediaId);
+      if (!_manualQueue.contains(spec.mediaId)) {
+        _manualQueue.add(spec.mediaId);
+      }
+      _kickManual();
+    } else if (!_manualQueue.contains(spec.mediaId) &&
+        !_autoQueue.contains(spec.mediaId)) {
+      _autoQueue.add(spec.mediaId);
+      _kickAuto();
     }
-    _reconcile();
+    _schedulePersist();
+    _emitSnapshot();
+    _syncForegroundService();
     return completer.future;
   }
 
-  // ---- планировщик ----
+  // ---- воркеры ----
 
-  String? _desiredNext() {
-    if (_userQueue.isNotEmpty) return _userQueue.first;
-    if (_autoQueue.isNotEmpty) return _autoQueue.first;
-    return null;
+  void _kickManual() {
+    if (_manualBusy) return;
+    _manualBusy = true;
+    unawaited(_manualLoop());
   }
 
-  void _reconcile() {
-    _syncForegroundService();
-    if (_activeId != null) {
-      if (_shouldPreemptActive()) {
-        _preemptRequested = true;
-        _activeCancel?.cancel('preempted');
-      }
-      return;
-    }
-    _pump();
+  void _kickAuto() {
+    if (_autoBusy) return;
+    _autoBusy = true;
+    unawaited(_autoLoop());
   }
 
-  bool _fgsOn = false;
-
-  /// Тонкий Android foreground-сервис нужен ТОЛЬКО пока крутится (или ждёт
-  /// очереди) загрузка, которую пользователь запросил сам — чтобы её не
-  /// прибило вместе с процессом при сворачивании приложения. Фоновую
-  /// авто-закачку мелочи (< 3 МБ) им не прикрываем: она короткая и не
-  /// критична, а лишнее уведомление ни к чему. Стартуем всегда из
-  /// состояния, куда попадаем по действию пользователя (обычно приложение
-  /// при этом на переднем плане — Android не ругается на старт из фона).
-  void _syncForegroundService() {
-    final want =
-        _userQueue.isNotEmpty ||
-        (_activeId != null && _activeTier == _Tier.user);
-    if (want == _fgsOn) return;
-    _fgsOn = want;
-    if (want) {
-      unawaited(MediaDownloadForeground.start());
-    } else {
-      unawaited(MediaDownloadForeground.stop());
-    }
-  }
-
-  bool _shouldPreemptActive() {
-    final active = _activeId!;
-    final want = _desiredNext();
-    if (want == null || want == active) return false;
-    if (_activeTier == _Tier.user) {
-      // Пользовательскую загрузку вытесняет только более свежий тап.
-      return _userQueue.isNotEmpty && _userQueue.first != active;
-    }
-    // Активна авто-загрузка.
-    if (_userQueue.isNotEmpty) return true; // любой запрос пользователя
-    // Другой авто-файл лезет вперёд — вытесняем ТОЛЬКО если активный уже
-    // ушёл с экрана (иначе пинг-понг, пока человек на него смотрит).
-    return _autoQueue.isNotEmpty &&
-        _autoQueue.first != active &&
-        !_visible.contains(active);
-  }
-
-  void _pump() {
-    if (_busy || _activeId != null) return;
-    final next = _desiredNext();
-    if (next == null) return;
-    final spec = _specs[next];
-    if (spec == null) {
-      _userQueue.remove(next);
-      _autoQueue.remove(next);
-      _pump();
-      return;
-    }
-
-    _busy = true;
-    _activeId = next;
-    _activeTier = _userQueue.contains(next) ? _Tier.user : _Tier.auto;
-    _activeCancel = dio.CancelToken();
-    _preemptRequested = false;
-
-    unawaited(_drive(spec));
-  }
-
-  Future<void> _drive(DownloadSpec spec) async {
-    final id = spec.mediaId;
-    _Outcome outcome;
-    Object? error;
+  Future<void> _manualLoop() async {
     try {
-      await _runOne(spec, _activeCancel!);
-      outcome = _Outcome.completed;
-    } on _PreemptedException {
-      outcome = _Outcome.preempted;
-    } catch (e) {
-      error = e;
-      outcome = _userCancelled.contains(id)
-          ? _Outcome.cancelled
-          : _Outcome.failed;
-    }
-
-    _activeId = null;
-    _activeTier = null;
-    _activeCancel = null;
-    _busy = false;
-
-    if (_forgotten.remove(id)) {
-      // Сообщение удалили, пока файл качался — тихо сносим всё, без
-      // failed-события (показывать нечему).
-      _userQueue.remove(id);
-      _autoQueue.remove(id);
-      _progress.remove(id);
-      await PartialDownloadStore.discard(id);
-      _failWaiters(id, error ?? ApiException('message deleted'));
+      while (_manualQueue.isNotEmpty) {
+        final id = _manualQueue.first;
+        final spec = _specs[id];
+        if (spec == null) {
+          _manualQueue.removeAt(0);
+          continue;
+        }
+        _manualActive = id;
+        _manualCancel = dio.CancelToken();
+        _emitSnapshot();
+        _syncForegroundService();
+        final outcome = await _drive(spec, _manualCancel!);
+        _manualActive = null;
+        _manualCancel = null;
+        await _handleOutcome(id, outcome, _manualQueue);
+      }
+    } finally {
+      _manualBusy = false;
+      _manualActive = null;
       _syncForegroundService();
-      _pump();
-      return;
+      _emitSnapshot();
     }
+  }
 
+  Future<void> _autoLoop() async {
+    try {
+      while (_autoQueue.isNotEmpty) {
+        final id = _autoQueue.first;
+        final spec = _specs[id];
+        if (spec == null) {
+          _autoQueue.removeAt(0);
+          continue;
+        }
+        _autoActive = id;
+        _autoCancel = dio.CancelToken();
+        _emitSnapshot();
+        final outcome = await _drive(spec, _autoCancel!);
+        _autoActive = null;
+        _autoCancel = null;
+        await _handleOutcome(id, outcome, _autoQueue);
+      }
+    } finally {
+      _autoBusy = false;
+      _autoActive = null;
+      _emitSnapshot();
+    }
+  }
+
+  Future<_Outcome> _drive(DownloadSpec spec, dio.CancelToken cancel) async {
+    try {
+      await _runOne(spec, cancel);
+      return _Outcome.completed;
+    } catch (e) {
+      if (_forgotten.contains(spec.mediaId)) return _Outcome.forgotten;
+      if (_userCancelled.contains(spec.mediaId)) return _Outcome.cancelled;
+      DebugLog.log('MediaDownloadManager id=${spec.mediaId} failed: $e');
+      return _Outcome.failed;
+    }
+  }
+
+  Future<void> _handleOutcome(
+    String id,
+    _Outcome outcome,
+    List<String> queue,
+  ) async {
+    queue.remove(id);
     switch (outcome) {
       case _Outcome.completed:
-        _userQueue.remove(id);
-        _autoQueue.remove(id);
         _failedAt.remove(id);
         _progress[id] = 100;
         await PartialDownloadStore.discard(id);
         _doneCtl.add(id);
         _progressCtl.add(id);
-        final cache = await MediaCache.fileFor(id);
-        _resolveWaiters(id, cache);
+        _resolveWaiters(id, await MediaCache.fileFor(id));
       case _Outcome.cancelled:
-        _userQueue.remove(id);
-        _autoQueue.remove(id);
-        await PartialDownloadStore.discard(id);
         _progress.remove(id);
-        _failWaiters(id, error ?? ApiException('cancelled'));
+        if (_dropPartial.remove(id)) {
+          await PartialDownloadStore.discard(id);
+        }
+        _failWaiters(id, ApiException('cancelled'));
         _progressCtl.add(id);
+      case _Outcome.forgotten:
+        _forgotten.remove(id);
+        _dropPartial.remove(id);
+        _specs.remove(id);
+        _progress.remove(id);
+        await PartialDownloadStore.discard(id);
+        _failWaiters(id, ApiException('message deleted'));
       case _Outcome.failed:
-        _userQueue.remove(id);
-        _autoQueue.remove(id);
+        // Хвост НЕ трогаем — «Повторить» в чате продолжит с места обрыва.
         _progress.remove(id);
         _failedAt[id] = DateTime.now();
-        // Хвост НЕ трогаем — повторный тап продолжит с места обрыва.
-        DebugLog.log('MediaDownloadManager id=$id download failed: $error');
         _failedCtl.add(id);
-        _failWaiters(id, error ?? ApiException('download failed'));
+        _failWaiters(id, ApiException('download failed'));
         _progressCtl.add(id);
-      case _Outcome.preempted:
-        // Остаётся в своей очереди (мы её не трогали) — _pump ниже
-        // подхватит новый приоритетный файл, а этот докачается позже.
-        DebugLog.log('MediaDownloadManager id=$id preempted, tail kept');
     }
-
-    _syncForegroundService();
-    _pump();
+    _schedulePersist();
+    _emitSnapshot();
   }
 
   Future<void> _runOne(DownloadSpec spec, dio.CancelToken cancel) async {
@@ -402,38 +471,41 @@ class MediaDownloadManager {
 
     final partial = await PartialDownloadStore.fileFor(id);
 
-    int encTotal;
-    try {
-      encTotal = await _api.downloadEncryptedMediaResumable(
-        token,
-        id,
-        partial,
-        onProgress: (p) {
-          _progress[id] = p;
-          _progressCtl.add(id);
-        },
-        cancelToken: cancel,
-      );
-    } on ApiException {
-      if (cancel.isCancelled &&
-          _preemptRequested &&
-          !_userCancelled.contains(id)) {
-        throw const _PreemptedException();
+    // Ограниченный повтор на блипах сети — докачка через Range продолжит с
+    // уже лежащего хвоста, не с нуля.
+    int encTotal = 0;
+    var delay = const Duration(seconds: 2);
+    for (var attempt = 1; ; attempt++) {
+      try {
+        encTotal = await _api.downloadEncryptedMediaResumable(
+          token,
+          id,
+          partial,
+          onProgress: (p) {
+            _progress[id] = p;
+            _progressCtl.add(id);
+          },
+          cancelToken: cancel,
+        );
+        break;
+      } catch (e) {
+        if (cancel.isCancelled || attempt >= _networkRetries) rethrow;
+        await Future<void>.delayed(delay);
+        final doubled = delay * 2;
+        delay = doubled > const Duration(seconds: 20)
+            ? const Duration(seconds: 20)
+            : doubled;
       }
-      rethrow;
     }
 
     final have = await partial.exists() ? await partial.length() : 0;
     if (encTotal > 0 && have < encTotal) {
-      // Соединение оборвалось посреди потока, но dio не бросил (редко) —
-      // считаем неполным, хвост сохраняем, повтор продолжит.
       throw ApiException('incomplete ($have/$encTotal)');
     }
 
-    // Расшифровка собранного хвоста прямо в MediaCache.
     try {
       if (spec.chunked) {
-        await StreamingFileCipher.decryptFileToFile(
+        await StreamingFileCipher.decryptFileInIsolate(
           inputFile: partial,
           outputFile: cache,
           keyBytes: base64Decode(spec.keyBase64),
@@ -449,16 +521,58 @@ class MediaDownloadManager {
         await cache.writeAsBytes(plain);
       }
     } catch (e) {
-      // Порча шифротекста / не тот ключ — хвост бесполезен, сносим оба.
       try {
         if (await cache.exists()) await cache.delete();
       } catch (_) {}
-      await PartialDownloadStore.discard(id);
+      // Хвост был ПОЛНЫМ по размеру, а расшифровка всё равно упала → байты
+      // битые, качаем заново. Неполный хвост оставляем — при повторе
+      // Range-докачка дозальёт недостающее, а не 300 МБ с нуля.
+      if (encTotal > 0 && have >= encTotal) {
+        await PartialDownloadStore.discard(id);
+      }
       rethrow;
     }
   }
 
-  // ---- ожидающие ensureDownloaded ----
+  // ---- прочее ----
+
+  bool _inCooldown(String mediaId) {
+    final t = _failedAt[mediaId];
+    return t != null && DateTime.now().difference(t) < _failCooldown;
+  }
+
+  bool _fgsOn = false;
+  void _syncForegroundService() {
+    final want = _manualQueue.isNotEmpty || _fileUploadActive;
+    if (want == _fgsOn) return;
+    _fgsOn = want;
+    if (want) {
+      unawaited(MediaDownloadForeground.start());
+    } else {
+      unawaited(MediaDownloadForeground.stop());
+    }
+  }
+
+  DownloadSnapshot snapshot() {
+    List<DownloadRow> rows(List<String> q, String? active) => q
+        .map((id) {
+          final s = _specs[id];
+          if (s == null) return null;
+          return DownloadRow(
+            mediaId: id,
+            peerLogin: s.peerLogin,
+            label: s.label,
+            percent: _progress[id] ?? 0,
+            active: id == active,
+          );
+        })
+        .whereType<DownloadRow>()
+        .toList();
+    return DownloadSnapshot(
+      rows(_manualQueue, _manualActive),
+      rows(_autoQueue, _autoActive),
+    );
+  }
 
   void _resolveWaiters(String mediaId, File file) {
     final list = _waiters.remove(mediaId);
@@ -476,3 +590,5 @@ class MediaDownloadManager {
     }
   }
 }
+
+enum _Outcome { completed, failed, cancelled, forgotten }

@@ -1198,4 +1198,47 @@ class ChatStore {
       if (changed) await _writePeers(peers);
     });
   }
+
+  /// Текстовые (не медиа) свои сообщения в статусе 'sending' по всем чатам
+  /// — для «лёгкого» списка панели передач.
+  static Future<
+    List<({String peerLogin, String messageId, String text})>
+  >
+  getSendingTextMessages() async {
+    final peers = await getKnownPeers();
+    final out = <({String peerLogin, String messageId, String text})>[];
+    for (final p in peers) {
+      final messages = await getMessages(p.peerLogin);
+      for (final m in messages) {
+        if (m.isMine && !m.isMedia && m.status == 'sending') {
+          out.add((
+            peerLogin: p.peerLogin,
+            messageId: m.messageId,
+            text: m.text,
+          ));
+        }
+      }
+    }
+    return out;
+  }
+
+  /// Свежий процесс приложения — значит НИ ОДНА загрузка файла сейчас не
+  /// идёт. Медиа-сообщения, застрявшие в 'sending' и не имеющие живого
+  /// задания в очереди файлов ([knownJobIds] — id/groupId заданий
+  /// PendingSendStore), помечаем 'failed', чтобы в чате появилась «!» и
+  /// пункт «Повторить», а не вечное «uploading» (жалоба пользователя:
+  /// отправил файл, убил приложение на середине загрузки, открыл заново —
+  /// висит «uploading to server» навсегда).
+  static Future<void> failOrphanedSendingMedia(Set<String> knownJobIds) async {
+    final peers = await getKnownPeers();
+    for (final p in peers) {
+      final messages = await getMessages(p.peerLogin);
+      for (final m in messages) {
+        if (!m.isMine || !m.isMedia || m.status != 'sending') continue;
+        if (knownJobIds.contains(m.messageId)) continue;
+        if (m.groupId != null && knownJobIds.contains(m.groupId)) continue;
+        await updateMessageStatus(p.peerLogin, m.messageId, 'failed');
+      }
+    }
+  }
 }

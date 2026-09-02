@@ -84,6 +84,7 @@ import '../widgets/report_message_dialog.dart';
 import '../widgets/spoiler_overlay.dart';
 import '../widgets/swipe_back_page_route.dart';
 import '../widgets/theme_reactive.dart';
+import '../widgets/transfers_panel.dart';
 import '../widgets/video_note_player.dart';
 import '../widgets/voice_message_player.dart';
 import 'forward_screen.dart';
@@ -189,7 +190,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       plaintextSize: msg.fileSize,
       nonceBase64: msg.mediaNonceBase64,
       macBase64: msg.mediaMacBase64,
+      peerLogin: widget.peerLogin,
+      label: mediaLabelFor(msg),
     );
+  }
+
+  /// Ярлык медиа для панели передач: имя файла, если есть, иначе тип.
+  static String mediaLabelFor(StoredMessage msg) {
+    if (msg.isVoice) return tr('media.voiceNote');
+    if (msg.isVideoNote) return tr('media.videoNote');
+    if (msg.isFile) return msg.fileName ?? tr('media.file');
+    if (msg.isVideo) return msg.fileName ?? tr('media.video');
+    return msg.fileName ?? tr('media.photo');
   }
 
   /// Вызывается из build() плитки медиа, которое СЕЙЧАС строится (значит —
@@ -213,10 +225,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void _flushVisible() {
     _visibleFlushTimer = null;
     if (!mounted) return;
-    final specs = _pendingVisibleIds
-        .map((id) => _visibleSpecs[id])
-        .whereType<DownloadSpec>()
-        .toList();
+    // Порядок постановки в авто-очередь — снизу экрана вверх (ТЗ): самое
+    // свежее сообщение (наибольший индекс в _messages) идёт первым.
+    final idx = <String, int>{};
+    for (var i = 0; i < _messages.length; i++) {
+      final m = _messages[i].mediaId;
+      if (m != null) idx[m] = i;
+    }
+    final specs =
+        _pendingVisibleIds
+            .map((id) => _visibleSpecs[id])
+            .whereType<DownloadSpec>()
+            .toList()
+          ..sort(
+            (a, b) => (idx[b.mediaId] ?? 0).compareTo(idx[a.mediaId] ?? 0),
+          );
     _pendingVisibleIds.clear();
     MediaDownloadManager.instance.setVisible(specs);
   }
@@ -2267,14 +2290,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         messageId,
         'failed',
       );
-      // 'failed' тут — не окончательный приговор: если это был сетевой сбой
-      // (например, самая первая отправка этому собеседнику, а prekey-бандл
-      // не удалось получить офлайн), PendingSendRetrier сам переотправит,
-      // как только вернётся связь, и статус тогда сменится на 'sent' без
-      // участия пользователя (см. ТЗ — "сообщения просто падают").
+      // Сетевой сбой ДО готового конверта (обычно — самая первая отправка
+      // собеседнику офлайн, prekey-бандл не получить). Кладём задание с
+      // state='failed' — в чате «!», дальше по «Повторить отправку»
+      // (PendingSendRetrier.retryNow), как и у файлов.
       await PendingSendStore.add({
         'id': messageId,
         'kind': 'text',
+        'state': 'failed',
         'peer_login': widget.peerLogin,
         'peer_device_id': _currentPeerDeviceId,
         'text': text,
@@ -2612,9 +2635,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Шифрует, грузит и отправляет уже записанный голосовой/видео файл —
-  /// тот же путь (encrypt → upload → InnerMessage → SendLock), что и для
-  /// обычных вложений, см. _uploadAndDescribeMedia/_processQueuedMedia.
+  /// Ставит записанное голосовое/видео-сообщение в очередь файлов
+  /// (PendingSendRetrier). Само шифрование+загрузка+конверт — в её воркере,
+  /// вне SendLock (ратчет там берётся лишь на миллисекундную критическую
+  /// секцию), поэтому звонки и текст этому собеседнику во время загрузки
+  /// НЕ блокируются, а прерванная загрузка продолжается с места обрыва
+  /// после перезапуска приложения.
   Future<void> _sendRecordedMessage({
     required File file,
     required Duration duration,
@@ -2623,12 +2649,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final size = await file.length();
     final messageId =
         '${DateTime.now().microsecondsSinceEpoch}_${isVideo ? 'vnote' : 'voice'}';
-    // Кадр-превью видео-сообщения (кружка/квадрата) до отправки — тот же
-    // приём, что и для обычного видео из галереи (см. _writeLocalVideoThumbnail),
-    // чтобы вместо чёрного квадрата сразу было видно содержимое (ТЗ пользователя).
+    // Кадр-превью до отправки (из ещё живой temp-записи).
     final localPreviewPath = isVideo
         ? await _writeLocalVideoThumbnail(file.path)
         : null;
+
+    // Устойчивая копия temp-записи (ОС вправе стереть temp, пока приложение
+    // не запущено) — она же становится localSourcePath и file_path задания.
+    final persistedPath = await PendingSendStore.persistFile(file, messageId);
+    try {
+      await file.delete();
+    } catch (_) {}
 
     await ChatStore.addMessage(
       widget.peerLogin,
@@ -2646,9 +2677,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         status: 'sending',
         processingStep: tr('chat.queued'),
         localPreviewPath: localPreviewPath,
-        // См. StoredMessage.localSourcePath — сама запись (голосовая/видео),
-        // а не превью-кадр.
-        localSourcePath: file.path,
+        localSourcePath: persistedPath,
       ),
       accountId: widget.peerAccountId,
     );
@@ -2656,6 +2685,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     await _loadHistory();
 
     if (_isNotes) {
+      final file = File(persistedPath);
       try {
         final token = await Session.getToken();
         final myAccountId = await Session.getAccountId() ?? '';
@@ -2695,130 +2725,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
 
-    try {
-      // runHeavy — глобальная (across всех собеседников) сериализация
-      // самой загрузки: следующее тяжёлое (фото/видео/файл/голосовое)
-      // не начинает грузиться, пока не закончилось (успехом или
-      // неудачей) предыдущее. SendLock внутри — как и раньше, отдельная,
-      // более узкая сериализация именно крипто-состояния ЭТОГО
-      // собеседника, друг другу эти два уровня не мешают.
-      await SendQueueProcessor.instance.runHeavy(
-        () => SendLock.run(_currentPeerDeviceId, () async {
-          final token = await Session.getToken();
-          final myDeviceId = await KeyStore.getStoredDeviceId();
-          final state = await _ensureSessionForSending();
-          final initHeader = _pendingInitHeader;
-          _pendingInitHeader = null;
-
-          final peerAccountIdForUpload =
-              await PeerAccountStore.get(_currentPeerDeviceId) ??
-              widget.peerAccountId;
-
-          final desc = await _uploadAndDescribeMedia(
-            PickedMedia(file: file, isVideo: isVideo),
-            messageId,
-            size,
-            isVideo ? 'video_note.mp4' : 'voice.m4a',
-            token!,
-            peerAccountIdForUpload,
-          );
-
-          await ChatStore.updateProcessingStep(
-            widget.peerLogin,
-            messageId,
-            tr('chat.sending'),
-          );
-
-          final inner = isVideo
-              ? InnerMessage.videoNote(
-                  messageId: messageId,
-                  mediaId: desc['media_id'] as String,
-                  keyBase64: desc['key'] as String,
-                  nonceBase64: desc['nonce'] as String?,
-                  macBase64: desc['mac'] as String?,
-                  fileSize: size,
-                  chunked: desc['chunked'] as bool,
-                  durationMs: duration.inMilliseconds,
-                )
-              : InnerMessage.voice(
-                  messageId: messageId,
-                  mediaId: desc['media_id'] as String,
-                  keyBase64: desc['key'] as String,
-                  nonceBase64: desc['nonce'] as String?,
-                  macBase64: desc['mac'] as String?,
-                  fileSize: size,
-                  chunked: desc['chunked'] as bool,
-                  durationMs: duration.inMilliseconds,
-                );
-
-          final next = await state.nextSendingKey();
-          DebugLog.log(
-            'ChatScreen sending key (voice/video_note type=${inner.type} '
-            'messageId=${inner.messageId}) to=$_currentPeerDeviceId '
-            'messageNumber=${next.header['message_number']} '
-            'ratchetPubkey=${next.header['ratchet_pubkey']}',
-          );
-          await SessionStore.saveState(_currentPeerDeviceId, state);
-          final headerFields = <String, dynamic>{
-            ...next.header,
-            'sender_device_id': myDeviceId,
-            if (initHeader != null) ...initHeader,
-          };
-          final encryptedEnvelope = await encryptMessage(
-            next.messageKey,
-            inner.encode(),
-            aad: headerFields,
-          );
-          final envelope = <String, dynamic>{
-            ...encryptedEnvelope,
-            ...headerFields,
-          };
-
-          await SendQueueProcessor.instance.enqueue(
-            toDeviceId: _currentPeerDeviceId,
-            envelope: envelope,
-            deliveryId: messageId,
-            messageId: messageId,
-            peerLogin: widget.peerLogin,
-          );
-        }),
-      );
-      DebugLog.log(
-        'ChatScreen send OK (${isVideo ? 'video_note' : 'voice'} '
-        'messageId=$messageId) to=$_currentPeerDeviceId size=$size',
-      );
-    } catch (e, stackTrace) {
-      DebugLog.log(
-        'ChatScreen send FAILED (${isVideo ? 'video_note' : 'voice'} '
-        'messageId=$messageId) to=$_currentPeerDeviceId size=$size '
-        'error=$e\n$stackTrace',
-      );
-      await ChatStore.updateMessageStatus(
-        widget.peerLogin,
-        messageId,
-        'failed',
-      );
-      // Устойчивая копия вместо temp-записи (см. PendingSendStore.persistFile
-      // — ту ОС вправе стереть, пока приложение не запущено, что и
-      // случилось у пользователя с голосовым сообщением); оригинал больше
-      // не нужен, удаляем сразу.
-      final persistedPath = await PendingSendStore.persistFile(file, messageId);
-      try {
-        await file.delete();
-      } catch (_) {}
-      await PendingSendStore.add({
-        'id': messageId,
-        'kind': isVideo ? 'video_note' : 'voice',
-        'peer_login': widget.peerLogin,
-        'peer_device_id': _currentPeerDeviceId,
-        'peer_account_id': widget.peerAccountId,
-        'file_path': persistedPath,
-        'size': size,
-        'duration_ms': duration.inMilliseconds,
-      });
-    } finally {
-      await _loadHistory();
-    }
+    await PendingSendRetrier.instance.enqueue({
+      'id': messageId,
+      'kind': isVideo ? 'video_note' : 'voice',
+      'state': 'queued',
+      'peer_login': widget.peerLogin,
+      'peer_device_id': _currentPeerDeviceId,
+      'peer_account_id': widget.peerAccountId,
+      'file_path': persistedPath,
+      'size': size,
+      'duration_ms': duration.inMilliseconds,
+    });
+    await _loadHistory();
   }
 
   /// "Переворот монеты" — общий эффект для переключаемых иконок композера
@@ -3485,122 +3403,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
 
-    try {
-      await SendQueueProcessor.instance.runHeavy(
-        () => SendLock.run(_currentPeerDeviceId, () async {
-          final token = await Session.getToken();
-          final myDeviceId = await KeyStore.getStoredDeviceId();
-          final state = await _ensureSessionForSending();
-          final initHeader = _pendingInitHeader;
-          _pendingInitHeader = null;
-
-          final peerAccountIdForUpload =
-              await PeerAccountStore.get(_currentPeerDeviceId) ??
-              widget.peerAccountId;
-
-          final desc = await _uploadAndDescribeMedia(
-            item,
-            messageId,
-            size,
-            fileName,
-            token!,
-            peerAccountIdForUpload,
-          );
-
-          await ChatStore.updateProcessingStep(
-            widget.peerLogin,
-            messageId,
-            tr('chat.negotiating'),
-          );
-
-          final inner = InnerMessage.media(
-            messageId: messageId,
-            mediaId: desc['media_id'] as String,
-            keyBase64: desc['key'] as String,
-            nonceBase64: desc['nonce'] as String?,
-            macBase64: desc['mac'] as String?,
-            fileName: fileName,
-            isFile: item.isFile,
-            isVideo: item.isVideo,
-            fileSize: size,
-            chunked: desc['chunked'] as bool,
-            spoiler: item.isSpoiler,
-          );
-
-          final next = await state.nextSendingKey();
-          DebugLog.log(
-            'ChatScreen sending key (media messageId=${inner.messageId}) '
-            'to=$_currentPeerDeviceId messageNumber=${next.header['message_number']} '
-            'ratchetPubkey=${next.header['ratchet_pubkey']}',
-          );
-          await SessionStore.saveState(_currentPeerDeviceId, state);
-          final headerFields = <String, dynamic>{
-            ...next.header,
-            'sender_device_id': myDeviceId,
-            if (initHeader != null) ...initHeader,
-          };
-          final encryptedEnvelope = await encryptMessage(
-            next.messageKey,
-            inner.encode(),
-            aad: headerFields,
-          );
-          final envelope = <String, dynamic>{
-            ...encryptedEnvelope,
-            ...headerFields,
-          };
-
-          await ChatStore.updateProcessingStep(
-            widget.peerLogin,
-            messageId,
-            tr('chat.sending'),
-          );
-          await SendQueueProcessor.instance.enqueue(
-            toDeviceId: _currentPeerDeviceId,
-            envelope: envelope,
-            deliveryId: messageId,
-            messageId: messageId,
-            peerLogin: widget.peerLogin,
-          );
-        }),
-      );
-      DebugLog.log(
-        'ChatScreen send OK (media messageId=$messageId) '
-        'to=$_currentPeerDeviceId kind=${_mediaKindLabel(item)} size=$size',
-      );
-    } catch (e, stackTrace) {
-      DebugLog.log(
-        'ChatScreen send FAILED (media messageId=$messageId) '
-        'to=$_currentPeerDeviceId kind=${_mediaKindLabel(item)} size=$size '
-        'error=$e\n$stackTrace',
-      );
-      await ChatStore.updateMessageStatus(
-        widget.peerLogin,
-        messageId,
-        'failed',
-      );
-      // Оригинал пользователя (галерея/пикер) не трогаем — снимаем
-      // отдельную устойчивую копию для PendingSendRetrier (см. тот же
-      // приём в _sendRecordedMessage выше и PendingSendStore.persistFile).
-      final persistedPath = await PendingSendStore.persistFile(
-        item.file,
-        messageId,
-      );
-      await PendingSendStore.add({
-        'id': messageId,
-        'kind': 'media',
-        'peer_login': widget.peerLogin,
-        'peer_device_id': _currentPeerDeviceId,
-        'peer_account_id': widget.peerAccountId,
-        'file_path': persistedPath,
-        'size': size,
-        'file_name': fileName,
-        'is_file': item.isFile,
-        'is_video': item.isVideo,
-        'is_spoiler': item.isSpoiler,
-      });
-    } finally {
-      await _loadHistory();
-    }
+    // Одиночное медиа — в очередь файлов (PendingSendRetrier). Шифрование
+    // + загрузка + конверт идут в её воркере, ВНЕ SendLock (ратчет берётся
+    // только на миллисекундную критическую секцию) — звонки/текст этому
+    // собеседнику во время загрузки не блокируются, прерванная загрузка
+    // продолжается с места обрыва после перезапуска. file_path — оригинал
+    // пикера: отдельную копию не снимаем (для больших — 300 МБ копия
+    // плохо; для мелких — ТЗ пользователя: очистка кэша должна убирать всё
+    // связанное с передачами, включая исходники). Большую чанковую загрузку
+    // при пропаже оригинала спасает enc-файл в applicationSupport.
+    await PendingSendRetrier.instance.enqueue({
+      'id': messageId,
+      'kind': 'media',
+      'state': 'queued',
+      'peer_login': widget.peerLogin,
+      'peer_device_id': _currentPeerDeviceId,
+      'peer_account_id': widget.peerAccountId,
+      'file_path': item.file.path,
+      'size': size,
+      'file_name': fileName,
+      'is_file': item.isFile,
+      'is_video': item.isVideo,
+      'is_spoiler': item.isSpoiler,
+    });
+    await _loadHistory();
   }
 
   /// Грузит все файлы группы на сервер, затем отправляет ОДИН зашифрованный
@@ -3676,166 +3502,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return;
     }
 
-    try {
-      await SendQueueProcessor.instance.runHeavy(
-        () => SendLock.run(_currentPeerDeviceId, () async {
-          final token = await Session.getToken();
-          final myDeviceId = await KeyStore.getStoredDeviceId();
-          final state = await _ensureSessionForSending();
-          final initHeader = _pendingInitHeader;
-          _pendingInitHeader = null;
-
-          final peerAccountIdForUpload =
-              await PeerAccountStore.get(_currentPeerDeviceId) ??
-              widget.peerAccountId;
-
-          final files = <Map<String, dynamic>>[];
-          for (final q in items) {
-            DebugLog.log(
-              'ChatScreen group upload attempt groupId=$groupId '
-              'messageId=${q.messageId} kind=${_mediaKindLabel(q.item)} '
-              'size=${q.size}',
-            );
-            files.add(
-              await _uploadAndDescribeMedia(
-                q.item,
-                q.messageId,
-                q.size,
-                q.fileName,
-                token!,
-                peerAccountIdForUpload,
-              ),
-            );
-          }
-
-          for (final q in items) {
-            await ChatStore.updateProcessingStep(
-              widget.peerLogin,
-              q.messageId,
-              tr('chat.negotiating'),
-            );
-          }
-
-          final inner = InnerMessage.mediaGroup(
-            groupId: groupId,
-            messageId: groupId,
-            caption: caption,
-            textMessageId: textMessageId,
-            files: files,
-          );
-
-          final next = await state.nextSendingKey();
-          DebugLog.log(
-            'ChatScreen sending key (media_group groupId=$groupId) '
-            'to=$_currentPeerDeviceId messageNumber=${next.header['message_number']} '
-            'ratchetPubkey=${next.header['ratchet_pubkey']}',
-          );
-          await SessionStore.saveState(_currentPeerDeviceId, state);
-          final headerFields = <String, dynamic>{
-            ...next.header,
-            'sender_device_id': myDeviceId,
-            if (initHeader != null) ...initHeader,
-          };
-          final encryptedEnvelope = await encryptMessage(
-            next.messageKey,
-            inner.encode(),
-            aad: headerFields,
-          );
-          final envelope = <String, dynamic>{
-            ...encryptedEnvelope,
-            ...headerFields,
-          };
-
-          for (final q in items) {
-            await ChatStore.updateProcessingStep(
-              widget.peerLogin,
-              q.messageId,
-              tr('chat.sending'),
-            );
-          }
-          // Один конверт группы разворачивается в НЕСКОЛЬКО локальных
-          // пузырей (подпись + каждый файл) — обычный messageId/peerLogin
-          // у enqueue() бьёт только по одному id, поэтому статус всех
-          // затронутых сообщений проставляем через onAcked при реальном
-          // подтверждении, а не по одному месту.
-          await SendQueueProcessor.instance.enqueue(
-            toDeviceId: _currentPeerDeviceId,
-            envelope: envelope,
-            deliveryId: inner.messageId,
-            onAcked: () async {
-              if (textMessageId != null) {
-                await ChatStore.updateMessageStatus(
-                  widget.peerLogin,
-                  textMessageId,
-                  'sent',
-                );
-              }
-              for (final q in items) {
-                await ChatStore.updateMessageStatus(
-                  widget.peerLogin,
-                  q.messageId,
-                  'sent',
-                );
-              }
-            },
-          );
-        }),
-      );
-      DebugLog.log(
-        'ChatScreen group send OK (enqueued, awaiting ack) groupId=$groupId '
-        'to=$_currentPeerDeviceId count=${items.length}',
-      );
-    } catch (e, stackTrace) {
-      DebugLog.log(
-        'ChatScreen group send FAILED groupId=$groupId '
-        'to=$_currentPeerDeviceId count=${items.length} error=$e\n$stackTrace',
-      );
-      if (textMessageId != null) {
-        await ChatStore.updateMessageStatus(
-          widget.peerLogin,
-          textMessageId,
-          'failed',
-        );
-      }
-      for (final q in items) {
-        await ChatStore.updateMessageStatus(
-          widget.peerLogin,
-          q.messageId,
-          'failed',
-        );
-      }
-      // Оригиналы пользователя не трогаем — снимаем устойчивую копию
-      // каждого файла группы для PendingSendRetrier (тот же приём, что и
-      // для одиночного медиа/голосового выше, см. PendingSendStore.persistFile).
-      final persistedItems = <Map<String, dynamic>>[];
-      for (final q in items) {
-        final persistedPath = await PendingSendStore.persistFile(
-          q.item.file,
-          q.messageId,
-        );
-        persistedItems.add({
-          'message_id': q.messageId,
-          'file_path': persistedPath,
-          'size': q.size,
-          'file_name': q.fileName,
-          'is_file': q.item.isFile,
-          'is_video': q.item.isVideo,
-          'is_spoiler': q.item.isSpoiler,
-        });
-      }
-      await PendingSendStore.add({
-        'id': groupId,
-        'kind': 'media_group',
-        'peer_login': widget.peerLogin,
-        'peer_device_id': _currentPeerDeviceId,
-        'peer_account_id': widget.peerAccountId,
-        'caption': caption,
-        'text_message_id': textMessageId,
-        'items': persistedItems,
+    // Группа — одним заданием в очередь файлов (PendingSendRetrier):
+    // воркер грузит все файлы, затем шлёт ОДИН конверт группы. Вне
+    // SendLock, с докачкой после перезапуска. file_path — оригинал пикера
+    // (см. _processQueuedMedia: отдельную копию не снимаем — по ТЗ очистка
+    // кэша должна убирать и исходники передач).
+    final groupItems = <Map<String, dynamic>>[];
+    for (final q in items) {
+      groupItems.add({
+        'message_id': q.messageId,
+        'file_path': q.item.file.path,
+        'size': q.size,
+        'file_name': q.fileName,
+        'is_file': q.item.isFile,
+        'is_video': q.item.isVideo,
+        'is_spoiler': q.item.isSpoiler,
       });
-    } finally {
-      await _loadHistory();
     }
+    await PendingSendRetrier.instance.enqueue({
+      'id': groupId,
+      'kind': 'media_group',
+      'state': 'queued',
+      'peer_login': widget.peerLogin,
+      'peer_device_id': _currentPeerDeviceId,
+      'peer_account_id': widget.peerAccountId,
+      'caption': caption,
+      'text_message_id': textMessageId,
+      'items': groupItems,
+    });
+    await _loadHistory();
   }
 
   /// Готовит расшифрованный файл (голосового/видео-сообщения/крупного
@@ -4353,18 +4048,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (statusText != null)
-                Text(
-                  percent != null
-                      ? '$statusText ${percent.round()}%'
-                      : statusText,
-                  style: TextStyle(
-                    color: failed
-                        ? Colors.redAccent
-                        : _bubbleTextColor(msg.isMine).withValues(alpha: 0.7),
-                    fontSize: 11,
-                  ),
+              // Вторая строка есть ВСЕГДА: статус+% во время передачи,
+              // иначе — размер файла (ТЗ: размер виден и до, и после
+              // скачивания).
+              Text(
+                statusText != null
+                    ? (percent != null
+                          ? '$statusText ${percent.round()}%'
+                          : statusText)
+                    : formatFileSize(msg.fileSize),
+                style: TextStyle(
+                  color: failed
+                      ? Colors.redAccent
+                      : _bubbleTextColor(msg.isMine).withValues(alpha: 0.7),
+                  fontSize: 11,
                 ),
+              ),
             ],
           ),
           if (cancel != null) ...[
@@ -6034,6 +5733,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// Positioned, а не Row, см. ТЗ пользователя), и овальная с
   /// звонком+меню справа. Всё вокруг — прозрачно, список сообщений
   /// просвечивает.
+  void _openTransfers() => showTransfersPanel(context);
+
   Widget _buildFloatingChatHeader() {
     final topInset = MediaQuery.of(context).padding.top;
     // Компактные IconButton (как у панели ввода снизу — padding 8,
@@ -6042,64 +5743,72 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // выше самой таблетки с логином+статусом (у неё бывает две строки
     // текста) и обрезался её высотой, отсюда и "BOTTOM OVERFLOWED" на
     // скриншоте, и визуально срезанные кружки на скрине пользователя.
-    const iconPadding = EdgeInsets.all(8);
+    const iconPadding = EdgeInsets.all(5);
     const iconConstraints = BoxConstraints();
+    // Row, а не Stack: 3 иконки справа (передачи/звонок/меню) + таблетка
+    // профиля больше не помещались по центру экрана и наезжали друг на
+    // друга (жалоба со скриншотом) — теперь профиль занимает ровно
+    // оставшееся место и центрируется в нём, имя обрезается многоточием.
     return Padding(
       key: const ValueKey('normal_header'),
-      padding: EdgeInsets.only(top: topInset + 8, bottom: 8),
-      child: Stack(
-        alignment: Alignment.center,
+      padding: EdgeInsets.only(top: topInset + 8, bottom: 8, left: 12, right: 12),
+      child: Row(
         children: [
-          Center(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: MediaQuery.of(context).size.width * 0.55,
-              ),
-              child: _headerPill(
-                child: DefaultTextStyle(
-                  style: TextStyle(color: AppColors.textPrimary),
-                  child: _buildAppBarTitle(),
+          _headerPill(
+            padding: EdgeInsets.zero,
+            child: IconButton(
+              padding: iconPadding,
+              constraints: iconConstraints,
+              visualDensity: VisualDensity.compact,
+              icon: Icon(Icons.arrow_back, color: AppColors.textPrimary),
+              onPressed: () => _handleBackAction(emojiOnlyVisible: _emojiMode),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, c) => Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: c.maxWidth),
+                  child: _headerPill(
+                    child: DefaultTextStyle(
+                      style: TextStyle(color: AppColors.textPrimary),
+                      child: _buildAppBarTitle(),
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-          Positioned(
-            left: 12,
-            child: _headerPill(
-              padding: EdgeInsets.zero,
-              child: IconButton(
-                padding: iconPadding,
-                constraints: iconConstraints,
-                visualDensity: VisualDensity.compact,
-                icon: Icon(Icons.arrow_back, color: AppColors.textPrimary),
-                onPressed: () =>
-                    _handleBackAction(emojiOnlyVisible: _emojiMode),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 12,
-            child: _headerPill(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (!_isNotes)
-                    IconButton(
-                      padding: iconPadding,
-                      constraints: iconConstraints,
-                      visualDensity: VisualDensity.compact,
-                      icon: Icon(
-                        Icons.call_outlined,
-                        color: AppColors.textPrimary,
-                      ),
-                      onPressed: _isPeerDeleted || _composerBlocked
-                          ? null
-                          : _startCall,
-                    ),
-                  PopupMenuButton<String>(
+          const SizedBox(width: 8),
+          _headerPill(
+            padding: EdgeInsets.zero,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  padding: iconPadding,
+                  constraints: iconConstraints,
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.swap_vert, color: AppColors.textPrimary),
+                  onPressed: _openTransfers,
+                ),
+                if (!_isNotes)
+                  IconButton(
                     padding: iconPadding,
-                    icon: Icon(Icons.more_vert, color: AppColors.textPrimary),
+                    constraints: iconConstraints,
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(
+                      Icons.call_outlined,
+                      color: AppColors.textPrimary,
+                    ),
+                    onPressed: _isPeerDeleted || _composerBlocked
+                        ? null
+                        : _startCall,
+                  ),
+                PopupMenuButton<String>(
+                  padding: iconPadding,
+                  icon: Icon(Icons.more_vert, color: AppColors.textPrimary),
                     onSelected: (value) {
                       if (value == 'search') _enterSearchMode();
                       if (value == 'reset_session') {
@@ -6142,7 +5851,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ],
               ),
             ),
-          ),
         ],
       ),
     );
@@ -6274,6 +5982,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           : (_isPeerDeleted
                 ? tr('home.deletedAccount')
                 : (_peerDisplayName ?? widget.peerLogin)),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
 
     final Widget textColumn;

@@ -7,6 +7,7 @@ import '../storage/pending_send_store.dart';
 import '../storage/send_queue_store.dart';
 import 'debug_log.dart';
 import 'send_ack_registry.dart';
+import 'upload_cancel_registry.dart';
 
 /// Полная зачистка ВСЕХ следов одного сообщения на диске/в очередях —
 /// не только запись в ChatStore (её удаляет вызывающий код отдельно), но и
@@ -87,4 +88,21 @@ Future<void> purgeAllMessageArtifacts(Iterable<StoredMessage> messages) async {
   for (final msg in messages) {
     await purgeMessageArtifacts(msg);
   }
+}
+
+/// Отмена ещё не ушедшего исходящего сообщения(й) — «✕» на пузыре в чате
+/// ИЛИ на строке в панели передач. Прерывает активную загрузку, чистит
+/// все следы (кэш/очереди/задания) и удаляет сами записи из ChatStore.
+/// Общая точка для ChatScreen._cancelSend и панели передач.
+Future<void> cancelOutgoingMessages(
+  String peerLogin,
+  List<String> messageIds,
+) async {
+  for (final id in messageIds) {
+    UploadCancelRegistry.cancel(id);
+  }
+  final all = await ChatStore.getMessages(peerLogin);
+  final toPurge = all.where((m) => messageIds.contains(m.messageId)).toList();
+  await ChatStore.deleteMessages(peerLogin, messageIds);
+  await purgeAllMessageArtifacts(toPurge);
 }

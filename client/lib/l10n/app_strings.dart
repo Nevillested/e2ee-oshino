@@ -650,6 +650,24 @@ class AppStrings {
       AppLocale.ru: 'Пока приложение свёрнуто, продолжается скачивание файлов',
       AppLocale.en: 'Downloads keep running while the app is in the background',
     },
+    'transfers.title': {AppLocale.ru: 'Передачи', AppLocale.en: 'Transfers'},
+    'transfers.upload': {AppLocale.ru: 'Отправка', AppLocale.en: 'Upload'},
+    'transfers.download': {AppLocale.ru: 'Скачивание', AppLocale.en: 'Download'},
+    'transfers.manualQueue': {
+      AppLocale.ru: 'Вручную',
+      AppLocale.en: 'Manual',
+    },
+    'transfers.autoQueue': {
+      AppLocale.ru: 'Автоматически',
+      AppLocale.en: 'Automatic',
+    },
+    'transfers.textQueue': {AppLocale.ru: 'Текст', AppLocale.en: 'Text'},
+    'transfers.fileQueue': {AppLocale.ru: 'Файлы', AppLocale.en: 'Files'},
+    'transfers.textMessage': {
+      AppLocale.ru: 'Текстовое сообщение',
+      AppLocale.en: 'Text message',
+    },
+    'transfers.empty': {AppLocale.ru: 'Пусто', AppLocale.en: 'Empty'},
     'deleteMessage.title': {
       AppLocale.ru: 'Удалить сообщение?',
       AppLocale.en: 'Delete message?',

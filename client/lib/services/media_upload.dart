@@ -103,17 +103,13 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         ({String mediaId, String uploadId, int partSize, Uint8List keyBytes})
       >
       startFreshSession() async {
-        final tempDir = await getTemporaryDirectory();
-        final keyPath = '${tempDir.path}/key_$messageId.bin';
-        await compute(encryptFileIsolateEntry, {
-          'input': item.file.path,
-          'output': encTempFile.path,
-          'key': keyPath,
-        });
-        final keyBytes = await File(keyPath).readAsBytes();
-        try {
-          await File(keyPath).delete();
-        } catch (_) {}
+        // Шифрование целиком в фоновом изоляте — главный изолят (UI) не
+        // грузится. Внутри — Uint8List/RandomAccessFile (без List<int>-
+        // боксинга и GC-шторма прошлой версии, из-за которого грелся телефон).
+        final keyBytes = await StreamingFileCipher.encryptFileInIsolate(
+          inputFile: item.file,
+          outputFile: encTempFile,
+        );
 
         final totalSize = await encTempFile.length();
         final init = await _retryChunkedStep(
@@ -250,7 +246,13 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
       try {
         await encTempFile.delete();
       } catch (_) {}
-      await MediaCache.writeFromFile(sessionMediaId, item.file);
+      // Не фатально: файл УЖЕ на сервере. Локальная копия в кэше — лишь
+      // оптимизация (не качать свой же файл заново). Если оригинал пикера
+      // к этому моменту исчез — просто нет копии, сообщение всё равно
+      // 'sent'.
+      try {
+        await MediaCache.writeFromFile(sessionMediaId, item.file);
+      } catch (_) {}
       mediaId = sessionMediaId;
       keyBase64 = base64Encode(keyBytes);
     } else {
@@ -284,7 +286,10 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
           await encTempFile.delete();
         } catch (_) {}
       }
-      await MediaCache.write(mediaId, bytes);
+      // Не фатально — см. комментарий в чанковой ветке выше.
+      try {
+        await MediaCache.write(mediaId, bytes);
+      } catch (_) {}
       keyBase64 = base64Encode(encrypted.key);
       nonceBase64 = base64Encode(encrypted.nonce);
       macBase64 = base64Encode(encrypted.mac);
