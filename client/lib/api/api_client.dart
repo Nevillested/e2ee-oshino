@@ -380,6 +380,122 @@ class ApiClient {
     }
   }
 
+  /// HEAD /media/{id} — только полный размер зашифрованного файла в байтах,
+  /// без самой закачки (сервер отвечает заголовками, тело не тянет из
+  /// MinIO — см. download_media.go). Нужен MediaDownloadManager, когда на
+  /// диске уже есть частичный хвост, а сколько всего байт в файле —
+  /// с прошлой сессии не сохранилось. 0 при любой ошибке.
+  Future<int> probeEncryptedMediaSize(String token, String mediaId) async {
+    try {
+      final client = _mediaDioClient();
+      final resp = await client.head<void>(
+        '${ApiConfig.baseUrl}/media/$mediaId',
+        options: dio.Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      return int.tryParse(resp.headers.value('content-length') ?? '') ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// Скачивает зашифрованный медиафайл в [destFile] С ДОКАЧКОЙ: если файл
+  /// уже частично заполнен (см. PartialDownloadStore), дописывает только
+  /// недостающий хвост через заголовок `Range: bytes=<есть>-` (сервер
+  /// отвечает 206 + Content-Range). [onProgress] получает АБСОЛЮТНЫЙ
+  /// процент по всему файлу (не по остатку). Возвращает полный размер
+  /// зашифрованного файла в байтах — по нему вызывающая сторона понимает,
+  /// целиком ли хвост уже собран и можно ли расшифровывать.
+  Future<int> downloadEncryptedMediaResumable(
+    String token,
+    String mediaId,
+    File destFile, {
+    int? knownTotalBytes,
+    void Function(double percent)? onProgress,
+    dio.CancelToken? cancelToken,
+  }) async {
+    final client = _mediaDioClient();
+    final url = '${ApiConfig.baseUrl}/media/$mediaId';
+
+    var existing = await destFile.exists() ? await destFile.length() : 0;
+    var total = knownTotalBytes ?? 0;
+
+    if (existing > 0 && total <= 0) {
+      total = await probeEncryptedMediaSize(token, mediaId);
+      if (total > 0 && existing >= total) {
+        // Всё уже скачано на прошлой сессии — осталось только расшифровать.
+        onProgress?.call(100);
+        return total;
+      }
+      if (total > 0 && existing > total) {
+        // Локальный хвост длиннее реального файла (порча) — начисто.
+        await destFile.delete();
+        existing = 0;
+      }
+    }
+
+    final headers = <String, dynamic>{'Authorization': 'Bearer $token'};
+    if (existing > 0) headers['Range'] = 'bytes=$existing-';
+
+    try {
+      final response = await client.download(
+        url,
+        destFile.path,
+        options: dio.Options(
+          headers: headers,
+          validateStatus: (s) => s == 200 || s == 206,
+        ),
+        // КРИТИЧНО: по умолчанию dio при ошибке/отмене СНОСИТ файл — а нам
+        // нужно, чтобы недокачанный хвост остался на диске для докачки с
+        // места обрыва (см. PartialDownloadStore / MediaDownloadManager).
+        deleteOnError: false,
+        fileAccessMode: existing > 0
+            ? dio.FileAccessMode.append
+            : dio.FileAccessMode.write,
+        cancelToken: cancelToken,
+        onReceiveProgress: (received, chunkTotal) {
+          if (onProgress == null) return;
+          final overall = existing + received;
+          final grand = total > 0
+              ? total
+              : (chunkTotal > 0 ? existing + chunkTotal : 0);
+          if (grand > 0) {
+            onProgress((overall / grand * 100).clamp(0, 100).toDouble());
+          }
+        },
+      );
+
+      final contentRange = response.headers.value('content-range');
+      if (contentRange != null) {
+        final slash = contentRange.lastIndexOf('/');
+        if (slash != -1) {
+          total = int.tryParse(contentRange.substring(slash + 1)) ?? total;
+        }
+      }
+      if (total <= 0) total = await destFile.length();
+      return total;
+    } on dio.DioException catch (e) {
+      if (e.type == dio.DioExceptionType.cancel) {
+        throw ApiException(tr('error.cancelledByUser'));
+      }
+      // 416 при докачке = наш локальный хвост не бьётся с файлом на
+      // сервере (порча/протухший .part) — сносим и качаем начисто один раз.
+      if (e.response?.statusCode == 416 && existing > 0) {
+        try {
+          if (await destFile.exists()) await destFile.delete();
+        } catch (_) {}
+        return downloadEncryptedMediaResumable(
+          token,
+          mediaId,
+          destFile,
+          knownTotalBytes: null,
+          onProgress: onProgress,
+          cancelToken: cancelToken,
+        );
+      }
+      throw ApiException(tr('error.downloadFailed'));
+    }
+  }
+
   /// POST /login — вход. Возвращает токен сессии и текущий язык, сохранённый
   /// на сервере (см. LocaleStore — вызывающая сторона применяет его сразу).
   Future<({String token, String language})> login(

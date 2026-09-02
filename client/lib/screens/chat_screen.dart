@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:camera/camera.dart';
-import 'package:dio/dio.dart' as dio;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show TapGestureRecognizer;
@@ -26,11 +24,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../api/api_client.dart';
 import '../crypto/double_ratchet.dart';
 import '../crypto/key_store.dart';
-import '../crypto/media_cipher.dart';
 import '../crypto/message_cipher.dart';
 import '../crypto/message_envelope.dart';
 import '../crypto/session_store.dart';
-import '../crypto/streaming_file_cipher.dart';
 import '../crypto/x3dh.dart';
 import '../l10n/app_strings.dart';
 import '../models/picked_media.dart';
@@ -38,7 +34,6 @@ import '../screens/call_screen.dart';
 import '../screens/camera_capture_screen.dart';
 import '../screens/media_viewer_screen.dart';
 import '../services/active_chat_tracker.dart';
-import '../services/download_cancel_registry.dart';
 import '../services/downloads_saver.dart';
 import '../widgets/cached_avatar_image.dart';
 import '../services/call_service.dart';
@@ -47,6 +42,7 @@ import '../services/debug_log.dart';
 import '../services/keyboard_height_store.dart';
 import '../services/keyboard_insets.dart';
 import '../services/media_asset_cache.dart';
+import '../services/media_download_manager.dart';
 import '../services/media_playback_coordinator.dart';
 import '../services/media_upload.dart' as media_upload;
 import '../services/message_cleanup.dart';
@@ -161,161 +157,134 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final _apiClient = ApiClient();
   final Map<String, Future<Uint8List>> _mediaFutures = {};
   final Map<String, Uint8List> _resolvedMedia = {};
-  final Map<String, Future<void>> _chunkedDownloads = {};
-  // Живой процент скачивания (0..100) для фото/видео/аудио/видео-сообщений
-  // прямо в чате — см. ТЗ пользователя: во время скачивания медиа вместо
-  // спиннера-заглушки должно быть видно, сколько уже реально скачано.
-  // Ключ — mediaId, значение обновляется через onProgress-колбэк,
-  // передаваемый в _loadAndCacheMedia/_downloadAndDecryptChunked.
+  // Живой процент скачивания (0..100) — приходит из MediaDownloadManager
+  // (см. его progressChanges) по mediaId. Раньше это была самодельная
+  // очередь прямо здесь, в State экрана чата; теперь весь движок
+  // скачивания (две очереди — пользовательская и авто, докачка с места
+  // обрыва, вытеснение) живёт в независимом от жизни экрана сервисе, а
+  // экран — просто его клиент (см. ТЗ пользователя, разбор очередей).
   final Map<String, double> _downloadProgress = {};
 
-  void Function(double percent) _progressUpdater(String mediaId) {
-    return (percent) {
-      _lastDownloadActivityAt[mediaId] = DateTime.now();
-      if (!mounted) return;
-      setState(() => _downloadProgress[mediaId] = percent);
-    };
+  StreamSubscription<String>? _dlProgressSub;
+  StreamSubscription<String>? _dlDoneSub;
+  StreamSubscription<String>? _dlFailedSub;
+
+  // Дебаунс "что сейчас видно на экране" -> MediaDownloadManager.setVisible.
+  // Авто-очередь наполняется только файлами < 3 МБ, которые показались
+  // пользователю; повторно показавшийся прыгает в начало (ТЗ). Флашим не
+  // чаще раза в ~350 мс, чтобы фличащий скролл не дёргал движок на каждый
+  // кадр.
+  final Map<String, DownloadSpec> _visibleSpecs = {};
+  final Set<String> _pendingVisibleIds = {};
+  Timer? _visibleFlushTimer;
+
+  DownloadSpec? _downloadSpecOf(StoredMessage msg) {
+    final mediaId = msg.mediaId;
+    final key = msg.mediaKeyBase64;
+    if (mediaId == null || key == null) return null;
+    return DownloadSpec(
+      mediaId: mediaId,
+      keyBase64: key,
+      chunked: msg.chunked,
+      plaintextSize: msg.fileSize,
+      nonceBase64: msg.mediaNonceBase64,
+      macBase64: msg.mediaMacBase64,
+    );
   }
 
-  // Момент последнего реального сигнала прогресса — см. _watchForStall
-  // ниже: таймаут по ОБЩЕЙ длительности ("не больше N секунд на всё")
-  // ошибочно принимает "медленно, но качается" за "зависло" — большой
-  // файл на медленной сети никогда бы не докачался (жалоба пользователя:
-  // "а вдруг файл огромный?"). Вместо этого следим за тем, идёт ли
-  // прогресс ВООБЩЕ — пока байты продолжают поступать (пусть редко),
-  // сколько угодно долгая загрузка не считается зависшей; таймаут
-  // срабатывает только если новых тиков прогресса нет вообще какое-то
-  // время подряд — вот это уже настоящий признак зависания (тот самый
-  // реальный кейс — намертво висящий нативный плагин генерации превью
-  // видео, у которого сигналов прогресса в принципе не бывает).
-  final Map<String, DateTime> _lastDownloadActivityAt = {};
-
-  // Приоритетная очередь автоскачивания (замена прежнему простому FIFO —
-  // ТЗ пользователя, реальный кейс: старое "тяжёлое" сообщение выше по
-  // истории задерживало на 10+ секунд СВЕЖИЕ видео, которые уже физически
-  // были на экране пользователя). Правила приоритета:
-  //   1. То, что СЕЙЧАС отрисовано на экране — обгоняет всё остальное.
-  //      _touchDownloadPriority вызывается на КАЖДОЙ отрисовке плитки (не
-  //      только на первой, в отличие от putIfAbsent) — переставляет
-  //      элемент вперёд, если он уже в очереди, но не первый.
-  //   2. Когда экран весь досмотрен (ничего видимого больше не ждёт) —
-  //      фоново долистываем автозакачку остального ЗА СЕГОДНЯ этого чата
-  //      (см. _maybeAutoFillToday) — низкий приоритет, в конец очереди.
-  // Всё ещё строго ПОСЛЕДОВАТЕЛЬНО (как и раньше) — не параллелим сеть,
-  // просто меняем ПОРЯДОК, а не одновременность.
-  final List<String> _downloadQueueOrder = [];
-  final Map<String, Future<void> Function()> _downloadQueueRunners = {};
-  bool _downloadQueueRunning = false;
-  String? _downloadQueueCurrentId;
-  bool _autoFillTodayDone = false;
-
-  /// Переставляет mediaId в начало очереди, если он там уже стоит, но не
-  /// первый — вызывается на каждой отрисовке плитки (в отличие от
-  /// putIfAbsent, срабатывающего только один раз), поэтому реально ловит
-  /// "пользователь долистал сюда" на любой, не только первой отрисовке.
-  void _touchDownloadPriority(String mediaId) {
-    if (_downloadQueueCurrentId == mediaId) return;
-    final idx = _downloadQueueOrder.indexOf(mediaId);
-    if (idx > 0) {
-      _downloadQueueOrder
-        ..removeAt(idx)
-        ..insert(0, mediaId);
-    }
+  /// Вызывается из build() плитки медиа, которое СЕЙЧАС строится (значит —
+  /// на экране или у самой его кромки). Мелкие (< 3 МБ) не свои
+  /// нескачанные файлы так попадают в авто-очередь; крупные движок
+  /// проигнорирует (их качаем только по явному тапу пользователя).
+  void _noteMediaVisible(StoredMessage msg) {
+    if (msg.isMine) return;
+    if (msg.fileSize >= _autoDownloadLimitBytes) return;
+    if (_mediaExistsLocally(msg)) return;
+    final spec = _downloadSpecOf(msg);
+    if (spec == null) return;
+    _visibleSpecs[spec.mediaId] = spec;
+    _pendingVisibleIds.add(spec.mediaId);
+    _visibleFlushTimer ??= Timer(
+      const Duration(milliseconds: 350),
+      _flushVisible,
+    );
   }
 
-  // РЕАЛЬНЫЙ баг (жалоба пользователя): _enqueueDownload вызывается прямо
-  // из build() (см. _photoPreview и т.п.) — раньше это было безопасно,
-  // потому что старая очередь была цепочкой Future.then(...), а .then()
-  // ВСЕГДА откладывает колбэк на следующий микротаск, даже если исходная
-  // future уже готова. Тут runner() — обычный вызов функции: код ДО
-  // первого await внутри неё (включая setState в самом начале) выполнялся
-  // бы СИНХРОННО, прямо в текущем стеке вызовов — если этот стек начался
-  // внутри build(), Flutter роняет "setState() called during build"
-  // (именно так и произошло). scheduleMicrotask — тот же приём, что и у
-  // .then(): гарантированно откладывает старт на следующий микротаск,
-  // никогда не выполняется синхронно внутри вызвавшего кода.
-  void _pumpDownloadQueue() {
-    if (_downloadQueueRunning) return;
-    if (_downloadQueueOrder.isEmpty) {
-      _maybeAutoFillToday();
-      return;
-    }
-    _downloadQueueRunning = true;
-    final mediaId = _downloadQueueOrder.removeAt(0);
-    _downloadQueueCurrentId = mediaId;
-    final runner = _downloadQueueRunners.remove(mediaId);
-    if (runner == null) {
-      _downloadQueueRunning = false;
-      _downloadQueueCurrentId = null;
-      _pumpDownloadQueue();
-      return;
-    }
-    scheduleMicrotask(() {
-      runner().whenComplete(() {
-        _downloadQueueRunning = false;
-        _downloadQueueCurrentId = null;
-        _pumpDownloadQueue();
-      });
-    });
+  void _flushVisible() {
+    _visibleFlushTimer = null;
+    if (!mounted) return;
+    final specs = _pendingVisibleIds
+        .map((id) => _visibleSpecs[id])
+        .whereType<DownloadSpec>()
+        .toList();
+    _pendingVisibleIds.clear();
+    MediaDownloadManager.instance.setVisible(specs);
   }
 
-  /// Фоновая автозакачка "по умолчанию" (ТЗ пользователя): если прямо
-  /// сейчас на экране всё уже скачано/в очереди — начинаем сами
-  /// подтягивать остальное медиа ЗА СЕГОДНЯ в этом чате (< 3 МБ, тот же
-  /// порог, что и у обычной автозакачки), в порядке истории, самым НИЗКИМ
-  /// приоритетом — любая плитка, реально попавшая на экран, снова
-  /// обгонит их через _touchDownloadPriority. Разово за сессию экрана
-  /// (_autoFillTodayDone) — не пересканировать список сообщений на каждый
-  /// пустой тик очереди. Файлы (isFile) сюда не берём — у них своя,
-  /// отдельная тап-логика (_downloadPromptRow), фоново их не трогаем.
-  void _maybeAutoFillToday() {
-    if (_autoFillTodayDone) return;
-    _autoFillTodayDone = true;
-    final now = DateTime.now();
-    for (final msg in _messages) {
-      if (!msg.isMedia || msg.isFile || msg.isVoice || msg.isVideoNote) {
-        continue;
+  /// Гарантирует, что расшифрованный файл [msg] лежит в MediaCache, и
+  /// возвращает его. Быстрые пути (уже в кэше; свой же файл ещё на диске)
+  /// — здесь, БЕЗ сети и без движка. Иначе — отдаём в MediaDownloadManager
+  /// (userInitiated: явный тап -> высший приоритет и вытеснение; иначе ->
+  /// тихо в начало авто-очереди).
+  Future<File> _ensureMediaFile(
+    StoredMessage msg, {
+    bool userInitiated = false,
+    void Function(double percent)? onProgress,
+  }) async {
+    final mediaId = msg.mediaId!;
+    final cacheFile = await MediaCache.fileFor(mediaId);
+    if (await cacheFile.exists()) return cacheFile;
+
+    // Свой же файл, ещё живой на диске — копируем в кэш, сеть не трогаем
+    // (прежние комментарии в _loadAndCacheMedia про localPreviewPath /
+    // localSourcePath и жалобы про перекачку своих файлов).
+    if (msg.isMine) {
+      if (!msg.isVideo &&
+          !msg.isVideoNote &&
+          !msg.isFile &&
+          msg.localPreviewPath != null) {
+        final f = File(msg.localPreviewPath!);
+        if (await f.exists()) {
+          await f.copy(cacheFile.path);
+          return cacheFile;
+        }
       }
-      final mediaId = msg.mediaId;
-      if (mediaId == null) continue;
-      if (msg.fileSize >= _autoDownloadLimitBytes) continue;
-      if (_mediaExistsLocally(msg)) continue;
-      if (_mediaFutures.containsKey(mediaId) ||
-          _chunkedDownloads.containsKey(mediaId)) {
-        continue;
+      if (msg.localSourcePath != null) {
+        final f = File(msg.localSourcePath!);
+        if (await f.exists()) {
+          await f.copy(cacheFile.path);
+          return cacheFile;
+        }
       }
-      final sentAt = DateTime.fromMillisecondsSinceEpoch(msg.timestamp);
-      if (sentAt.year != now.year ||
-          sentAt.month != now.month ||
-          sentAt.day != now.day) {
-        continue;
-      }
-      _mediaFutures[mediaId] =
-          _enqueueDownload(
-                mediaId,
-                (cancelToken) => _resolvePhotoBytes(
-                  msg,
-                  onProgress: _progressUpdater(mediaId),
-                  cancelToken: cancelToken,
-                ),
-                lowPriority: true,
-              )
-              .then((bytes) {
-                if (mounted) setState(() => _resolvedMedia[mediaId] = bytes);
-                return bytes;
-              })
-              .catchError((Object e) {
-                _mediaFutures.remove(mediaId);
-                if (mounted) setState(() {});
-                throw e;
-              });
+    }
+
+    final spec = _downloadSpecOf(msg);
+    if (spec == null) throw ApiException(tr('error.downloadFailed'));
+
+    StreamSubscription<String>? sub;
+    if (onProgress != null) {
+      sub = MediaDownloadManager.instance.progressChanges
+          .where((id) => id == mediaId)
+          .listen(
+            (id) =>
+                onProgress(MediaDownloadManager.instance.progressOf(id) ?? 0),
+          );
+    }
+    try {
+      return await MediaDownloadManager.instance.ensureDownloaded(
+        spec,
+        userInitiated: userInitiated,
+      );
+    } finally {
+      await sub?.cancel();
     }
   }
 
-  // Ждёт ли ещё элемент своей очереди ("В очереди…", ТЗ пользователя) или
-  // уже реально качается (тогда видно число %) — ключ mediaId. Заполняется
-  // и очищается самим _enqueueDownload вокруг вызова задачи.
-  final Set<String> _activeDownloadMediaIds = {};
+  bool _isDownloading(String? mediaId) =>
+      mediaId != null && MediaDownloadManager.instance.isWorking(mediaId);
+
+  bool _isDownloadActive(String? mediaId) =>
+      mediaId != null && MediaDownloadManager.instance.isActive(mediaId);
 
   /// Синхронный, всегда-актуальный ответ на вопрос "этот медиафайл уже
   /// физически на устройстве?" — ТЗ пользователя: "абсолютно всё в чате,
@@ -348,117 +317,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return File(msg.localSourcePath!).existsSync();
     }
     return false;
-  }
-
-  // Порог простоя (не общей длительности!) — см. _lastDownloadActivityAt
-  // и _raceStall ниже. Достаточно большой запас поверх обычного интервала
-  // между тиками прогресса (те приходят намного чаще), чтобы не поймать
-  // на этом честную, но неторопливую доставку одного чанка по медленной
-  // сети — но не бесконечный, чтобы задача без единого сигнала прогресса
-  // вообще (нативная генерация превью видео, см. generateVideoThumbnail)
-  // не висела вечно.
-  static const _downloadStallTimeout = Duration(seconds: 30);
-
-  /// Гонка задачи против "часового" простоя — в отличие от простого
-  /// Future.timeout(), не ограничивает ОБЩУЮ длительность (жалоба
-  /// пользователя: "а вдруг файл огромный? получается мы никогда не
-  /// сможем его скачать?" — большой файл на медленной сети мог бы честно
-  /// качаться дольше любого фиксированного лимита). Часовой перезапускает
-  /// себя на каждый вызов _progressUpdater(mediaId) (см. её обновление
-  /// _lastDownloadActivityAt) — пока прогресс продолжает идти, сколько бы
-  /// он ни занял по времени, задача не считается зависшей. Ошибку ловим
-  /// только если сигналов прогресса не было вообще (или они прекратились)
-  /// дольше _downloadStallTimeout подряд — вот это уже настоящий признак
-  /// зависания, а не просто "медленно".
-  Future<T> _raceStall<T>(String mediaId, Future<T> future) {
-    _lastDownloadActivityAt[mediaId] = DateTime.now();
-    final completer = Completer<T>();
-    final watchdog = Timer.periodic(const Duration(seconds: 5), (timer) {
-      final last = _lastDownloadActivityAt[mediaId];
-      if (last != null &&
-          DateTime.now().difference(last) >= _downloadStallTimeout) {
-        timer.cancel();
-        if (!completer.isCompleted) {
-          completer.completeError(
-            TimeoutException(
-              'Скачивание зависло — нет прогресса $_downloadStallTimeout',
-            ),
-          );
-        }
-      }
-    });
-    future.then(
-      (value) {
-        if (!completer.isCompleted) completer.complete(value);
-      },
-      onError: (Object e, StackTrace st) {
-        if (!completer.isCompleted) completer.completeError(e, st);
-      },
-    );
-    return completer.future.whenComplete(() {
-      watchdog.cancel();
-      _lastDownloadActivityAt.remove(mediaId);
-    });
-  }
-
-  /// [task] получает CancelToken, зарегистрированный (см.
-  /// DownloadCancelRegistry) СРАЗУ здесь, синхронно — то есть ещё до того,
-  /// как задача реально дойдёт до сети (пока ждёт своей очереди, см.
-  /// _downloadQueueOrder/_pumpDownloadQueue). ТЗ пользователя: кнопка
-  /// отмены должна работать "везде, где происходит скачивание файла" — в
-  /// том числе пока строка ещё показывает "В очереди", а не только во
-  /// время самого скачивания: раз токен уже существует к этому моменту,
-  /// отмена сработает и тут — dio увидит уже отменённый токен и не
-  /// станет даже начинать запрос.
-  ///
-  /// [lowPriority] — в КОНЕЦ очереди, а не в начало (см.
-  /// _maybeAutoFillToday: фоновая автозакачка не должна лезть вперёд
-  /// того, что реально сейчас на экране пользователя).
-  Future<T> _enqueueDownload<T>(
-    String mediaId,
-    Future<T> Function(dio.CancelToken cancelToken) task, {
-    bool lowPriority = false,
-  }) {
-    final cancelToken = DownloadCancelRegistry.register(mediaId);
-    final completer = Completer<T>();
-    _downloadQueueRunners[mediaId] = () async {
-      if (mounted) setState(() => _activeDownloadMediaIds.add(mediaId));
-      final taskFuture = task(cancelToken);
-      // Предохранитель от "unhandled exception" (см. тот же приём и его
-      // подробное обоснование в SendQueueProcessor._attempt этой же
-      // сессии): если ниже сработает часовой простоя и мы перестанем
-      // ждать taskFuture, а он позже всё равно завершится ошибкой — у
-      // него уже не будет ни одного слушателя, и Dart сочтёт это
-      // настоящим необработанным исключением (под VM-дебаггером —
-      // зависание всего изолята).
-      unawaited(taskFuture.then((_) {}, onError: (_) {}));
-      try {
-        // Без часового один зависший таск (например, нативная генерация
-        // превью видео — см. generateVideoThumbnail, реальный случай:
-        // платформенный плагин иногда намертво виснет на эмуляторе без
-        // единой ошибки) навсегда блокировал бы ВЕСЬ этот общий
-        // последовательный конвейер: очередь одна на весь экран чата (см.
-        // класс-комментарий про порядок закачки группы), а следующий
-        // элемент стартует только после того, как предыдущий завершился —
-        // успехом ИЛИ неудачей.
-        final result = await _raceStall(mediaId, taskFuture);
-        if (!completer.isCompleted) completer.complete(result);
-      } catch (e, st) {
-        if (!completer.isCompleted) completer.completeError(e, st);
-      } finally {
-        DownloadCancelRegistry.unregister(mediaId);
-        if (mounted) setState(() => _activeDownloadMediaIds.remove(mediaId));
-      }
-    };
-    if (!_downloadQueueOrder.contains(mediaId)) {
-      if (lowPriority) {
-        _downloadQueueOrder.add(mediaId);
-      } else {
-        _downloadQueueOrder.insert(0, mediaId);
-      }
-    }
-    _pumpDownloadQueue();
-    return completer.future;
   }
 
   // То же самое, но для ИСХОДЯЩЕЙ загрузки на сервер (см. ТЗ пользователя:
@@ -530,9 +388,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _downloadProgress.remove(mediaId);
     _mediaFutures.remove(mediaId);
     _resolvedMedia.remove(mediaId);
-    _chunkedDownloads.remove(mediaId);
     _videoThumbCache.remove(mediaId);
-    _activeDownloadMediaIds.remove(mediaId);
+    _visibleSpecs.remove(mediaId);
+    _pendingVisibleIds.remove(mediaId);
+    // Бросить любую идущую/очередённую закачку этого файла и снести его
+    // недокачанный хвост (сообщение удалено — файл больше не нужен).
+    MediaDownloadManager.instance.forget(mediaId);
   }
 
   String _currentPeerDeviceId = '';
@@ -1049,6 +910,37 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() => _uploadProgress[event.$1] = event.$2);
     });
+    // Живые обновления от движка скачивания (MediaDownloadManager) — он
+    // не привязан к жизни этого экрана (переживает уход из чата, а Stage 2
+    // — и сворачивание приложения), поэтому проценты/готово/сбой приходят
+    // сюда только через его стримы.
+    final dl = MediaDownloadManager.instance;
+    _dlProgressSub = dl.progressChanges.listen((mediaId) {
+      if (!mounted) return;
+      final p = dl.progressOf(mediaId);
+      setState(() {
+        if (p == null) {
+          _downloadProgress.remove(mediaId);
+        } else {
+          _downloadProgress[mediaId] = p;
+        }
+      });
+    });
+    _dlDoneSub = dl.done.listen((mediaId) {
+      if (!mounted) return;
+      // Файл расшифрован и лежит в MediaCache — сбрасываем незавершённые
+      // трекеры этого экрана, чтобы плитки перечитали кэш и показали
+      // содержимое (в т.ч. видео-превью сгенерировалось заново).
+      _mediaFutures.remove(mediaId);
+      _videoThumbCache.remove(mediaId);
+      _downloadProgress.remove(mediaId);
+      setState(() {});
+    });
+    _dlFailedSub = dl.failed.listen((mediaId) {
+      if (!mounted) return;
+      _mediaFutures.remove(mediaId);
+      setState(() {});
+    });
     if (!_isNotes) {
       unawaited(_loadPeerDisplayName());
       _peerProfileSub = PeerProfileCache.changes.listen((accountId) {
@@ -1359,14 +1251,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             _scrollController.position.maxScrollExtent - 40;
       }
       _initialLoadComplete = true;
-      // Запускает фоновую автозакачку остального за сегодня (см.
-      // _maybeAutoFillToday), если на экране и так уже всё скачано/в
-      // очереди — сама она срабатывает не более раза за сессию экрана, а
-      // без этого явного толчка вообще не была бы кому вызвать: обычно
-      // это делает _pumpDownloadQueue при опустении очереди, но если
-      // видимые плитки все и так локальные (см. localOnly в
-      // _photoPreview), очередь никогда даже не заводится сама.
-      _pumpDownloadQueue();
+      // Бывшая точка запуска "автозакачки за сегодня" — теперь этого
+      // режима нет вовсе (ТЗ пользователя): авто-очередь наполняется
+      // ТОЛЬКО тем, что реально показалось на экране (< 3 МБ), по факту
+      // отрисовки плитки — см. _noteMediaVisible.
     });
   }
 
@@ -3950,232 +3838,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<Uint8List> _loadAndCacheMedia(
-    StoredMessage msg, {
-    void Function(double percent)? onProgress,
-    dio.CancelToken? cancelToken,
-  }) async {
-    final cached = await MediaCache.read(msg.mediaId!);
-    if (cached != null) return cached;
-
-    // Своё же отправленное фото: localPreviewPath у фото (в отличие от
-    // видео/видео-заметки, где это только кадр-превью, см.
-    // _sendPickedMedia/_sendRecordedMessage) — это путь к САМОМУ исходному
-    // файлу, который выбирал/снимал пользователь. Если MediaCache очищен
-    // (например, юзер почистил кэш приложения), но оригинал физически ещё
-    // жив на диске — читаем его напрямую вместо похода в сеть (жалоба
-    // пользователя: свои же фото не должны заново скачиваться, если файл
-    // никуда не делся).
-    //
-    // !msg.isVideoNote — отдельная проверка от !msg.isVideo: это два
-    // независимых поля (msg.isVideo — обычное видео из галереи, isVideoNote
-    // — кружок/квадрат, записанный в самом приложении), и раньше здесь
-    // проверялся только isVideo. У своей видео-заметки localPreviewPath —
-    // это ТОЛЬКО кадр (isVideo при этом false), так что условие ошибочно
-    // пропускало её сюда: кадр-картинка записывалась в MediaCache под
-    // mediaId самого видео, плеер не мог такое воспроизвести, а повторное
-    // скачивание больше не срабатывало — MediaCache.exists() уже был
-    // (ошибочно) не пуст (баг с реального устройства: своя видео-заметка
-    // после отправки не воспроизводится и не перекачивается).
-    if (msg.isMine &&
-        !msg.isVideo &&
-        !msg.isVideoNote &&
-        !msg.isFile &&
-        msg.localPreviewPath != null) {
-      final localFile = File(msg.localPreviewPath!);
-      if (await localFile.exists()) {
-        final localBytes = await localFile.readAsBytes();
-        await MediaCache.write(msg.mediaId!, localBytes);
-        return localBytes;
-      }
-    }
-    // Тот же приём, что и выше, но для видео/файла/голосового/видео-заметки
-    // — у них исходник лежит в localSourcePath, а не localPreviewPath (см.
-    // её комментарий в chat_store.dart).
-    if (msg.isMine && msg.localSourcePath != null) {
-      final localFile = File(msg.localSourcePath!);
-      if (await localFile.exists()) {
-        final localBytes = await localFile.readAsBytes();
-        await MediaCache.write(msg.mediaId!, localBytes);
-        return localBytes;
-      }
-    }
-
-    DebugLog.log(
-      'ChatScreen download attempt (non-chunked) mediaId=${msg.mediaId} '
-      'messageId=${msg.messageId} size=${msg.fileSize}',
-    );
-    try {
-      final token = await Session.getToken();
-      final ciphertext = await _apiClient.downloadEncryptedMedia(
-        token!,
-        msg.mediaId!,
-        onProgress: onProgress,
-        cancelToken: cancelToken,
-      );
-      final plainBytes = await decryptFileBytes(
-        key: base64Decode(msg.mediaKeyBase64!),
-        nonce: base64Decode(msg.mediaNonceBase64!),
-        mac: base64Decode(msg.mediaMacBase64!),
-        ciphertext: ciphertext,
-      );
-      await MediaCache.write(msg.mediaId!, plainBytes);
-      DebugLog.log(
-        'ChatScreen download+decrypt OK mediaId=${msg.mediaId} '
-        'messageId=${msg.messageId}',
-      );
-      return plainBytes;
-    } catch (e, stackTrace) {
-      DebugLog.log(
-        'ChatScreen download/decrypt FAILED mediaId=${msg.mediaId} '
-        'messageId=${msg.messageId} error=$e\n$stackTrace',
-      );
-      rethrow;
-    }
-  }
-
-  Future<void> _downloadAndDecryptChunked(
-    StoredMessage msg, {
-    void Function(double percent)? onProgress,
-    dio.CancelToken? cancelToken,
-  }) async {
-    DebugLog.log(
-      'ChatScreen download attempt (chunked) mediaId=${msg.mediaId} '
-      'messageId=${msg.messageId} size=${msg.fileSize}',
-    );
-    try {
-      await _downloadAndDecryptChunkedInner(
-        msg,
-        onProgress: onProgress,
-        cancelToken: cancelToken,
-      );
-      DebugLog.log(
-        'ChatScreen download+decrypt OK (chunked) mediaId=${msg.mediaId} '
-        'messageId=${msg.messageId}',
-      );
-    } catch (e, stackTrace) {
-      DebugLog.log(
-        'ChatScreen download/decrypt FAILED (chunked) mediaId=${msg.mediaId} '
-        'messageId=${msg.messageId} error=$e\n$stackTrace',
-      );
-      rethrow;
-    }
-  }
-
-  Future<void> _downloadAndDecryptChunkedInner(
-    StoredMessage msg, {
-    void Function(double percent)? onProgress,
-    dio.CancelToken? cancelToken,
-  }) async {
-    // Тот же локальный fallback, что и в _loadAndCacheMedia (см. её
-    // комментарий и StoredMessage.localSourcePath), только для крупных
-    // (chunked) видео/файлов — раньше этой ветки здесь не было вообще,
-    // свой же только что отправленный крупный видео-файл после очистки
-    // MediaCache безусловно качался заново целиком с сервера (жалоба
-    // пользователя).
-    if (msg.isMine && msg.localSourcePath != null) {
-      final localFile = File(msg.localSourcePath!);
-      if (await localFile.exists()) {
-        final destFile = await MediaCache.fileFor(msg.mediaId!);
-        await localFile.copy(destFile.path);
-        DebugLog.log(
-          'ChatScreen chunked: взял свой файл с диска вместо скачивания '
-          'mediaId=${msg.mediaId} messageId=${msg.messageId}',
-        );
-        return;
-      }
-    }
-
-    final token = await Session.getToken();
-    final tempDir = await getTemporaryDirectory();
-    final cipherTempFile = File('${tempDir.path}/dl_${msg.mediaId}.enc');
-
-    try {
-      await _apiClient.downloadEncryptedMediaToFile(
-        token!,
-        msg.mediaId!,
-        cipherTempFile,
-        onProgress: onProgress,
-        cancelToken: cancelToken,
-      );
-
-      final destFile = await MediaCache.fileFor(msg.mediaId!);
-      await StreamingFileCipher.decryptFileToFile(
-        inputFile: cipherTempFile,
-        outputFile: destFile,
-        keyBytes: base64Decode(msg.mediaKeyBase64!),
-      );
-    } catch (e) {
-      // Отмена пользователем (см. DownloadCancelRegistry) — тот же путь,
-      // что и обычная сетевая ошибка: cipherTempFile ниже всё равно
-      // подчищается, а destFile (MediaCache.fileFor) в этой ветке ещё НЕ
-      // создан — до decryptFileToFile просто не дошли, значит
-      // MediaCache.exists() для этого mediaId по-прежнему честно вернёт
-      // false, повторный тап начнёт закачку заново с нуля, а не наткнётся
-      // на битый обрубленный файл.
-      try {
-        if (await cipherTempFile.exists()) await cipherTempFile.delete();
-      } catch (_) {}
-      rethrow;
-    }
-
-    try {
-      await cipherTempFile.delete();
-    } catch (_) {}
-  }
-
-  /// Готовит расшифрованный файл голосового/видео-сообщения для плеера —
-  /// та же логика выбора "чанковано/не чанковано", что и у остального
-  /// медиа, просто отдаёт готовый File, а не байты.
+  /// Готовит расшифрованный файл (голосового/видео-сообщения/крупного
+  /// медиа) для плеера/просмотрщика. Тап "проиграть/открыть" — явное
+  /// действие пользователя, поэтому userInitiated: true (высший приоритет,
+  /// вытесняет фоновую авто-закачку).
   Future<File> _resolveRecordedMediaFile(
     StoredMessage msg, {
     void Function(double percent)? onProgress,
-    dio.CancelToken? cancelToken,
-  }) async {
-    if (!(await MediaCache.exists(msg.mediaId!))) {
-      if (msg.chunked) {
-        await _downloadAndDecryptChunked(
-          msg,
-          onProgress: onProgress,
-          cancelToken: cancelToken,
-        );
-      } else {
-        await _loadAndCacheMedia(
-          msg,
-          onProgress: onProgress,
-          cancelToken: cancelToken,
-        );
-      }
-    }
-    return MediaCache.fileFor(msg.mediaId!);
+    bool userInitiated = true,
+  }) {
+    return _ensureMediaFile(
+      msg,
+      userInitiated: userInitiated,
+      onProgress: onProgress,
+    );
   }
 
-  /// Тап по уже скачанному/скачивающемуся файлу (см. _clickableFileRow) —
-  /// если закачка уже идёт (запущена автоматически, см. её комментарий),
-  /// ПОДХВАТЫВАЕТ ту же самую задачу из _mediaFutures/_chunkedDownloads,
-  /// а не запускает вторую параллельно: раньше здесь был отдельный прямой
-  /// вызов _downloadAndDecryptChunked/_loadAndCacheMedia без всякой связи
-  /// с уже идущей закачкой — если пользователь успевал тапнуть по уже
-  /// скачивающемуся файлу, это создавало ВТОРОЙ, независимый запрос на тот
-  /// же mediaId (лишний трафик и потенциальная гонка записи в один и тот
-  /// же файл MediaCache).
+  /// Тап "открыть файл" — явное действие пользователя: качаем с высшим
+  /// приоритетом (см. _ensureMediaFile / MediaDownloadManager), докачивая
+  /// с места обрыва, если хвост уже есть. Повторный тап по уже
+  /// скачивающемуся — MediaDownloadManager сам не заводит вторую закачку
+  /// того же mediaId, просто поднимает его приоритет.
   Future<void> _openFile(StoredMessage msg) async {
     try {
-      File sourceFile;
-
-      if (msg.chunked) {
-        if (!(await MediaCache.exists(msg.mediaId!))) {
-          await (_chunkedDownloads[msg.mediaId!] ??
-              _downloadAndDecryptChunked(msg));
-        }
-        sourceFile = await MediaCache.fileFor(msg.mediaId!);
-      } else {
-        final bytes =
-            await (_mediaFutures[msg.mediaId!] ?? _loadAndCacheMedia(msg));
-        final tempDir = await getTemporaryDirectory();
-        sourceFile = File('${tempDir.path}/tmp_${msg.mediaId}');
-        await sourceFile.writeAsBytes(bytes);
-      }
+      final sourceFile = await _ensureMediaFile(msg, userInitiated: true);
 
       final tempDir = await getTemporaryDirectory();
       final namedFile = File('${tempDir.path}/${msg.fileName ?? 'file'}');
@@ -4220,18 +3906,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// же принцип, что и getUserMedia-подобные приложения (Telegram и т.п.).
   Future<void> _saveFileToDevice(StoredMessage msg) async {
     try {
-      // Тот же путь, что и в _openFile — resolve СНАЧАЛА пробует локальный
-      // источник (см. _loadAndCacheMedia/_downloadAndDecryptChunked), сеть
-      // не трогает: canSave (см. _clickableFileRow) уже гарантирует, что
-      // файл физически на диске.
-      if (!(await MediaCache.exists(msg.mediaId!))) {
-        if (msg.chunked) {
-          await _downloadAndDecryptChunked(msg);
-        } else {
-          await _loadAndCacheMedia(msg);
-        }
-      }
-      final sourceFile = await MediaCache.fileFor(msg.mediaId!);
+      // Тот же путь, что и в _openFile — _ensureMediaFile СНАЧАЛА пробует
+      // локальный источник, сеть не трогает: canSave (см. _clickableFileRow)
+      // уже гарантирует, что файл физически на диске.
+      final sourceFile = await _ensureMediaFile(msg, userInitiated: true);
       final savedPath = await DownloadsSaver.save(
         sourceFile.path,
         msg.fileName ?? msg.text,
@@ -4342,41 +4020,35 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return msg.isFile ? _downloadPromptRow(msg) : _mediaDownloadTile(msg, size);
   }
 
-  /// Квадратная плитка "нужно скачать вручную" для крупного фото/видео —
-  /// см. _buildAttachmentBubble. Тап только СТАВИТ задачу в общую очередь
-  /// (_mediaFutures) — дальше всю отрисовку (спиннер/процент/картинку)
-  /// подхватывает уже сам _photoPreview, который на следующей отрисовке
-  /// находит эту задачу через тот же putIfAbsent и продолжает как обычно.
+  /// Квадратная плитка "нужно скачать вручную" для крупного (> 3 МБ) не
+  /// своего фото/видео — см. _buildAttachmentBubble. Тап = явный запрос
+  /// пользователя: MediaDownloadManager.requestUserDownload (высший
+  /// приоритет, вытесняет фоновую авто-закачку), а отрисовку прогресса/
+  /// картинки дальше ведёт _photoPreview.
   Widget _mediaDownloadTile(StoredMessage msg, double size) {
-    if (_mediaFutures.containsKey(msg.mediaId)) {
+    if (_mediaFutures.containsKey(msg.mediaId) || _isDownloading(msg.mediaId)) {
       return _photoPreview(msg, size: size);
     }
     return GestureDetector(
       onTap: () {
+        final spec = _downloadSpecOf(msg);
+        if (spec == null) return;
+        MediaDownloadManager.instance.requestUserDownload(spec);
         setState(() {
           _downloadProgress[msg.mediaId!] = 0;
-          _mediaFutures[msg.mediaId!] =
-              _enqueueDownload(
-                    msg.mediaId!,
-                    (cancelToken) => _resolvePhotoBytes(
-                      msg,
-                      onProgress: _progressUpdater(msg.mediaId!),
-                      cancelToken: cancelToken,
-                    ),
-                  )
-                  .then((bytes) {
-                    if (mounted)
-                      setState(() => _resolvedMedia[msg.mediaId!] = bytes);
-                    return bytes;
-                  })
-                  .catchError((Object e) {
-                    // См. тот же catchError в _photoPreview — отмена/ошибка
-                    // должна освобождать mediaId для повторной попытки, а не
-                    // застревать здесь навсегда.
-                    _mediaFutures.remove(msg.mediaId);
-                    if (mounted) setState(() {});
-                    throw e;
-                  });
+          _mediaFutures[msg.mediaId!] = _resolvePhotoBytes(
+            msg,
+            userInitiated: true,
+          ).then((bytes) {
+            if (mounted) {
+              setState(() => _resolvedMedia[msg.mediaId!] = bytes);
+            }
+            return bytes;
+          }).catchError((Object e) {
+            _mediaFutures.remove(msg.mediaId);
+            if (mounted) setState(() {});
+            throw e;
+          });
         });
       },
       child: Container(
@@ -4402,58 +4074,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// строчный вид как раз идёт, а плитке-заглушке взяться неоткуда.
   ///
   /// ТЗ пользователя: у ЛЮБОГО файла (вне зависимости от типа) должен быть
-  /// текстовый статус происходящего (не просто голый процент в кружке —
-  /// как было раньше) и кнопка отмены закачки. Раньше здесь также не было
-  /// НИКАКОГО способа восстановиться после неудачи/отмены — карта
-  /// (_chunkedDownloads/_mediaFutures) держала ключ вечно, даже если сама
-  /// задача внутри неё завершилась ошибкой, так что "скачать" переставало
-  /// работать насовсем; теперь неудача/отмена (см. .catchError ниже)
-  /// убирает ключ обратно, и повторный тап начинает всё заново.
+  /// текстовый статус происходящего и кнопка отмены закачки. Тап =
+  /// пользовательский запрос (MediaDownloadManager.requestUserDownload —
+  /// высший приоритет + докачка с места обрыва); ✕ = отказ (снести хвост).
   Widget _downloadPromptRow(StoredMessage msg) {
-    final chunked = msg.chunked;
-    final downloading = chunked
-        ? _chunkedDownloads.containsKey(msg.mediaId)
-        : _mediaFutures.containsKey(msg.mediaId);
-    final isActive = _activeDownloadMediaIds.contains(msg.mediaId);
+    final downloading = _isDownloading(msg.mediaId);
+    final isActive = _isDownloadActive(msg.mediaId);
 
     void startDownload() {
-      setState(() {
-        _downloadProgress[msg.mediaId!] = 0;
-        if (chunked) {
-          _chunkedDownloads[msg.mediaId!] =
-              _enqueueDownload(
-                msg.mediaId!,
-                (cancelToken) => _downloadAndDecryptChunked(
-                  msg,
-                  onProgress: _progressUpdater(msg.mediaId!),
-                  cancelToken: cancelToken,
-                ),
-              ).catchError((Object e) {
-                _chunkedDownloads.remove(msg.mediaId);
-                if (mounted) setState(() {});
-                throw e;
-              });
-        } else {
-          _mediaFutures[msg.mediaId!] =
-              _enqueueDownload(
-                msg.mediaId!,
-                (cancelToken) => _loadAndCacheMedia(
-                  msg,
-                  onProgress: _progressUpdater(msg.mediaId!),
-                  cancelToken: cancelToken,
-                ),
-              ).catchError((Object e) {
-                _mediaFutures.remove(msg.mediaId);
-                if (mounted) setState(() {});
-                throw e;
-              });
-        }
-      });
+      final spec = _downloadSpecOf(msg);
+      if (spec == null) return;
+      MediaDownloadManager.instance.requestUserDownload(spec);
+      setState(() => _downloadProgress[msg.mediaId!] = 0);
     }
-
-    final activeFuture = chunked
-        ? _chunkedDownloads[msg.mediaId]
-        : _mediaFutures[msg.mediaId];
 
     return InkWell(
       onTap: downloading ? null : startDownload,
@@ -4461,28 +4094,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (downloading)
-            // Тип-стёртая обёртка (Future<Uint8List> у фото/видео,
-            // Future<void> у чанкованного пути) — здесь нужен только сам
-            // факт завершения (перерисоваться), значение не используется.
-            FutureBuilder<void>(
-              future: activeFuture?.then((_) {}, onError: (_) {}),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
-                  return const SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: Center(child: AppLoadingIndicator(size: 18)),
-                  );
-                }
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) setState(() {});
-                });
-                return Icon(
-                  _iconForFileName(msg.fileName),
-                  color: AppColors.textPrimary,
-                  size: 28,
-                );
-              },
+            const SizedBox(
+              width: 28,
+              height: 28,
+              child: Center(child: AppLoadingIndicator(size: 18)),
             )
           else
             Icon(Icons.download, color: AppColors.textPrimary, size: 28),
@@ -4514,7 +4129,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             const SizedBox(width: 4),
             GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: () => DownloadCancelRegistry.cancel(msg.mediaId!),
+              onTap: () {
+                MediaDownloadManager.instance.cancelUserDownload(msg.mediaId!);
+                setState(() {});
+              },
               child: Padding(
                 padding: const EdgeInsets.all(6),
                 child: Icon(Icons.close, color: AppColors.textMuted, size: 18),
@@ -4613,65 +4231,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final needsDownload = !sending && !failed && !_mediaExistsLocally(msg);
 
     if (needsDownload) {
-      // ТЗ пользователя: то, что СЕЙЧАС на экране, обгоняет всё, что было
-      // поставлено раньше, но прокручено с глаз — вызывается на каждой
-      // отрисовке (в отличие от putIfAbsent ниже, срабатывающего только
-      // один раз).
-      _touchDownloadPriority(msg.mediaId!);
-      if (msg.chunked) {
-        _chunkedDownloads.putIfAbsent(
-          msg.mediaId!,
-          () =>
-              _enqueueDownload(
-                    msg.mediaId!,
-                    (cancelToken) => _downloadAndDecryptChunked(
-                      msg,
-                      onProgress: _progressUpdater(msg.mediaId!),
-                      cancelToken: cancelToken,
-                    ),
-                  )
-                  .then((_) {
-                    if (mounted) setState(() {});
-                  })
-                  .catchError((Object e) {
-                    _chunkedDownloads.remove(msg.mediaId);
-                    if (mounted) setState(() {});
-                    throw e;
-                  }),
-        );
-      } else {
-        _mediaFutures.putIfAbsent(
-          msg.mediaId!,
-          () =>
-              _enqueueDownload(
-                    msg.mediaId!,
-                    (cancelToken) => _loadAndCacheMedia(
-                      msg,
-                      onProgress: _progressUpdater(msg.mediaId!),
-                      cancelToken: cancelToken,
-                    ),
-                  )
-                  .then((bytes) {
-                    if (mounted) {
-                      setState(() => _resolvedMedia[msg.mediaId!] = bytes);
-                    }
-                    return bytes;
-                  })
-                  .catchError((Object e) {
-                    _mediaFutures.remove(msg.mediaId);
-                    if (mounted) setState(() {});
-                    throw e;
-                  }),
-        );
-      }
+      // Мелкие (< 3 МБ) не свои файлы — в авто-очередь по факту показа на
+      // экране (см. _noteMediaVisible / MediaDownloadManager); крупные и
+      // свои (без локального источника) ждут явного тапа -> _openFile.
+      _noteMediaVisible(msg);
     }
 
-    final downloading =
-        needsDownload &&
-        (msg.chunked
-            ? _chunkedDownloads.containsKey(msg.mediaId)
-            : _mediaFutures.containsKey(msg.mediaId));
-    final isActive = _activeDownloadMediaIds.contains(msg.mediaId);
+    final downloading = needsDownload && _isDownloading(msg.mediaId);
+    final isActive = _isDownloadActive(msg.mediaId);
     final statusText = sending
         ? _processingStepDisplay(msg)
         : failed
@@ -4685,7 +4252,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final icon = failed ? Icons.error_outline : _iconForFileName(msg.fileName);
     final tappable = !sending && !failed && !downloading;
     final cancel = downloading
-        ? () => DownloadCancelRegistry.cancel(msg.mediaId!)
+        ? () {
+            MediaDownloadManager.instance.cancelUserDownload(msg.mediaId!);
+            setState(() {});
+          }
         : null;
     // ТЗ пользователя: "⋮ → Сохранить на устройство" — ТОЛЬКО пока файл
     // физически уже на диске (та же проверка, что и выше решает, нужно ли
@@ -4889,7 +4459,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         builder: (context) => MediaViewerScreen<StoredMessage>(
           items: photos,
           initialIndex: index,
-          resolveBytes: _resolvePhotoBytes,
+          // Пользователь открыл просмотрщик — то, что он смотрит, качаем с
+          // высшим приоритетом (userInitiated), а не в фоновой авто-очереди.
+          resolveBytes: (m, {onProgress}) =>
+              _resolvePhotoBytes(m, onProgress: onProgress, userInitiated: true),
           isVideo: (m) => m.isVideo,
           resolveVideoFile: (m, {onProgress}) =>
               _resolveRecordedMediaFile(m, onProgress: onProgress),
@@ -5011,39 +4584,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       );
     }
 
-    // РЕАЛЬНЫЙ баг (жалоба пользователя): у фото локальное чтение уже
-    // давно в обход очереди (см. синхронную ветку выше — cached != null
-    // возвращается сразу, до этого места дело просто не доходит). У видео
-    // так не получалось — msg.isVideo нарочно исключён из ТОЙ синхронной
-    // ветки (см. её комментарий), поэтому даже "мгновенное" чтение уже
-    // готового localPreviewPath внутри _resolveVideoThumbnailBytes всё
-    // равно СНАЧАЛА стояло в общей очереди _downloadQueueOrder и ждало,
-    // пока не освободится текущая (возможно, чужая и медленная — старое
-    // видео без localPreviewPath, честная перекачка) задача — реальный
-    // кейс с устройства: свежее видео с уже готовым превью пряталось за
-    // "тремя точками" по 10+ секунд позади чужого медленного сообщения.
-    // Раз локальное чтение — не сеть, ему вообще нечего делать в одной
-    // очереди с сетевыми закачками (ТЗ пользователя) — пускаем его в
-    // обход СОВСЕМ, не только с высоким приоритетом внутри очереди.
+    // Локальное чтение (свой файл ещё на диске / уже в кэше) идёт в обход
+    // сети и очередей внутри _ensureMediaFile. Для не своих мелких (< 3 МБ)
+    // — фиксируем "показалось на экране" (авто-очередь,
+    // MediaDownloadManager); крупные не свои сюда не попадают (см.
+    // _buildAttachmentBubble -> _mediaDownloadTile).
     final localOnly = _mediaExistsLocally(msg);
-    if (!localOnly) _touchDownloadPriority(msg.mediaId!);
+    if (!localOnly) _noteMediaVisible(msg);
     final future = _mediaFutures.putIfAbsent(
       msg.mediaId!,
-      () =>
-          (localOnly
-                  ? _resolvePhotoBytes(
-                      msg,
-                      onProgress: _progressUpdater(msg.mediaId!),
-                      cancelToken: null,
-                    )
-                  : _enqueueDownload(
-                      msg.mediaId!,
-                      (cancelToken) => _resolvePhotoBytes(
-                        msg,
-                        onProgress: _progressUpdater(msg.mediaId!),
-                        cancelToken: cancelToken,
-                      ),
-                    ))
+      () => _resolvePhotoBytes(msg)
               .then((bytes) {
                 // Проставляем результат ЗДЕСЬ, на уровне всего экрана чата, а не
                 // только полагаемся на builder этого FutureBuilder ниже — жалоба
@@ -5068,18 +4618,19 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 return bytes;
               })
               .catchError((Object e) {
-                // Отмена (см. DownloadCancelRegistry) — тоже сюда: убираем
-                // задачу из карты, чтобы следующий тап (см. broken_image ниже)
-                // начинал закачку заново с нуля, а не молча ничего не делал —
-                // putIfAbsent иначе вечно возвращал бы эту же, уже неудачную
-                // Future.
+                // Ошибка/отмена/кулдаун — убираем задачу из карты, чтобы
+                // следующая ЕСТЕСТВЕННАЯ перестройка (скролл, новое
+                // сообщение, событие от MediaDownloadManager) попробовала
+                // заново. Никакого setState здесь — иначе на постоянно
+                // висящей на экране плитке (см. _noteMediaVisible) при
+                // недоступном сервере получался бы busy-loop перерисовок;
+                // реальные сбои и так дают перерисовку через _dlFailedSub.
                 debugPrint(
                   'ChatScreen[${identityHashCode(this)}] _photoPreview '
                   'putIfAbsent.catchError messageId=${msg.messageId} '
                   'mediaId=${msg.mediaId} error=$e',
                 );
                 _mediaFutures.remove(msg.mediaId);
-                if (mounted) setState(() {});
                 throw e;
               }),
     );
@@ -5110,7 +4661,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           'resolvedMediaHas=${_resolvedMedia.containsKey(msg.mediaId)}',
         );
         if (snapshot.connectionState != ConnectionState.done) {
-          final isActive = _activeDownloadMediaIds.contains(msg.mediaId);
+          final isActive = _isDownloadActive(msg.mediaId);
           // GestureDetector с пустым onTap — гасит тап здесь же, не давая
           // ему "утечь" в родительский обработчик строки (см.
           // _wrapInteractive): у этой заглушки самой по себе нет
@@ -5145,8 +4696,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               : null,
                           size: side,
                           borderRadius: BorderRadius.circular(13),
-                          onCancel: () =>
-                              DownloadCancelRegistry.cancel(msg.mediaId!),
+                          onCancel: () {
+                            MediaDownloadManager.instance.cancelUserDownload(
+                              msg.mediaId!,
+                            );
+                            _mediaFutures.remove(msg.mediaId);
+                            setState(() {});
+                          },
                         ),
                       ],
                     ),
@@ -5154,10 +4710,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           );
         }
         if (snapshot.hasError || snapshot.data == null) {
-          // Тап — повторная попытка (в т.ч. после отмены пользователем, см.
-          // .catchError у future выше, который убирает задачу из карты).
+          // Тап — явная повторная попытка пользователя: высший приоритет и
+          // мимо кулдауна (см. MediaDownloadManager.requestUserDownload).
           return GestureDetector(
-            onTap: () => setState(() {}),
+            onTap: () {
+              final spec = _downloadSpecOf(msg);
+              if (spec != null) {
+                MediaDownloadManager.instance.requestUserDownload(spec);
+              }
+              _mediaFutures.remove(msg.mediaId);
+              setState(() {});
+            },
             child: SizedBox(
               width: side,
               height: side,
@@ -5224,31 +4787,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<Uint8List> _resolvePhotoBytes(
     StoredMessage msg, {
     void Function(double percent)? onProgress,
-    dio.CancelToken? cancelToken,
+    bool userInitiated = false,
   }) async {
     if (msg.isVideo) {
       return _resolveVideoThumbnailBytes(
         msg,
         onProgress: onProgress,
-        cancelToken: cancelToken,
+        userInitiated: userInitiated,
       );
     }
-    if (msg.chunked) {
-      if (!(await MediaCache.exists(msg.mediaId!))) {
-        await _downloadAndDecryptChunked(
-          msg,
-          onProgress: onProgress,
-          cancelToken: cancelToken,
-        );
-      }
-      final file = await MediaCache.fileFor(msg.mediaId!);
-      return file.readAsBytes();
-    }
-    return _loadAndCacheMedia(
+    final file = await _ensureMediaFile(
       msg,
+      userInitiated: userInitiated,
       onProgress: onProgress,
-      cancelToken: cancelToken,
     );
+    return file.readAsBytes();
   }
 
   // Кадр-превью видео (для пузыря в чате и как fallback-картинка при
@@ -5260,7 +4813,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Future<Uint8List> _resolveVideoThumbnailBytes(
     StoredMessage msg, {
     void Function(double percent)? onProgress,
-    dio.CancelToken? cancelToken,
+    bool userInitiated = false,
   }) async {
     final cachedThumb = _videoThumbCache[msg.mediaId!];
     debugPrint(
@@ -5307,22 +4860,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       }
     }
 
-    if (!(await MediaCache.exists(msg.mediaId!))) {
-      if (msg.chunked) {
-        await _downloadAndDecryptChunked(
-          msg,
-          onProgress: onProgress,
-          cancelToken: cancelToken,
-        );
-      } else {
-        await _loadAndCacheMedia(
-          msg,
-          onProgress: onProgress,
-          cancelToken: cancelToken,
-        );
-      }
-    }
-    final file = await MediaCache.fileFor(msg.mediaId!);
+    final file = await _ensureMediaFile(
+      msg,
+      userInitiated: userInitiated,
+      onProgress: onProgress,
+    );
     final thumbBytes = await generateVideoThumbnail(file.path);
     if (thumbBytes == null) {
       throw Exception('Не удалось сгенерировать превью видео');
@@ -6449,6 +5991,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _incomingDeleteSub?.cancel();
     _uploadProgressSub?.cancel();
     _peerProfileSub?.cancel();
+    _dlProgressSub?.cancel();
+    _dlDoneSub?.cancel();
+    _dlFailedSub?.cancel();
+    _visibleFlushTimer?.cancel();
     for (final timer in _justReactedTimers.values) {
       timer.cancel();
     }

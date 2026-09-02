@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:dio/dio.dart' as dio;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import '../api/api_client.dart';
@@ -18,6 +19,34 @@ import 'upload_cancel_registry.dart';
 /// сетевого сбоя (см. PendingSendRetrier) грузил файл ТЕМ ЖЕ путём, что и
 /// обычная отправка, без дублирования этой логики в двух местах.
 const streamingThresholdBytes = 20 * 1024 * 1024; // 20 МБ
+
+/// Один сетевой шаг чанковой докачки (init / одна часть / список частей /
+/// complete) повторяется несколько раз с нарастающей паузой, прежде чем
+/// сдаться. Реальный кейс из лога пользователя: постоянные "Failed host
+/// lookup: ee2e.oshino.space" — один сетевой блип на одной из ~44 частей
+/// ронял всю загрузку 350-МБ файла целиком (`error=Failed to upload file`),
+/// хотя докачка для того и сделана, чтобы такое переживать. Отмена
+/// пользователем (см. UploadCancelRegistry / cancelToken) НЕ повторяется —
+/// сразу пробрасывается наверх.
+Future<T> _retryChunkedStep<T>(
+  Future<T> Function() step, {
+  required dio.CancelToken cancelToken,
+  int attempts = 5,
+}) async {
+  var delay = const Duration(seconds: 2);
+  for (var attempt = 1; ; attempt++) {
+    try {
+      return await step();
+    } catch (_) {
+      if (cancelToken.isCancelled || attempt >= attempts) rethrow;
+      await Future<void>.delayed(delay);
+      final doubled = delay * 2;
+      delay = doubled > const Duration(seconds: 30)
+          ? const Duration(seconds: 30)
+          : doubled;
+    }
+  }
+}
 
 /// Шифрует и грузит один файл на сервер — общая логика для обычной отправки
 /// (ChatScreen._uploadAndDescribeMedia — теперь тонкая обёртка над этим) и
@@ -87,7 +116,10 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         } catch (_) {}
 
         final totalSize = await encTempFile.length();
-        final init = await apiClient.initChunkedUpload(token, totalSize);
+        final init = await _retryChunkedStep(
+          () => apiClient.initChunkedUpload(token, totalSize),
+          cancelToken: cancelToken,
+        );
         await ChunkedUploadSessionStore.save(
           messageId,
           mediaId: init.mediaId,
@@ -114,19 +146,30 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         try {
           // Источник правды о том, что уже долетело, — сам сервер (см.
           // upload_media_chunked.go), не что-то посчитанное локально.
-          confirmedParts = await apiClient.listChunkedParts(
-            token,
-            existingSession.mediaId,
-            existingSession.uploadId,
+          // С повтором (см. _retryChunkedStep): на нестабильной сети без
+          // этого один блип здесь отправлял нас в startFreshSession —
+          // повторное шифрование и заливка ВСЕГО файла с нуля, ровно то,
+          // ради чего докачка и делалась. Заново считаем сессию мёртвой
+          // только если список частей не отдался и после всех повторов.
+          confirmedParts = await _retryChunkedStep(
+            () => apiClient.listChunkedParts(
+              token,
+              existingSession.mediaId,
+              existingSession.uploadId,
+            ),
+            cancelToken: cancelToken,
           );
           sessionMediaId = existingSession.mediaId;
           sessionUploadId = existingSession.uploadId;
           partSize = existingSession.partSize;
           keyBytes = base64Decode(existingSession.keyBase64);
         } catch (_) {
-          // Редкий случай: старая сессия на сервере уже недействительна
-          // (например, /complete из прошлой попытки успел выполниться, а
-          // локальную запись стереть не успели) — считаем докачку заново.
+          // Пользователь отменил отправку прямо во время повторов — не
+          // затевать вместо этого полное перешифрование с нуля.
+          if (cancelToken.isCancelled) rethrow;
+          // Старая сессия на сервере уже недействительна (например,
+          // /complete из прошлой попытки успел выполниться, а локальную
+          // запись стереть не успели) — считаем докачку заново.
           await ChunkedUploadSessionStore.clear(messageId);
           final fresh = await startFreshSession();
           sessionMediaId = fresh.mediaId;
@@ -175,27 +218,33 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         }
 
         final baseDone = bytesDone;
-        await apiClient.uploadChunkedPart(
-          token,
-          sessionMediaId,
-          sessionUploadId,
-          partNumber,
-          chunk,
+        await _retryChunkedStep(
+          () => apiClient.uploadChunkedPart(
+            token,
+            sessionMediaId,
+            sessionUploadId,
+            partNumber,
+            chunk,
+            cancelToken: cancelToken,
+            onProgress: (partPercent) {
+              if (totalSize == 0) return;
+              final partBytesDone = (partPercent / 100 * len).round();
+              onProgress?.call((baseDone + partBytesDone) / totalSize * 100);
+            },
+          ),
           cancelToken: cancelToken,
-          onProgress: (partPercent) {
-            if (totalSize == 0) return;
-            final partBytesDone = (partPercent / 100 * len).round();
-            onProgress?.call((baseDone + partBytesDone) / totalSize * 100);
-          },
         );
         bytesDone += len;
       }
 
-      await apiClient.completeChunkedUpload(
-        token,
-        sessionMediaId,
-        sessionUploadId,
-        peerAccountIdForUpload,
+      await _retryChunkedStep(
+        () => apiClient.completeChunkedUpload(
+          token,
+          sessionMediaId,
+          sessionUploadId,
+          peerAccountIdForUpload,
+        ),
+        cancelToken: cancelToken,
       );
       await ChunkedUploadSessionStore.clear(messageId);
       try {

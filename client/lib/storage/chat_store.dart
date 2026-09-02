@@ -1002,6 +1002,11 @@ class ChatStore {
       if (existing.isNotEmpty) {
         existing.first.lastMessage = '';
         existing.first.lastTimestamp = 0;
+        // Очистка истории стирает и само закреплённое сообщение — без этого
+        // баннер закрепа (см. _buildPinnedBanner в chat_screen.dart)
+        // оставался висеть с текстом-заглушкой над уже пустым чатом (жалоба
+        // пользователя со скриншотом).
+        existing.first.pinnedMessageId = null;
         await _writePeers(peers);
       } else {
         _changesController.add(null);

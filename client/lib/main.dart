@@ -3,6 +3,7 @@ import 'navigator_key.dart';
 import 'screens/splash_screen.dart';
 import 'services/debug_log.dart';
 import 'services/keyboard_insets.dart';
+import 'storage/partial_download_store.dart';
 import 'storage/locale_store.dart';
 import 'storage/text_scale_store.dart';
 import 'storage/theme_store.dart';
@@ -38,6 +39,9 @@ class _AppState extends State<_App> {
     // Разовая чистка разросшегося debug_log.txt у уже установленных
     // пользователей (см. DebugLog.resetOnceIfNeeded) — не блокирует старт.
     DebugLog.resetOnceIfNeeded();
+    // Недокачанные хвосты скачиваний, к которым давно не возвращались, —
+    // просто занятое место (см. PartialDownloadStore). Не блокирует старт.
+    PartialDownloadStore.pruneStale();
   }
 
   @override

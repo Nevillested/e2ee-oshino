@@ -61,6 +61,12 @@ private const val OPEN_FILE_PROVIDER_AUTHORITY_SUFFIX = ".fileProvider.com.craze
 private const val SAVE_TO_DOWNLOADS_CHANNEL = "oshinobu/save_to_downloads"
 private const val DOWNLOADS_SUBFOLDER = "Oshinobu"
 
+// См. MediaDownloadForegroundService + media_download_foreground.dart:
+// Dart-движок скачивания (MediaDownloadManager) просит поднять/убрать
+// тонкий foreground-сервис, который держит процесс живым, пока идёт
+// запрошенная пользователем загрузка файла и приложение свёрнуто.
+private const val MEDIA_DL_FGS_CHANNEL = "oshinobu/media_download_fgs"
+
 // Те же ключи используются в CallRingService/call_ring_plugin (отдельный
 // Gradle-модуль, поэтому не общие константы, а просто одинаковые строки в
 // обоих местах).
@@ -366,6 +372,21 @@ class MainActivity : FlutterFragmentActivity() {
                     } else {
                         result.success(saveToDownloads(sourcePath, fileName))
                     }
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MEDIA_DL_FGS_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "start" -> {
+                    val text = call.argument<String>("text") ?: "Загрузка файлов"
+                    MediaDownloadForegroundService.start(applicationContext, text)
+                    result.success(null)
+                }
+                "stop" -> {
+                    MediaDownloadForegroundService.stop(applicationContext)
+                    result.success(null)
                 }
                 else -> result.notImplemented()
             }

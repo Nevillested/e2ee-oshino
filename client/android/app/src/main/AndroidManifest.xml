@@ -12,6 +12,11 @@
 <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+<!-- Тонкий foreground-сервис (MediaDownloadForegroundService), который
+     держит процесс живым, пока идёт запрошенная пользователем загрузка
+     файла и приложение свёрнуто. Сам ничего не качает. -->
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
 <!-- Без этого разрешения тап по скачанному .apk (см. OpenWithChooser в
      MainActivity.kt) ничего видимого не делает на Android 8+: Package
      Installer у ACTION_VIEW-интента без REQUEST_INSTALL_PACKAGES у
@@ -50,6 +55,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <service
+            android:name=".MediaDownloadForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
