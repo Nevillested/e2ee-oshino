@@ -106,9 +106,12 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
   без объекта не остаётся).
 - Чанковый файл (> 20 МБ): `POST /upload-media/init` (без изменений) →
   `POST /upload-media/{id}/part-urls` (`{upload_id, part_numbers:[...]}` → presigned PUT на
-  каждую часть, батчами по 15 в клиенте) → клиент PUT частей напрямую в MinIO →
-  `GET /upload-media/{id}/parts` + `POST /upload-media/{id}/complete` (без изменений — сервер
-  собирает по `ListObjectParts`). Докачка/резюм — как раньше (истина у MinIO).
+  каждую часть, клиент запрашивает URL всех недостающих частей одним запросом) → клиент
+  грузит части **пулом по 3 одновременно** (`media_upload.dart`, `partConcurrency` —
+  параллелизм ВНУТРИ одной загрузки, файловый воркер `PendingSendRetrier` по-прежнему
+  один) напрямую в MinIO → `GET /upload-media/{id}/parts` + `POST /upload-media/{id}/complete`
+  (без изменений — сервер собирает по `ListObjectParts`). Докачка/резюм — как раньше
+  (истина у MinIO); упавшая часть перезапрашивает свой presigned-URL.
 - Скачивание: `GET /media/{id}/url` → `{url, size_bytes}` (presigned GET, права проверяются
   как в `download_media.go` — только загрузчик/получатель). Клиент качает Range-докачкой по
   этому URL (`downloadEncryptedMediaResumable(directUrl: ...)`), presigned GET на 403

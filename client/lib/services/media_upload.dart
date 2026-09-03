@@ -191,48 +191,58 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
 
       final totalSize = await encTempFile.length();
       final totalParts = (totalSize / partSize).ceil();
-      var bytesDone = 0;
 
-      // presigned PUT-URL частей — байты идут НАПРЯМУЮ в MinIO
-      // (files.oshino.space), мимо московского сервера. Берём батчами по
-      // мере продвижения; на любой сбой части сбрасываем её URL из кэша,
-      // чтобы _retryChunkedStep перезапросил свежий (в т.ч. если прошлый
-      // истёк за 2 ч на очень медленной сети).
+      int partLen(int pn) {
+        final offset = (pn - 1) * partSize;
+        return (offset + partSize > totalSize) ? totalSize - offset : partSize;
+      }
+
+      // Ещё не залитые части. presigned PUT-URL для них — ОДНИМ запросом
+      // (сервер подписывает локально, для ≤63 частей это мгновенно); байты
+      // самих частей идут НАПРЯМУЮ в MinIO (files.oshino.space), мимо
+      // московского сервера.
+      final pending = <int>[
+        for (var pn = 1; pn <= totalParts; pn++)
+          if (!confirmedParts.contains(pn)) pn,
+      ];
       final partUrls = <int, String>{};
-      Future<String> partUrl(int pn) async {
-        if (!partUrls.containsKey(pn)) {
-          final batch = <int>[];
-          for (var p = pn; p <= totalParts && batch.length < 15; p++) {
-            if (!confirmedParts.contains(p) && !partUrls.containsKey(p)) {
-              batch.add(p);
-            }
-          }
-          final fresh = await _retryChunkedStep(
+      if (pending.isNotEmpty) {
+        partUrls.addAll(
+          await _retryChunkedStep(
             () => apiClient.presignMediaPartUrls(
               token,
               sessionMediaId,
               sessionUploadId,
-              batch,
+              pending,
             ),
             cancelToken: cancelToken,
-          );
-          partUrls.addAll(fresh);
-        }
-        return partUrls[pn]!;
+          ),
+        );
       }
 
-      for (var partNumber = 1; partNumber <= totalParts; partNumber++) {
-        final offset = (partNumber - 1) * partSize;
-        final len = (offset + partSize > totalSize)
-            ? totalSize - offset
-            : partSize;
-
-        if (confirmedParts.contains(partNumber)) {
-          bytesDone += len;
-          if (totalSize > 0) onProgress?.call(bytesDone / totalSize * 100);
-          continue;
+      // Прогресс: подтверждённые части + «в полёте» по каждой активной.
+      var confirmedBytes = 0;
+      for (final pn in confirmedParts) {
+        if (pn >= 1 && pn <= totalParts) confirmedBytes += partLen(pn);
+      }
+      final inFlight = <int, int>{};
+      var lastReportedPct = -1.0;
+      void reportProgress() {
+        if (totalSize <= 0) return;
+        final done =
+            confirmedBytes + inFlight.values.fold<int>(0, (a, b) => a + b);
+        final pct = (done / totalSize * 100).clamp(0.0, 100.0);
+        if (pct - lastReportedPct >= 0.5 || pct >= 100) {
+          lastReportedPct = pct;
+          onProgress?.call(pct);
         }
+      }
 
+      reportProgress();
+
+      Future<void> uploadOnePart(int pn) async {
+        final len = partLen(pn);
+        final offset = (pn - 1) * partSize;
         final Uint8List chunk;
         final raf = await encTempFile.open();
         try {
@@ -241,34 +251,67 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         } finally {
           await raf.close();
         }
-
-        final baseDone = bytesDone;
         await _retryChunkedStep(
           () async {
-            final u = await partUrl(partNumber);
+            inFlight[pn] = 0;
             try {
               await apiClient.putToPresignedUrl(
-                u,
+                partUrls[pn]!,
                 chunk,
                 contentLength: chunk.length,
                 cancelToken: cancelToken,
                 onProgress: (partPercent) {
-                  if (totalSize == 0) return;
-                  final partBytesDone = (partPercent / 100 * len).round();
-                  onProgress?.call(
-                    (baseDone + partBytesDone) / totalSize * 100,
-                  );
+                  inFlight[pn] = (partPercent / 100 * len).round();
+                  reportProgress();
                 },
               );
-            } catch (_) {
-              partUrls.remove(partNumber); // следующая попытка — свежий URL
+            } catch (e) {
+              inFlight.remove(pn);
+              // Истёкший / битый URL — перезапросить свежий к след. попытке.
+              try {
+                final fresh = await apiClient.presignMediaPartUrls(
+                  token,
+                  sessionMediaId,
+                  sessionUploadId,
+                  [pn],
+                );
+                if (fresh[pn] != null) partUrls[pn] = fresh[pn]!;
+              } catch (_) {}
               rethrow;
             }
           },
           cancelToken: cancelToken,
         );
-        bytesDone += len;
+        inFlight.remove(pn);
+        confirmedBytes += len;
+        reportProgress();
       }
+
+      // Пул: до 3 частей одновременно. Это параллелизм ВНУТРИ одной
+      // загрузки — отдельный файловый воркер PendingSendRetrier по-прежнему
+      // один, модель очередей не меняется.
+      const partConcurrency = 3;
+      var nextIdx = 0;
+      Object? firstError;
+      Future<void> poolWorker() async {
+        while (true) {
+          if (firstError != null || cancelToken.isCancelled) return;
+          final myIdx = nextIdx++;
+          if (myIdx >= pending.length) return;
+          try {
+            await uploadOnePart(pending[myIdx]);
+          } catch (e) {
+            firstError ??= e;
+            return;
+          }
+        }
+      }
+
+      await Future.wait([
+        for (var i = 0; i < partConcurrency && i < pending.length; i++)
+          poolWorker(),
+      ]);
+      if (firstError != null) throw firstError!;
 
       await _retryChunkedStep(
         () => apiClient.completeChunkedUpload(
