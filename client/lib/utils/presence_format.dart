@@ -18,18 +18,23 @@ String formatPresenceStatus({
 String _formatLastSeen(int timestampMs) {
   final date = DateTime.fromMillisecondsSinceEpoch(timestampMs);
   final now = DateTime.now();
-  final isToday =
-      date.year == now.year && date.month == now.month && date.day == now.day;
+  final startOfToday = DateTime(now.year, now.month, now.day);
+  final startOfThatDay = DateTime(date.year, date.month, date.day);
+  final calendarDaysAgo = startOfToday.difference(startOfThatDay).inDays;
   final hh = date.hour.toString().padLeft(2, '0');
   final mm = date.minute.toString().padLeft(2, '0');
 
-  if (isToday) {
+  if (calendarDaysAgo == 0) {
     final diff = now.difference(date);
     if (diff.inHours < 1) {
       if (diff.inMinutes < 1) return tr('presence.justNow');
       return '${diff.inMinutes} ${tr('presence.minutesAgoSuffix')}';
     }
     return '$hh:$mm';
+  }
+
+  if (calendarDaysAgo == 1) {
+    return '${tr('presence.yesterdayAt')} $hh:$mm';
   }
 
   final dd = date.day.toString().padLeft(2, '0');

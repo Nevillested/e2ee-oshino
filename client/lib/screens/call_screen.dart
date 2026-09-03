@@ -42,6 +42,7 @@ class _CallScreenState extends State<CallScreen> {
   StreamSubscription<MediaStream?>? _remoteStreamSub;
   StreamSubscription<bool>? _remoteVideoStateSub;
   StreamSubscription<CallState>? _stateSub;
+  StreamSubscription<void>? _audioRouteSub;
 
   @override
   void initState() {
@@ -61,6 +62,9 @@ class _CallScreenState extends State<CallScreen> {
     _call.setCallScreenVisible(true);
     _init();
     _statusSub = _call.statusUpdates.listen((_) {
+      if (mounted) setState(() {});
+    });
+    _audioRouteSub = _call.audioRouteChanges.listen((_) {
       if (mounted) setState(() {});
     });
   }
@@ -174,6 +178,7 @@ class _CallScreenState extends State<CallScreen> {
     _call.setCallScreenVisible(false);
     _durationTicker?.cancel();
     _statusSub?.cancel();
+    _audioRouteSub?.cancel();
     _remoteStreamSub?.cancel();
     _remoteVideoStateSub?.cancel();
     _stateSub?.cancel();
@@ -420,17 +425,25 @@ class _CallScreenState extends State<CallScreen> {
                       ),
                     ],
                   ),
-                  // Иконка громкой связи — ВСЕГДА динамик, не ухо (см. ТЗ
-                  // пользователя); подсветка отмечает сам факт включённой
-                  // громкой связи.
-                  _controlButton(
-                    icon: Icons.volume_up,
-                    highlighted: _call.speakerOn,
-                    onTap: () async {
-                      await _call.toggleSpeaker();
-                      if (mounted) setState(() {});
-                    },
-                  ),
+                  // Без bluetooth — прежняя бинарная кнопка «громкая связь»
+                  // (ВСЕГДА иконка динамика, подсветка = громкая связь вкл).
+                  // С подключённым bluetooth — кнопка выбора устройства
+                  // вывода: подсвечена, иконка отражает текущий маршрут,
+                  // тап открывает шторку (см. ТЗ пользователя).
+                  _call.hasBluetoothAudioOutput
+                      ? _controlButton(
+                          icon: _audioRouteIcon(_call.effectiveAudioRoute),
+                          highlighted: true,
+                          onTap: _showOutputPicker,
+                        )
+                      : _controlButton(
+                          icon: Icons.volume_up,
+                          highlighted: _call.speakerOn,
+                          onTap: () async {
+                            await _call.toggleSpeaker();
+                            if (mounted) setState(() {});
+                          },
+                        ),
                   _controlButton(
                     icon: Icons.call_end,
                     background: Colors.red,
@@ -439,6 +452,88 @@ class _CallScreenState extends State<CallScreen> {
                 ],
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _audioRouteIcon(String route) {
+    switch (route) {
+      case 'bluetooth':
+        return Icons.bluetooth_audio;
+      case 'speaker':
+        return Icons.volume_up;
+      case 'wired-headset':
+        return Icons.headset;
+      default:
+        return Icons.hearing;
+    }
+  }
+
+  String _audioRouteLabel(String route) {
+    switch (route) {
+      case 'bluetooth':
+        return tr('call.outputBluetooth');
+      case 'speaker':
+        return tr('call.outputSpeaker');
+      case 'wired-headset':
+        return tr('call.outputWiredHeadset');
+      default:
+        return tr('call.outputEarpiece');
+    }
+  }
+
+  Future<void> _showOutputPicker() async {
+    final routes = _call.availableAudioRoutes;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+              child: Text(
+                tr('call.outputDevices'),
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+            for (final route in routes)
+              ListTile(
+                leading: Icon(
+                  _audioRouteIcon(route),
+                  color: route == _call.effectiveAudioRoute
+                      ? AppColors.primary
+                      : AppColors.textPrimary,
+                ),
+                title: Text(
+                  _audioRouteLabel(route),
+                  style: TextStyle(
+                    color: route == _call.effectiveAudioRoute
+                        ? AppColors.primary
+                        : AppColors.textPrimary,
+                  ),
+                ),
+                trailing: route == _call.effectiveAudioRoute
+                    ? Icon(Icons.check, color: AppColors.primary)
+                    : null,
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _call.selectAudioRoute(route);
+                  if (mounted) setState(() {});
+                },
+              ),
+            const SizedBox(height: 8),
           ],
         ),
       ),

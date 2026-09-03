@@ -147,6 +147,27 @@ class AppStrings {
       AppLocale.ru: 'мин. назад',
       AppLocale.en: 'min ago',
     },
+    'presence.yesterdayAt': {
+      AppLocale.ru: 'вчера в',
+      AppLocale.en: 'yesterday at',
+    },
+    'call.outputDevices': {
+      AppLocale.ru: 'Устройства вывода',
+      AppLocale.en: 'Output Devices',
+    },
+    'call.outputSpeaker': {AppLocale.ru: 'Динамик', AppLocale.en: 'Speaker'},
+    'call.outputEarpiece': {
+      AppLocale.ru: 'Ушной динамик',
+      AppLocale.en: 'Earpiece',
+    },
+    'call.outputBluetooth': {
+      AppLocale.ru: 'Bluetooth',
+      AppLocale.en: 'Bluetooth',
+    },
+    'call.outputWiredHeadset': {
+      AppLocale.ru: 'Проводная гарнитура',
+      AppLocale.en: 'Wired headset',
+    },
 
     'chatMenu.pin': {AppLocale.ru: 'Закрепить', AppLocale.en: 'Pin'},
     'chatMenu.unpin': {AppLocale.ru: 'Открепить', AppLocale.en: 'Unpin'},

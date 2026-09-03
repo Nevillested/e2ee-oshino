@@ -142,6 +142,7 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
   @override
   void initState() {
     super.initState();
+    MediaAssetCache.revision.addListener(_onAssetsRevisionChanged);
     _load();
     _initLiveCamera();
     // Параллельно с загрузкой файлов (заполнением плиток) — сама открывающая
@@ -323,31 +324,56 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
   /// открывающая анимация, отсюда и промелькивающий спиннер. Здесь просто
   /// забираем уже готовый (или почти готовый) результат.
   Future<void> _load() async {
-    final page = await MediaAssetCache.get();
+    _applyPage(await MediaAssetCache.get());
+    // Stale-while-revalidate + живое отслеживание медиатеки: показали
+    // мгновенно кэш, а следом перечитываем свежую первую страницу — новые
+    // фото/видео (снятые в другом приложении или в камере) появляются сразу
+    // при открытии, а не через минуты. MediaAssetCache.refresh тикнет
+    // revision — его же слушатель ниже подхватит и изменения ВО ВРЕМЯ того,
+    // как шторка уже открыта.
+    unawaited(MediaAssetCache.refresh());
+  }
+
+  void _onAssetsRevisionChanged() {
+    unawaited(() async {
+      _applyPage(await MediaAssetCache.get());
+    }());
+  }
+
+  void _applyPage(MediaAssetPage page) {
+    if (!mounted) return;
     if (page.path == null && page.assets.isEmpty && !page.isLimited) {
       // path == null без ограниченного доступа — либо нет прав вообще,
       // либо в галерее пусто; в обоих случаях просто показываем пустую
       // сетку без плиток фото (плитка камеры при этом всё равно есть).
-      if (mounted) setState(() => _loading = false);
+      setState(() => _loading = false);
       return;
     }
 
     final assets = [...page.assets]
       ..sort((a, b) => _sortKey(b).compareTo(_sortKey(a)));
 
-    if (mounted) {
-      setState(() {
-        _allPath = page.path;
+    setState(() {
+      _allPath = page.path;
+      if (_page == 0) {
         _assets = assets;
         _hasMore = assets.length == _pageSize;
-        _isLimitedAccess = page.isLimited;
-        _loading = false;
-      });
-    }
+      } else {
+        // Пользователь уже подгрузил следующие страницы — вклеиваем свежую
+        // первую страницу поверх, хвост сохраняем (по id, без дублей).
+        final knownIds = assets.map((a) => a.id).toSet();
+        final tail = _assets.where((a) => !knownIds.contains(a.id)).toList();
+        _assets = [...assets, ...tail]
+          ..sort((a, b) => _sortKey(b).compareTo(_sortKey(a)));
+      }
+      _isLimitedAccess = page.isLimited;
+      _loading = false;
+    });
   }
 
   @override
   void dispose() {
+    MediaAssetCache.revision.removeListener(_onAssetsRevisionChanged);
     _attachedScrollController?.removeListener(_onScroll);
     _sheetController.removeListener(_onSheetSizeChanged);
     _sheetSettleTimer?.cancel();

@@ -353,13 +353,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   // тик прогресса — см. ChatStore._replace.
   final Map<String, double> _uploadProgress = {};
 
-  void Function(double percent) _uploadProgressUpdater(String messageId) {
-    return (percent) {
-      if (!mounted) return;
-      setState(() => _uploadProgress[messageId] = percent);
-    };
-  }
-
   /// Текст фазы + процент отправки С УЧЁТОМ известного ограничения: dio
   /// onSendProgress считает только "клиент → сервер", а сервер после этого
   /// ЕЩЁ сохраняет файл в MinIO — второй, отдельный шаг, о котором клиент
@@ -388,15 +381,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // гарантированно влезает и однозначно читается.
     if (phase.percent == null) return phase.text;
     return '${phase.percent!.round()}%';
-  }
-
-  /// Только для лога (см. purgeMessageArtifacts/DebugLog — НИКОГДА
-  /// содержимого/имени файла, только тип) — чтобы в debug_log.txt было
-  /// видно, что именно не отправилось: фото, видео или произвольный файл.
-  String _mediaKindLabel(PickedMedia item) {
-    if (item.isFile) return 'file';
-    if (item.isVideo) return 'video';
-    return 'photo';
   }
 
   /// Экранные (только в памяти этого ChatScreen, не в ChatStore) следы
@@ -984,12 +968,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _presenceSub = WebSocketService.instance.presenceEvents.listen(
         _handlePresenceEvent,
       );
+      // widget.peerDeviceId — из кэша, может быть устаревшим/пустым (собеседник
+      // переустановил приложение, либо чат ещё без обмена сообщениями). Тогда
+      // presence_subscribe уходит по мёртвому id и сервер отвечает пустым
+      // статусом. Сразу актуализируем id и переподписываемся (см.
+      // _refreshPeerDeviceId — сам переподпишет, если id сменился).
+      unawaited(_refreshPeerDeviceId());
       // Пересоздавшееся соединение (после обрыва сети и т.п.) не помнит,
       // что нас надо было переподписать — сервер отвечает актуальным
       // статусом только В МОМЕНТ подписки, поэтому подписываемся заново на
-      // каждое новое "connected".
+      // каждое новое "connected" (и заодно перепроверяем device_id).
       _wsStatusSub = WebSocketService.instance.statusUpdates.listen((status) {
-        if (status == ConnectionStatus.connected) _subscribePeerPresence();
+        if (status == ConnectionStatus.connected) {
+          _subscribePeerPresence();
+          unawaited(_refreshPeerDeviceId());
+        }
       });
       // "N минут назад" должно само устаревать по часам, даже если больше
       // никаких событий от собеседника не приходит — просто перерисовываем
@@ -1002,6 +995,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   void _subscribePeerPresence() {
+    if (_currentPeerDeviceId.isEmpty) return;
     WebSocketService.instance.subscribePresence(_currentPeerDeviceId);
   }
 
@@ -1400,13 +1394,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         widget.peerLogin,
       );
       if (result.devices.isNotEmpty) {
-        _currentPeerDeviceId = result.devices.first['device_id'] as String;
+        final resolvedId = result.devices.first['device_id'] as String;
+        final idChanged = resolvedId != _currentPeerDeviceId;
+        final previousId = _currentPeerDeviceId;
+        _currentPeerDeviceId = resolvedId;
         await ChatStore.setLastKnownDeviceId(
           widget.peerLogin,
           _currentPeerDeviceId,
         );
         await ChatStore.setPeerDeletedStatus(widget.peerLogin, false);
         if (mounted) setState(() => _isPeerDeleted = false);
+        // id собеседника сменился (или впервые узнали) — старая
+        // presence-подписка висела на мёртвом устройстве, перецепляемся на
+        // правильное, иначе статус «был(а) в сети» так и не появится.
+        if (idChanged && !_isNotes) {
+          if (previousId.isNotEmpty) {
+            WebSocketService.instance.unsubscribePresence(previousId);
+          }
+          _subscribePeerPresence();
+        }
       }
     } on ApiException catch (_) {
       await ChatStore.setPeerDeletedStatus(widget.peerLogin, true);
@@ -2684,51 +2690,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _userAtBottom = true;
     await _loadHistory();
 
-    if (_isNotes) {
-      final file = File(persistedPath);
-      try {
-        final token = await Session.getToken();
-        final myAccountId = await Session.getAccountId() ?? '';
-        await _uploadAndDescribeMedia(
-          PickedMedia(file: file, isVideo: isVideo),
-          messageId,
-          size,
-          isVideo ? 'video_note.mp4' : 'voice.m4a',
-          token!,
-          myAccountId,
-        );
-        await ChatStore.updateMessageStatus(
-          widget.peerLogin,
-          messageId,
-          'sent',
-        );
-        DebugLog.log(
-          'ChatScreen send OK (${isVideo ? 'video_note' : 'voice'} '
-          'messageId=$messageId, notes) size=$size',
-        );
-      } catch (e, stackTrace) {
-        DebugLog.log(
-          'ChatScreen send FAILED (${isVideo ? 'video_note' : 'voice'} '
-          'messageId=$messageId, notes) size=$size error=$e\n$stackTrace',
-        );
-        await ChatStore.updateMessageStatus(
-          widget.peerLogin,
-          messageId,
-          'failed',
-        );
-      } finally {
-        await _loadHistory();
-        try {
-          await file.delete();
-        } catch (_) {}
-      }
-      return;
-    }
-
     await PendingSendRetrier.instance.enqueue({
       'id': messageId,
       'kind': isVideo ? 'video_note' : 'voice',
       'state': 'queued',
+      'notes': _isNotes,
       'peer_login': widget.peerLogin,
       'peer_device_id': _currentPeerDeviceId,
       'peer_account_id': widget.peerAccountId,
@@ -3337,28 +3303,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Шифрует и грузит один файл на сервер — тонкая обёртка над общей
-  /// логикой из media_upload.dart (переиспользуется и PendingSendRetrier
-  /// для автоматического повтора после сбоя сети, см. ТЗ пользователя).
-  Future<Map<String, dynamic>> _uploadAndDescribeMedia(
-    PickedMedia item,
-    String messageId,
-    int size,
-    String fileName,
-    String token,
-    String peerAccountIdForUpload,
-  ) {
-    return media_upload.uploadAndDescribeMedia(
-      peerLogin: widget.peerLogin,
-      item: item,
-      messageId: messageId,
-      size: size,
-      fileName: fileName,
-      token: token,
-      peerAccountIdForUpload: peerAccountIdForUpload,
-      onProgress: _uploadProgressUpdater(messageId),
-    );
-  }
 
   Future<void> _processQueuedMedia(
     PickedMedia item,
@@ -3366,43 +3310,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     int size,
     String fileName,
   ) async {
-    if (_isNotes) {
-      try {
-        final token = await Session.getToken();
-        final myAccountId = await Session.getAccountId() ?? '';
-        await _uploadAndDescribeMedia(
-          item,
-          messageId,
-          size,
-          fileName,
-          token!,
-          myAccountId,
-        );
-        await ChatStore.updateMessageStatus(
-          widget.peerLogin,
-          messageId,
-          'sent',
-        );
-        DebugLog.log(
-          'ChatScreen send OK (media messageId=$messageId, notes) '
-          'kind=${_mediaKindLabel(item)} size=$size',
-        );
-      } catch (e, stackTrace) {
-        DebugLog.log(
-          'ChatScreen send FAILED (media messageId=$messageId, notes) '
-          'kind=${_mediaKindLabel(item)} size=$size error=$e\n$stackTrace',
-        );
-        await ChatStore.updateMessageStatus(
-          widget.peerLogin,
-          messageId,
-          'failed',
-        );
-      } finally {
-        await _loadHistory();
-      }
-      return;
-    }
-
+    // Заметки тоже идут через очередь файлов (ТЗ пользователя) — флаг
+    // 'notes' в задании: воркер грузит файл ровно так же (докачка,
+    // фон, панель ⇅), но БЕЗ конверта Double Ratchet — после заливки
+    // просто помечает сообщение 'sent' (см. PendingSendRetrier).
     // Одиночное медиа — в очередь файлов (PendingSendRetrier). Шифрование
     // + загрузка + конверт идут в её воркере, ВНЕ SendLock (ратчет берётся
     // только на миллисекундную критическую секцию) — звонки/текст этому
@@ -3416,6 +3327,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       'id': messageId,
       'kind': 'media',
       'state': 'queued',
+      'notes': _isNotes,
       'peer_login': widget.peerLogin,
       'peer_device_id': _currentPeerDeviceId,
       'peer_account_id': widget.peerAccountId,
@@ -3441,67 +3353,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     >
     items,
   }) async {
-    if (_isNotes) {
-      try {
-        final token = await Session.getToken();
-        final myAccountId = await Session.getAccountId() ?? '';
-        for (final q in items) {
-          DebugLog.log(
-            'ChatScreen group upload attempt (notes) groupId=$groupId '
-            'messageId=${q.messageId} kind=${_mediaKindLabel(q.item)} '
-            'size=${q.size}',
-          );
-          await _uploadAndDescribeMedia(
-            q.item,
-            q.messageId,
-            q.size,
-            q.fileName,
-            token!,
-            myAccountId,
-          );
-        }
-        if (textMessageId != null) {
-          await ChatStore.updateMessageStatus(
-            widget.peerLogin,
-            textMessageId,
-            'sent',
-          );
-        }
-        for (final q in items) {
-          await ChatStore.updateMessageStatus(
-            widget.peerLogin,
-            q.messageId,
-            'sent',
-          );
-        }
-        DebugLog.log(
-          'ChatScreen group send OK (notes) groupId=$groupId count=${items.length}',
-        );
-      } catch (e, stackTrace) {
-        DebugLog.log(
-          'ChatScreen group send FAILED (notes) groupId=$groupId '
-          'count=${items.length} error=$e\n$stackTrace',
-        );
-        if (textMessageId != null) {
-          await ChatStore.updateMessageStatus(
-            widget.peerLogin,
-            textMessageId,
-            'failed',
-          );
-        }
-        for (final q in items) {
-          await ChatStore.updateMessageStatus(
-            widget.peerLogin,
-            q.messageId,
-            'failed',
-          );
-        }
-      } finally {
-        await _loadHistory();
-      }
-      return;
-    }
-
+    // Заметки — та же очередь файлов, флаг 'notes' (см. _processQueuedMedia):
+    // воркер грузит все файлы группы и просто помечает их 'sent', без конверта.
     // Группа — одним заданием в очередь файлов (PendingSendRetrier):
     // воркер грузит все файлы, затем шлёт ОДИН конверт группы. Вне
     // SendLock, с докачкой после перезапуска. file_path — оригинал пикера
@@ -3523,6 +3376,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       'id': groupId,
       'kind': 'media_group',
       'state': 'queued',
+      'notes': _isNotes,
       'peer_login': widget.peerLogin,
       'peer_device_id': _currentPeerDeviceId,
       'peer_account_id': widget.peerAccountId,
@@ -6097,26 +5951,50 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         online: _peerOnline,
         lastSeenMs: _peerLastSeenMs,
       );
-      textColumn = status.isEmpty
-          ? title
-          : Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                title,
-                Text(
-                  status,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: _peerTyping
-                        ? AppColors.primary
-                        : Theme.of(
-                            context,
-                          ).appBarTheme.foregroundColor?.withValues(alpha: 0.7),
-                  ),
+      // Строка статуса появляется/меняется плавно: AnimatedSize тянет
+      // высоту колонки под имя ± строку, AnimatedSwitcher кросс-фейдит сам
+      // текст (нет статуса → «в сети» → «вчера в 21:40» и т.п.). Раньше
+      // просто резко возникала/исчезала (жалоба пользователя).
+      textColumn = Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          title,
+          AnimatedSize(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            alignment: Alignment.topCenter,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeIn,
+              transitionBuilder: (child, anim) => FadeTransition(
+                opacity: anim,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, -0.3),
+                    end: Offset.zero,
+                  ).animate(anim),
+                  child: child,
                 ),
-              ],
-            );
+              ),
+              child: status.isEmpty
+                  ? const SizedBox(key: ValueKey('presence-none'))
+                  : Text(
+                      status,
+                      key: ValueKey(status),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _peerTyping
+                            ? AppColors.primary
+                            : Theme.of(context).appBarTheme.foregroundColor
+                                  ?.withValues(alpha: 0.7),
+                      ),
+                    ),
+            ),
+          ),
+        ],
+      );
     }
 
     // Удалённому аккаунту аватарку показывать незачем — его фото сервер

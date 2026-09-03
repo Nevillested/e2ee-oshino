@@ -266,6 +266,28 @@ class CallService {
   bool videoEnabled = false;
   bool speakerOn = false;
 
+  // --- Маршрут вывода звука ---
+  // Пока к телефону НЕ подключено bluetooth-устройство — работает старая
+  // бинарная логика: по умолчанию ушной динамик + датчик приближения,
+  // кнопка «громкая связь» (speakerOn / toggleSpeaker). Как только
+  // появляется bluetooth-выход — звук по умолчанию идёт в него, датчик
+  // приближения гасится, а на экране звонка вместо тумблера появляется
+  // выбор устройства (см. call_screen + _showOutputPicker). Значения
+  // маршрутов — как у flutter_webrtc AudioDeviceKind:
+  // 'bluetooth' | 'wired-headset' | 'speaker' | 'earpiece'.
+  final _audioRouteController = StreamController<void>.broadcast();
+  Stream<void> get audioRouteChanges => _audioRouteController.stream;
+  List<String> _availableAudioRoutes = [];
+  String _effectiveAudioRoute = 'earpiece';
+  String? _pickedAudioRoute; // явный выбор пользователя в этом звонке
+  bool _audioRouteWatching = false;
+
+  List<String> get availableAudioRoutes =>
+      List.unmodifiable(_availableAudioRoutes);
+  String get effectiveAudioRoute => _effectiveAudioRoute;
+  bool get hasBluetoothAudioOutput =>
+      _availableAudioRoutes.contains('bluetooth');
+
   bool _listenerStarted = false;
 
   // true, если пользователь нажал "Ответить" прямо в уведомлении о
@@ -500,8 +522,78 @@ class CallService {
   /// всегда нужно выставлять ДО подписки, и переподписываться заново
   /// при каждом включении (иначе повторный вызов с уже активной
   /// подпиской попросту ничего не делает).
+  /// Слежение за появлением/пропаданием устройств вывода (bluetooth
+  /// подключили/отключили посреди звонка) — flutter_webrtc шлёт
+  /// onDeviceChange.
+  void _startAudioRouteWatch() {
+    if (_audioRouteWatching) return;
+    _audioRouteWatching = true;
+    navigator.mediaDevices.ondevicechange = (_) =>
+        unawaited(_refreshAudioOutputs());
+  }
+
+  void _stopAudioRouteWatch() {
+    if (!_audioRouteWatching) return;
+    _audioRouteWatching = false;
+    navigator.mediaDevices.ondevicechange = null;
+  }
+
+  Future<void> _refreshAudioOutputs() async {
+    try {
+      final outs = await Helper.audiooutputs;
+      _availableAudioRoutes = outs
+          .map((d) => d.deviceId)
+          .where((id) => id.isNotEmpty)
+          .toList();
+    } catch (e) {
+      DebugLog.log('CallService _refreshAudioOutputs failed: $e');
+      _availableAudioRoutes = [];
+    }
+    await _applyAudioRoute();
+  }
+
+  /// Применяет текущий маршрут: без bluetooth — старый бинарный режим
+  /// (Helper.setSpeakerphoneOn по speakerOn); с bluetooth — явный выбор
+  /// пользователя, либо bluetooth по умолчанию.
+  Future<void> _applyAudioRoute() async {
+    if (!hasBluetoothAudioOutput) {
+      _pickedAudioRoute = null;
+      try {
+        await Helper.setSpeakerphoneOn(speakerOn);
+      } catch (_) {}
+      _effectiveAudioRoute = speakerOn
+          ? 'speaker'
+          : (_availableAudioRoutes.contains('wired-headset')
+                ? 'wired-headset'
+                : 'earpiece');
+    } else {
+      var route = _pickedAudioRoute ?? 'bluetooth';
+      if (!_availableAudioRoutes.contains(route)) route = 'bluetooth';
+      try {
+        await Helper.selectAudioOutput(route);
+      } catch (e) {
+        DebugLog.log('CallService selectAudioOutput($route) failed: $e');
+      }
+      _effectiveAudioRoute = route;
+      speakerOn = route == 'speaker';
+    }
+    await _updateProximityScreenOff();
+    _audioRouteController.add(null);
+  }
+
+  /// Выбор устройства вывода из шторки на экране звонка.
+  Future<void> selectAudioRoute(String route) async {
+    _pickedAudioRoute = route;
+    speakerOn = route == 'speaker';
+    await _applyAudioRoute();
+  }
+
   Future<void> _updateProximityScreenOff() async {
-    final shouldEnable = _state == CallState.connected && !speakerOn;
+    // Гасим экран по датчику приближения только когда звук реально идёт в
+    // ушной динамик — на громкой связи / в гарнитуре / bluetooth телефон
+    // держат не у лица.
+    final shouldEnable =
+        _state == CallState.connected && _effectiveAudioRoute == 'earpiece';
     if (shouldEnable == _proximityScreenOffActive) return;
 
     if (shouldEnable) {
@@ -808,7 +900,9 @@ class CallService {
     // непривычно, пока пользователь не переключит вывод звука вручную
     // (что как раз и заставляет систему выбрать маршрут заново явно).
     speakerOn = false;
-    await Helper.setSpeakerphoneOn(false);
+    _pickedAudioRoute = null;
+    _startAudioRouteWatch();
+    await _refreshAudioOutputs();
   }
 
   Future<void> startCall(String peerDeviceId) async {
@@ -987,6 +1081,10 @@ class CallService {
     _remoteVideoStateController.add(false);
     PipService.setRemoteVideoActive(false);
     _autoSpeakerTriggered = false;
+    _stopAudioRouteWatch();
+    _availableAudioRoutes = [];
+    _effectiveAudioRoute = 'earpiece';
+    _pickedAudioRoute = null;
     currentPeerLogin = null;
     currentPeerAccountId = null;
     _setState(CallState.idle);
@@ -1210,10 +1308,13 @@ class CallService {
     }
   }
 
+  /// Кнопка «громкая связь» — только когда bluetooth НЕ подключён (в
+  /// bluetooth-режиме маршрут выбирается в шторке, см. selectAudioRoute).
+  /// Также вызывается разово при появлении видео у собеседника.
   Future<void> toggleSpeaker() async {
+    if (hasBluetoothAudioOutput) return;
     speakerOn = !speakerOn;
-    await Helper.setSpeakerphoneOn(speakerOn);
-    await _updateProximityScreenOff();
+    await _applyAudioRoute();
   }
 
   /// Кадры, которые должны относиться к УЖЕ идущему у нас звонку —

@@ -267,7 +267,10 @@ class PendingSendRetrier {
     for (final j in jobs) {
       if (j['state'] == 'failed') continue;
       final jobId = j['id'] as String;
-      final peer = j['peer_login'] as String? ?? '';
+      // Заметки — показываем «Заметки» вместо служебного логина __notes__.
+      final peer = j['notes'] == true
+          ? tr('home.notes')
+          : (j['peer_login'] as String? ?? '');
       final active = jobId == _activeId;
       if (j['kind'] == 'media_group') {
         final items = (j['items'] as List).cast<Map<String, dynamic>>();
@@ -451,18 +454,32 @@ class PendingSendRetrier {
         'PendingSendRetrier id=$id source gone but chunked session exists — resuming',
       );
     }
+    // Заметки (чат с самим собой) — конверта Double Ratchet нет: файл
+    // грузится ровно так же, а по завершении сообщение просто помечается
+    // 'sent'. peerDeviceId не нужен, «получатель» загрузки — свой аккаунт.
+    final notes = job['notes'] == true;
     final peerLogin = job['peer_login'] as String;
-    final peerDeviceId = await MessageResend.resolvePeerDeviceId(
-      peerLogin,
-      job['peer_device_id'] as String,
-    );
     final token = await Session.getToken();
     if (token == null) {
       throw Exception('not logged in, cannot retry media upload');
     }
-    final peerAccountId =
-        await PeerAccountStore.get(peerDeviceId) ??
-        job['peer_account_id'] as String;
+    final String peerDeviceId;
+    final String peerAccountId;
+    if (notes) {
+      peerDeviceId = '';
+      peerAccountId =
+          await Session.getAccountId() ??
+          job['peer_account_id'] as String? ??
+          '';
+    } else {
+      peerDeviceId = await MessageResend.resolvePeerDeviceId(
+        peerLogin,
+        job['peer_device_id'] as String,
+      );
+      peerAccountId =
+          await PeerAccountStore.get(peerDeviceId) ??
+          job['peer_account_id'] as String;
+    }
     final size = job['size'] as int;
 
     final bool isVideo;
@@ -496,6 +513,16 @@ class PendingSendRetrier {
       peerAccountIdForUpload: peerAccountId,
       onProgress: (percent) => UploadProgressBus.emit(id, percent),
     );
+
+    if (notes) {
+      // uploadAndDescribeMedia уже записал mediaId/key/nonce в StoredMessage
+      // (ChatStore.updateMediaInfo) — осталось только пометить отправленным.
+      await ChatStore.updateMessageStatus(peerLogin, id, 'sent');
+      if (isVoiceOrVideoNote || job['persisted'] == true) {
+        await PendingSendStore.deletePersistedFile(file.path);
+      }
+      return;
+    }
 
     final InnerMessage inner;
     if (isVoiceOrVideoNote) {
@@ -562,18 +589,29 @@ class PendingSendRetrier {
     final id = job['id'] as String;
     final rawItems = (job['items'] as List).cast<Map<String, dynamic>>();
 
+    final notes = job['notes'] == true;
     final peerLogin = job['peer_login'] as String;
-    final peerDeviceId = await MessageResend.resolvePeerDeviceId(
-      peerLogin,
-      job['peer_device_id'] as String,
-    );
     final token = await Session.getToken();
     if (token == null) {
       throw Exception('not logged in, cannot retry media group upload');
     }
-    final peerAccountId =
-        await PeerAccountStore.get(peerDeviceId) ??
-        job['peer_account_id'] as String;
+    final String peerDeviceId;
+    final String peerAccountId;
+    if (notes) {
+      peerDeviceId = '';
+      peerAccountId =
+          await Session.getAccountId() ??
+          job['peer_account_id'] as String? ??
+          '';
+    } else {
+      peerDeviceId = await MessageResend.resolvePeerDeviceId(
+        peerLogin,
+        job['peer_device_id'] as String,
+      );
+      peerAccountId =
+          await PeerAccountStore.get(peerDeviceId) ??
+          job['peer_account_id'] as String;
+    }
 
     final uploaded = <Map<String, dynamic>>[];
     final ackItems = <Map<String, dynamic>>[];
@@ -653,6 +691,27 @@ class PendingSendRetrier {
       DebugLog.log(
         'PendingSendRetrier id=$id all group items cancelled — nothing sent',
       );
+      return;
+    }
+
+    if (notes) {
+      // Заметки — конверта нет: файлы залиты (mediaId/key уже в StoredMessage),
+      // просто помечаем всю группу и подпись отправленными.
+      if (textMessageId != null) {
+        await ChatStore.updateMessageStatus(peerLogin, textMessageId, 'sent');
+      }
+      for (final item in ackItems) {
+        await ChatStore.updateMessageStatus(
+          peerLogin,
+          item['message_id'] as String,
+          'sent',
+        );
+        if (item['persisted'] == true) {
+          await PendingSendStore.deletePersistedFile(
+            item['file_path'] as String,
+          );
+        }
+      }
       return;
     }
 
