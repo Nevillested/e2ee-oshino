@@ -478,10 +478,17 @@ class MediaDownloadManager {
     var delay = const Duration(seconds: 2);
     for (var attempt = 1; ; attempt++) {
       try {
+        // presigned GET — байты качаются напрямую из MinIO (files.oshino.space),
+        // мимо московского сервера. Берём свежий URL на каждой попытке: если
+        // прошлый истёк (2ч) — новый его заменит. Тут же приходит и полный
+        // размер, так что отдельный HEAD не нужен.
+        final presigned = await _api.presignMediaGet(token, id);
         encTotal = await _api.downloadEncryptedMediaResumable(
           token,
           id,
           partial,
+          directUrl: presigned.url,
+          knownTotalBytes: presigned.sizeBytes > 0 ? presigned.sizeBytes : null,
           onProgress: (p) {
             _progress[id] = p;
             _progressCtl.add(id);

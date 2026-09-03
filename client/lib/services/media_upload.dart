@@ -192,6 +192,35 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
       final totalSize = await encTempFile.length();
       final totalParts = (totalSize / partSize).ceil();
       var bytesDone = 0;
+
+      // presigned PUT-URL частей — байты идут НАПРЯМУЮ в MinIO
+      // (files.oshino.space), мимо московского сервера. Берём батчами по
+      // мере продвижения; на любой сбой части сбрасываем её URL из кэша,
+      // чтобы _retryChunkedStep перезапросил свежий (в т.ч. если прошлый
+      // истёк за 2 ч на очень медленной сети).
+      final partUrls = <int, String>{};
+      Future<String> partUrl(int pn) async {
+        if (!partUrls.containsKey(pn)) {
+          final batch = <int>[];
+          for (var p = pn; p <= totalParts && batch.length < 15; p++) {
+            if (!confirmedParts.contains(p) && !partUrls.containsKey(p)) {
+              batch.add(p);
+            }
+          }
+          final fresh = await _retryChunkedStep(
+            () => apiClient.presignMediaPartUrls(
+              token,
+              sessionMediaId,
+              sessionUploadId,
+              batch,
+            ),
+            cancelToken: cancelToken,
+          );
+          partUrls.addAll(fresh);
+        }
+        return partUrls[pn]!;
+      }
+
       for (var partNumber = 1; partNumber <= totalParts; partNumber++) {
         final offset = (partNumber - 1) * partSize;
         final len = (offset + partSize > totalSize)
@@ -215,19 +244,27 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
 
         final baseDone = bytesDone;
         await _retryChunkedStep(
-          () => apiClient.uploadChunkedPart(
-            token,
-            sessionMediaId,
-            sessionUploadId,
-            partNumber,
-            chunk,
-            cancelToken: cancelToken,
-            onProgress: (partPercent) {
-              if (totalSize == 0) return;
-              final partBytesDone = (partPercent / 100 * len).round();
-              onProgress?.call((baseDone + partBytesDone) / totalSize * 100);
-            },
-          ),
+          () async {
+            final u = await partUrl(partNumber);
+            try {
+              await apiClient.putToPresignedUrl(
+                u,
+                chunk,
+                contentLength: chunk.length,
+                cancelToken: cancelToken,
+                onProgress: (partPercent) {
+                  if (totalSize == 0) return;
+                  final partBytesDone = (partPercent / 100 * len).round();
+                  onProgress?.call(
+                    (baseDone + partBytesDone) / totalSize * 100,
+                  );
+                },
+              );
+            } catch (_) {
+              partUrls.remove(partNumber); // следующая попытка — свежий URL
+              rethrow;
+            }
+          },
           cancelToken: cancelToken,
         );
         bytesDone += len;
@@ -263,24 +300,35 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         messageId,
         tr('chat.uploading'),
       );
-      // uploadEncryptedMediaWithProgress (байты целиком через
-      // MultipartFile.fromBytes) отдаёт dio ОДНИМ куском — прогресс из-за
-      // этого не дробится на промежуточные тики, только 0% и сразу 100%
-      // (жалоба пользователя: "должно быть постепенное изменение"). Пишем
-      // шифротекст во временный файл и грузим тем же файловым методом, что
-      // и "тяжёлый" путь ниже — MultipartFile.fromFile читает файл потоком
-      // и репортит прогресс по-настоящему постепенно.
+      // Шифротекст во временный файл — putToPresignedUrl стримит его с
+      // диска (прогресс дробится по-настоящему, не «0% → сразу 100%»).
       final tempDir = await getTemporaryDirectory();
       final encTempFile = File('${tempDir.path}/enc_$messageId.bin');
       await encTempFile.writeAsBytes(encrypted.ciphertext);
       try {
-        mediaId = await apiClient.uploadEncryptedMediaFileWithProgress(
-          token,
-          encTempFile.path,
-          peerAccountIdForUpload,
+        // presigned PUT — байты идут НАПРЯМУЮ в MinIO (files.oshino.space,
+        // VPS в Токио → FRP до NAS), мимо московского сервера. Строку в
+        // media_files сервер создаёт на /finalize — после проверки, что
+        // объект нужного размера реально долетел.
+        final presigned = await apiClient.presignMediaPut(token);
+        await apiClient.putToPresignedUrl(
+          presigned.url,
+          encTempFile,
+          contentLength: encrypted.ciphertext.length,
           onProgress: (p) => onProgress?.call(p),
           cancelToken: cancelToken,
         );
+        await _retryChunkedStep(
+          () => apiClient.finalizeMediaUpload(
+            token,
+            presigned.mediaId,
+            peerAccountIdForUpload,
+            encrypted.ciphertext.length,
+            fileName,
+          ),
+          cancelToken: cancelToken,
+        );
+        mediaId = presigned.mediaId;
       } finally {
         try {
           await encTempFile.delete();

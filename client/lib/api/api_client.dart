@@ -351,6 +351,132 @@ class ApiClient {
     }
   }
 
+  // ===== presigned-URL: байты файлов идут напрямую в MinIO мимо сервера =====
+  // (см. server/internal/api/media_presign.go). Москва только подписывает
+  // URL + ведёт строку в media_files; сами байты — на files.oshino.space
+  // (VPS в Токио → FRP-туннель до NAS, всё в одном регионе).
+
+  /// POST /upload-media/presign — presigned PUT для НЕчанкового файла
+  /// целиком. Возвращает media_id + url; строку в БД сервер создаст только
+  /// после finalizeMediaUpload (когда байты реально долетели).
+  Future<({String mediaId, String url})> presignMediaPut(String token) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/upload-media/presign'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode != 200) throw ApiException(tr('error.uploadFailed'));
+    final d = jsonDecode(response.body) as Map<String, dynamic>;
+    return (mediaId: d['media_id'] as String, url: d['url'] as String);
+  }
+
+  /// POST /upload-media/{mediaId}/finalize — после успешного PUT: сервер
+  /// проверяет, что объект нужного размера реально лежит в MinIO, и создаёт
+  /// запись в media_files. [sizeBytes] — размер ШИФРОТЕКСТА.
+  Future<void> finalizeMediaUpload(
+    String token,
+    String mediaId,
+    String recipientAccountId,
+    int sizeBytes,
+    String fileName,
+  ) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/upload-media/$mediaId/finalize'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'recipient_account_id': recipientAccountId,
+        'size_bytes': sizeBytes,
+        'file_name': fileName,
+      }),
+    );
+    if (response.statusCode != 200) throw ApiException(tr('error.uploadFailed'));
+  }
+
+  /// POST /upload-media/{mediaId}/part-urls — presigned PUT-URL на каждую
+  /// запрошенную часть чанковой загрузки.
+  Future<Map<int, String>> presignMediaPartUrls(
+    String token,
+    String mediaId,
+    String uploadId,
+    List<int> partNumbers,
+  ) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/upload-media/$mediaId/part-urls'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({'upload_id': uploadId, 'part_numbers': partNumbers}),
+    );
+    if (response.statusCode != 200) throw ApiException(tr('error.uploadFailed'));
+    final d = jsonDecode(response.body) as Map<String, dynamic>;
+    final urls = (d['urls'] as Map<String, dynamic>);
+    return urls.map((k, v) => MapEntry(int.parse(k), v as String));
+  }
+
+  /// GET /media/{id}/url — presigned GET-URL для скачивания напрямую из
+  /// MinIO + полный размер шифротекста (чтобы не делать отдельный HEAD).
+  Future<({String url, int sizeBytes})> presignMediaGet(
+    String token,
+    String mediaId,
+  ) async {
+    final response = await http.get(
+      Uri.parse('${ApiConfig.baseUrl}/media/$mediaId/url'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode != 200) {
+      throw ApiException(tr('error.downloadFailed'));
+    }
+    final d = jsonDecode(response.body) as Map<String, dynamic>;
+    return (
+      url: d['url'] as String,
+      sizeBytes: (d['size_bytes'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// PUT зашифрованных байт напрямую на presigned-URL MinIO. Наш
+  /// Bearer-токен сюда НЕ шлём — авторизует сам подписанный URL.
+  /// [body] — File (стримится с диска) или Uint8List.
+  Future<void> putToPresignedUrl(
+    String url,
+    Object body, {
+    required int contentLength,
+    void Function(double percent)? onProgress,
+    dio.CancelToken? cancelToken,
+  }) async {
+    final client = _mediaDioClient();
+    final Object data = body is File ? body.openRead() : body;
+    try {
+      final response = await client.putUri<void>(
+        Uri.parse(url),
+        data: data,
+        options: dio.Options(
+          headers: {dio.Headers.contentLengthHeader: contentLength},
+          responseType: dio.ResponseType.plain,
+          followRedirects: false,
+          validateStatus: (s) => s != null && s >= 200 && s < 300,
+        ),
+        onSendProgress: (sent, total) {
+          final t = total > 0 ? total : contentLength;
+          if (t > 0 && onProgress != null) onProgress(sent / t * 100);
+        },
+        cancelToken: cancelToken,
+      );
+      if (response.statusCode == null ||
+          response.statusCode! < 200 ||
+          response.statusCode! >= 300) {
+        throw ApiException(tr('error.uploadFailed'));
+      }
+    } on dio.DioException catch (e) {
+      if (e.type == dio.DioExceptionType.cancel) {
+        throw ApiException(tr('error.cancelledByUser'));
+      }
+      throw ApiException(tr('error.uploadFailed'));
+    }
+  }
+
   /// dio.download сам пишет ответ сервера прямо в файл по мере получения,
   /// не накапливая его целиком в памяти — критично для файлов до 500 МБ.
   Future<void> downloadEncryptedMediaToFile(
@@ -412,9 +538,13 @@ class ApiClient {
     int? knownTotalBytes,
     void Function(double percent)? onProgress,
     dio.CancelToken? cancelToken,
+    // Если задан — качаем байты по этому presigned-URL напрямую из MinIO
+    // (files.oshino.space), мимо московского сервера. Наш Bearer-токен на
+    // такой URL не шлём — авторизует сам URL.
+    String? directUrl,
   }) async {
     final client = _mediaDioClient();
-    final url = '${ApiConfig.baseUrl}/media/$mediaId';
+    final url = directUrl ?? '${ApiConfig.baseUrl}/media/$mediaId';
 
     var existing = await destFile.exists() ? await destFile.length() : 0;
     var total = knownTotalBytes ?? 0;
@@ -433,7 +563,9 @@ class ApiClient {
       }
     }
 
-    final headers = <String, dynamic>{'Authorization': 'Bearer $token'};
+    final headers = <String, dynamic>{
+      if (directUrl == null) 'Authorization': 'Bearer $token',
+    };
     if (existing > 0) headers['Range'] = 'bytes=$existing-';
 
     try {

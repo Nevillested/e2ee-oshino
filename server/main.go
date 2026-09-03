@@ -51,6 +51,20 @@ func main() {
 		log.Fatalf("ошибка подключения к MinIO: %v", minioErr)
 	}
 
+	//Второй MinIO-клиент — ТОЛЬКО для генерации presigned-URL на публичный
+	//эндпоинт (MINIO_PUBLIC_ENDPOINT = files.oshino.space, через VPS в
+	//Токио). Реального подключения к MinIO он не делает: подпись URL — это
+	//чистая локальная криптография. Нужен, чтобы клиент лил/качал байты
+	//файлов напрямую в MinIO, минуя этот (слабый и далёкий) сервер —
+	//см. internal/api/media_presign.go
+	var minioPresign, presignErr = minio.New(os.Getenv("MINIO_PUBLIC_ENDPOINT"), &minio.Options{
+		Creds:  credentials.NewStaticV4(os.Getenv("MINIO_ACCESS_KEY"), os.Getenv("MINIO_SECRET_KEY"), ""),
+		Secure: os.Getenv("MINIO_PUBLIC_SECURE") != "false",
+	})
+	if presignErr != nil {
+		log.Fatalf("ошибка создания presign-клиента MinIO: %v", presignErr)
+	}
+
 	//создание переменной, в которой будет храниться записи о всех подключенных пользователях к серверу. У это переменной есть свои методы, описанные в registry.go
 	var registry = api.NewConnectionRegistry()
 
@@ -93,6 +107,12 @@ func main() {
 	mux.HandleFunc("GET /upload-media/{media_id}/parts", api.NewListChunkedPartsHandler(queries, minioClient))
 	mux.HandleFunc("POST /upload-media/{media_id}/complete", api.NewCompleteChunkedUploadHandler(queries, minioClient))
 	mux.HandleFunc("POST /upload-media/{media_id}/abort", api.NewAbortChunkedUploadHandler(queries, minioClient))
+	//presigned-URL: клиент льёт/качает байты напрямую в MinIO мимо этого
+	//сервера — см. internal/api/media_presign.go
+	mux.HandleFunc("POST /upload-media/presign", api.NewPresignPutHandler(queries, minioPresign))
+	mux.HandleFunc("POST /upload-media/{media_id}/finalize", api.NewFinalizeUploadHandler(queries, minioClient))
+	mux.HandleFunc("POST /upload-media/{media_id}/part-urls", api.NewPresignPartsHandler(queries, minioPresign))
+	mux.HandleFunc("GET /media/{id}/url", api.NewPresignGetHandler(queries, minioPresign))
 	mux.HandleFunc("GET /media/{id}", api.NewGetMediaHandler(queries, minioClient))
 	mux.HandleFunc("GET /session/check", api.NewSessionCheckHandler(queries))
 	mux.HandleFunc("DELETE /account", api.NewDeleteAccountHandler(queries))

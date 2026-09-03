@@ -67,6 +67,69 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
 (SDP/ICE). Сервер осознанно видит: логины, device_id, кто с кем переписывается/созванивается
 (метаданные), call_id (нужен для офлайн-очереди звонков).
 
+## Хранилище медиа и передача файлов (инфраструктура)
+
+Все медиа/файлы шифруются на клиенте (AES-GCM, `crypto/streaming_file_cipher.dart` для
+чанковых, `crypto/media_cipher.dart` для мелких) ещё ДО загрузки. Сервер и хранилище видят
+только шифротекст; ключ расшифровки едет внутри Double-Ratchet-конверта.
+
+**Физическая топология (2026-09-03):**
+- **MinIO** — контейнер `minio-e2ee` на NAS (TrueNAS, Terramaster F4-423) в **Японии**,
+  датасет `/mnt/tank/e2ee/minio`, бакет **`e2ee-media`**. Наружу порты MinIO (9000/9001) НЕ
+  открыты — только LAN + FRP-туннели.
+- **Московский VPS** (`ee2e.oshino.space`, 195.19.66.107, 1 vCPU / 1 ГБ — очень слабый) —
+  Go-сервер, Postgres, nginx, `frps` (бинарь, `/e2ee/frps`, `e2ee-frps.service`). Достаёт
+  MinIO по FRP-туннелю на `127.0.0.1:9000` (NAS `frpc-e2ee` → Москва). `proxyBindAddr =
+  "127.0.0.1"` в `frps.toml` — проброшенные порты не торчат в интернет.
+- **Токийский VPS** (`files.oshino.space`, Vultr, ~$5/мес, 1 ГБ, 1 ТБ трафика/мес) —
+  nginx (TLS Let's Encrypt, `proxy_request_buffering off`, `client_max_body_size 0`) +
+  `frps` (`e2ee-frps.service`, порт 7000). NAS `frpc-e2ee-tokyo` (второй контейнер,
+  `/mnt/tank/e2ee/scripts/frpc-tokyo/`) держит туннель MinIO → Токио на `127.0.0.1:9000`,
+  nginx его проксирует. DNS: `files.oshino.space A → <Tokyo IP>` в Route53 (обычная запись,
+  зона `oshino.space` не мигрировалась).
+
+**Поток данных — presigned URL (главное решение):** байты файлов идут **напрямую
+клиент → `files.oshino.space` → Токио → FRP → NAS**, минуя московский сервер. Клиент в
+Японии + хранилище в Японии = низкая задержка, слабый VPS в Москве больше не бутылочное
+горло ни для загрузки, ни для скачивания. Москва только:
+- подписывает presigned-URL (`server/internal/api/media_presign.go`, второй minio-клиент с
+  endpoint `MINIO_PUBLIC_ENDPOINT=files.oshino.space` — реально никуда не коннектится,
+  подпись SigV4 это локальная криптография);
+- ведёт строку в `media_files` (кто загрузил / кому / object_key / размер шифротекста);
+- делает служебные multipart-вызовы к MinIO по FRP (init/complete/list — крошечные).
+
+**Эндпоинты:**
+- Нечанковый файл (≤ 20 МБ): `POST /upload-media/presign` → `{media_id, url}` (строку в БД
+  ещё НЕ создаёт) → клиент PUT байт на `url` → `POST /upload-media/{id}/finalize`
+  (`{recipient, size_bytes, file_name}`) — сервер `StatObject` проверяет, что объект
+  нужного размера долетел, и только тогда пишет строку в БД (без finalize — висячих строк
+  без объекта не остаётся).
+- Чанковый файл (> 20 МБ): `POST /upload-media/init` (без изменений) →
+  `POST /upload-media/{id}/part-urls` (`{upload_id, part_numbers:[...]}` → presigned PUT на
+  каждую часть, батчами по 15 в клиенте) → клиент PUT частей напрямую в MinIO →
+  `GET /upload-media/{id}/parts` + `POST /upload-media/{id}/complete` (без изменений — сервер
+  собирает по `ListObjectParts`). Докачка/резюм — как раньше (истина у MinIO).
+- Скачивание: `GET /media/{id}/url` → `{url, size_bytes}` (presigned GET, права проверяются
+  как в `download_media.go` — только загрузчик/получатель). Клиент качает Range-докачкой по
+  этому URL (`downloadEncryptedMediaResumable(directUrl: ...)`), presigned GET на 403
+  (истёк, 2ч) → `_runOne` берёт свежий URL на следующей попытке.
+- **Старые relay-эндпоинты (`POST /upload-media`, `PUT .../part/N`, `GET /media/{id}`)
+  оставлены рабочими как fallback** — код клиента `uploadEncryptedMediaFileWithProgress` /
+  `uploadChunkedPart` тоже пока не удалён.
+
+**MinIO-доступ сервера:** отдельный пользователь `oshino-server` с политикой `oshino-media`
+(только бакет `e2ee-media`: Put/Get/Delete/AbortMultipart/ListParts) — не рут. Тот же
+ключ используется и локальным клиентом (FRP), и presign-клиентом.
+
+**Прочие ускорения на Москве (2026-09-03):** BBR + `fq` + расширенные TCP-буферы
+(`/etc/sysctl.d/99-oshino-net.conf`), `proxy_request_buffering off` в nginx.
+
+**Если проект вырастет:** упрётся в 1 ТБ/мес трафика токийского VPS или в throttle —
+тогда план побольше у Vultr. Cloudflare Tunnel рассматривался и отклонён (Free-план не
+даёт поддомен как зону; полная миграция `oshino.space` рискованна из-за почты/старого
+сайта + автопродление TLS). Tailscale Funnel отклонён (недокументированный лимит
+скорости, «funnel, не hose»).
+
 ## В работе / roadmap (закрытое тестирование, дедлайн ~2 недели с 2026-08-24)
 
 Статус по пунктам обновляется по ходу работы — см. историю разговора с ассистентом для деталей
