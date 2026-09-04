@@ -73,30 +73,54 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
 чанковых, `crypto/media_cipher.dart` для мелких) ещё ДО загрузки. Сервер и хранилище видят
 только шифротекст; ключ расшифровки едет внутри Double-Ratchet-конверта.
 
-**Физическая топология (2026-09-03):**
-- **MinIO** — контейнер `minio-e2ee` на NAS (TrueNAS, Terramaster F4-423) в **Японии**,
-  датасет `/mnt/tank/e2ee/minio`, бакет **`e2ee-media`**. Наружу порты MinIO (9000/9001) НЕ
-  открыты — только LAN + FRP-туннели.
-- **Московский VPS** (`ee2e.oshino.space`, 195.19.66.107, 1 vCPU / 1 ГБ — очень слабый) —
-  Go-сервер, Postgres, nginx, `frps` (бинарь, `/e2ee/frps`, `e2ee-frps.service`). Достаёт
-  MinIO по FRP-туннелю на `127.0.0.1:9000` (NAS `frpc-e2ee` → Москва). `proxyBindAddr =
-  "127.0.0.1"` в `frps.toml` — проброшенные порты не торчат в интернет.
-- **Токийский VPS** (`files.oshino.space`, Vultr, ~$5/мес, 1 ГБ, 1 ТБ трафика/мес) —
-  nginx (TLS Let's Encrypt, `proxy_request_buffering off`, `client_max_body_size 0`) +
-  `frps` (`e2ee-frps.service`, порт 7000). NAS `frpc-e2ee-tokyo` (второй контейнер,
-  `/mnt/tank/e2ee/scripts/frpc-tokyo/`) держит туннель MinIO → Токио на `127.0.0.1:9000`,
-  nginx его проксирует. DNS: `files.oshino.space A → <Tokyo IP>` в Route53 (обычная запись,
-  зона `oshino.space` не мигрировалась).
+**Физическая топология (2026-09-03).** Схема — «звезда» с NAS в центре; московский и
+токийский серверы между собой НЕ связаны, оба независимо ходят в MinIO по своим FRP-туннелям
+(NAS сам звонит наружу к обоим `frps`).
+
+- **MinIO** — контейнер `minio-e2ee` на NAS (TrueNAS SCALE на Terramaster F4-423, 32 ГБ RAM)
+  в **Японии**, за домашним роутером без белого IP. Данные `/mnt/tank/e2ee/minio`, бакет
+  **`e2ee-media`** (ключ объекта = случайный UUID `media_id`; человекочитаемое имя файла
+  хранится отдельно в колонке `object_key` таблицы `media_files`). Порты 9000/9001 доступны
+  только в LAN + по FRP; в интернет не выставлены. Рут-креды MinIO — на NAS в
+  `/mnt/tank/e2ee/scripts/MinIO/.env`.
+- **Московский VPS** (`ee2e.oshino.space`, 195.19.66.107, Free Tier: 1 vCPU / 1 ГБ / 10 ГБ —
+  очень слабый) — Go-сервер, Postgres, nginx, `frps` (бинарь, `/e2ee/frps/frps.toml`,
+  `e2ee-frps.service`, `bindPort=7000`). Достаёт MinIO по FRP на `127.0.0.1:9000`
+  (NAS-контейнер **`frpc-e2ee-msk`**, скрипт `/mnt/tank/e2ee/scripts/frpc/frpc_e2ee.sh`,
+  проксирует `minio-api` 9000 и `minio-console` 9001). `proxyBindAddr = "127.0.0.1"` в
+  `frps.toml` — проброшенные порты слушают только localhost, в интернет не торчат
+  (раньше 9000/9001 висели на публичном IP — закрыто 2026-09-03).
+- **Токийский VPS** (`files.oshino.space`, `202.182.112.9`, Vultr Tokyo, ~$5/мес,
+  1 vCPU / 1 ГБ / 25 ГБ / **1 ТБ трафика/мес**, Ubuntu) — nginx (TLS Let's Encrypt через
+  `--nginx`, авто-renew; `proxy_request_buffering off`, `proxy_buffering off`,
+  `client_max_body_size 0`, `proxy_set_header Host $host` — критично для SigV4) +
+  `frps` (`e2ee-frps.service`, `bindPort=7000`, `proxyBindAddr = "127.0.0.1"`). NAS-контейнер
+  **`frpc-e2ee-tokyo`** (скрипт+конфиг `/mnt/tank/e2ee/scripts/frpc-tokyo/`, только
+  `minio-api` 9000 — консоль через Токио НЕ пробрасываем) держит туннель MinIO → Токио на
+  `127.0.0.1:9000`, nginx его проксирует. FRP-токены Токио: `frpc-tokyo/.env` на NAS +
+  `frps.toml` на Токио. **Харднинг Токио:** ufw (только 22/80/443/7000), fail2ban, 1 ГБ swap,
+  SSH — только по ключу (`/etc/ssh/sshd_config.d/99-hardening.conf`: `PasswordAuthentication
+  no`, `PermitRootLogin prohibit-password`).
+- **DNS:** `files.oshino.space A → 202.182.112.9` в Route53 (обычная A-запись, зона
+  `oshino.space` осталась на Route53 — не мигрировали из-за почты reg.ru + старого
+  не-e2ee сайта `oshino.space` + авто-renew TLS).
 
 **Поток данных — presigned URL (главное решение):** байты файлов идут **напрямую
 клиент → `files.oshino.space` → Токио → FRP → NAS**, минуя московский сервер. Клиент в
 Японии + хранилище в Японии = низкая задержка, слабый VPS в Москве больше не бутылочное
 горло ни для загрузки, ни для скачивания. Москва только:
 - подписывает presigned-URL (`server/internal/api/media_presign.go`, второй minio-клиент с
-  endpoint `MINIO_PUBLIC_ENDPOINT=files.oshino.space` — реально никуда не коннектится,
-  подпись SigV4 это локальная криптография);
-- ведёт строку в `media_files` (кто загрузил / кому / object_key / размер шифротекста);
-- делает служебные multipart-вызовы к MinIO по FRP (init/complete/list — крошечные).
+  endpoint из `MINIO_PUBLIC_ENDPOINT` + `MINIO_PUBLIC_SECURE=true` — реально никуда не
+  коннектится, подпись SigV4 это локальная HMAC-криптография; срок ссылки `presignExpiry =
+  2h`). Работает потому, что и Москва, и MinIO знают один секрет `oshino-server` независимо —
+  переговоров между ними при подписи/проверке нет;
+- ведёт строку в `media_files` (кто загрузил / кому / object_key = имя файла / размер
+  шифротекста);
+- делает служебные multipart-вызовы к MinIO по FRP (init/complete/list/StatObject — крошечные).
+
+Московский `.env` (кроме прежнего): `MINIO_ACCESS_KEY=oshino-server`, `MINIO_SECRET_KEY=…`
+(scoped-юзер вместо рута), `MINIO_PUBLIC_ENDPOINT=files.oshino.space`, `MINIO_PUBLIC_SECURE=true`.
+`MINIO_ENDPOINT=127.0.0.1:9000` (через FRP) и `MINIO_BUCKET=e2ee-media` — без изменений.
 
 **Эндпоинты:**
 - Нечанковый файл (≤ 20 МБ): `POST /upload-media/presign` → `{media_id, url}` (строку в БД
@@ -120,12 +144,18 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
   оставлены рабочими как fallback** — код клиента `uploadEncryptedMediaFileWithProgress` /
   `uploadChunkedPart` тоже пока не удалён.
 
-**MinIO-доступ сервера:** отдельный пользователь `oshino-server` с политикой `oshino-media`
-(только бакет `e2ee-media`: Put/Get/Delete/AbortMultipart/ListParts) — не рут. Тот же
-ключ используется и локальным клиентом (FRP), и presign-клиентом.
+**MinIO-доступ сервера:** отдельный пользователь `oshino-server` (создан `mc admin user add`
+на NAS) с политикой `oshino-media` — только бакет `e2ee-media`: на `e2ee-media/*` —
+`s3:PutObject`/`GetObject`/`DeleteObject`/`AbortMultipartUpload`/`ListMultipartUploadParts`;
+на `e2ee-media` — `GetBucketLocation`/`ListBucket`/`ListBucketMultipartUploads`. Не рут.
+Тот же ключ используется и локальным клиентом (FRP), и presign-клиентом.
 
 **Прочие ускорения на Москве (2026-09-03):** BBR + `fq` + расширенные TCP-буферы
-(`/etc/sysctl.d/99-oshino-net.conf`), `proxy_request_buffering off` в nginx.
+(`/etc/sysctl.d/99-oshino-net.conf`: `tcp_congestion_control=bbr`, `default_qdisc=fq`,
+`rmem_max`/`wmem_max` 8 МБ, `tcp_mtu_probing=1`, `tcp_fastopen=3`); в nginx server-блоке
+`ee2e.oshino.space` — `proxy_request_buffering off`, `proxy_http_version 1.1`,
+`proxy_read_timeout`/`send_timeout` 600s. (После presigned это в основном для WS/API —
+байты файлов через Москву больше не идут.)
 
 **Если проект вырастет:** упрётся в 1 ТБ/мес трафика токийского VPS или в throttle —
 тогда план побольше у Vultr. Cloudflare Tunnel рассматривался и отклонён (Free-план не
@@ -169,9 +199,12 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
 - [x] UX звонков: авто-отказ "занято" вторым звонящим, пока уже разговариваем/дозваниваемся
       (`call_busy`), с отдельным текстом от ручного отклонения (`call_reject`) — "абонент
       разговаривает" vs "абонент занят" на экране звонящего (`_endWithReason` в
-      call_service.dart). Известный пробел: если приложение ПОЛНОСТЬЮ убито и второй звонок
-      будит только нативный Android-слой (CallRingPlugin) без живого Dart — авто-busy через
-      Dart не сработает, там нужна отдельная доработка в нативном плагине (не сделано).
+      call_service.dart). Случай полностью убитого приложения закрыт нативно: если второй
+      звонок будит только Android-слой (CallRingService уже звонит по первому call_id) —
+      `CallRingService.onStartCommand` не перебивает рингтон, а шлёт второму звонящему
+      `call_busy` тем же HTTP-путём, что и кнопка «Отклонить» (`POST /calls/decline` с
+      `reason=busy` → сервер отдаёт `call_busy` вместо `call_reject`), см.
+      `CallBusyResponder.kt`.
 - [x] Заодно, попутно с шифрованием звонков: проверка `sender_device_id` у входящих
       call_answer/call_ice/renegotiation-offer против реального текущего собеседника по звонку
       (раньше не проверялось вообще — можно было прислать поддельный кадр напрямую на чей-то
@@ -275,6 +308,58 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
     сам `groupId`, так что deliveryId группы в `SendQueueStore` совпадает с её `groupId`
     — cancel/retry для группы находят её по ОДНОМУ и тому же ключу везде, а не только
     в `PendingSendStore`.
+- [x] **Батч клиентских правок (2026-09-03, релиз `1.0.0+34`)** — детали в git (`600a767`) и
+      памяти ассистента:
+  - Краш «чёрный экран при старте» после сворачивания во время скачивания: `MainActivity`
+    держал `FlutterEngine` живым между Activity ради переживания звонком смахивания задачи,
+    но переиспользование частично отсоединённого движка роняло `FlutterJNI.setViewportMetrics`.
+    Теперь движок удерживается между Activity **только пока идёт звонок** (`callActiveProcessWide`
+    от `setCallActive`), иначе — обычное поведение (движок уничтожается с Activity).
+  - Чат «Заметки» тоже идёт через файловую очередь `PendingSendRetrier` (флаг `notes` в
+    задании) — та же докачка/фон/панель, но БЕЗ конверта Double Ratchet (получателя нет),
+    после заливки просто `updateMessageStatus('sent')`.
+  - Отмена одного файла из группы (`PendingSendRetrier.cancelGroupItem`) — выкидывает только
+    его, грузит остальные; отменили все → не отправляется ничего, включая подпись.
+  - Звонок: выбор устройства вывода при подключённом Bluetooth (`call_service`/`call_screen`,
+    `Helper.audiooutputs`/`selectAudioOutput`); датчик приближения теперь по
+    `_effectiveAudioRoute == 'earpiece'`, не по `speakerOn`.
+  - Presence «был в сети»: `_refreshPeerDeviceId()` при открытии чата и на реконнекте
+    (устаревший peer device_id → пустой статус), «вчера в HH:MM», плавное появление статуса.
+  - Размер файла показывается всегда на любом медиа; FGS-уведомление зависит от состояния
+    (скачивание/выгрузка/оба); новые фото в пикере — сразу (`PhotoManager.addChangeCallback`).
+- [x] **Ускорение передачи файлов (2026-09-03, релиз `1.0.0+35`)** — байты файлов больше
+      не идут через слабый удалённый московский VPS: presigned-URL + токийский relay-VPS +
+      прямой upload/download в MinIO, параллельная заливка частей (пул 3). Полное описание —
+      раздел «Хранилище медиа и передача файлов» выше. Проверено на эмуляторе (фото,
+      крупный файл, скачивание). Реальный замер скорости — на телефоне (эмулятор режет сеть
+      QEMU). Не сделано, если после замера всё ещё медленно: конвейер «шифрование ∥ заливка»
+      (сейчас шифруется весь файл во временный → потом заливка).
+- [ ] **Батч правок (2026-09-04, готовится к релизу `1.0.0+36`)** — код готов, не собрано:
+  - Датчик приближения: сериализация `_updateProximityScreenOff` (гонка при BT→ушной динамик
+    убрана), дебаунс `ondevicechange` 300 мс.
+  - Системные превью в списке чатов больше не замораживаются переведённой строкой: хранится
+    маркер (`call:no_answer`, `photo`, `voice`, `file:<имя>`…), перевод — в момент
+    показа (`ChatStore.previewMarker`/`decodePreview`). Меняется вместе с языком.
+  - Анимация появления/исчезновения панели закреплённого сообщения (`AnimatedSize` +
+    `AnimatedSwitcher`); переброс к закреплённому больше не «перелетает и отскакивает»
+    (оценка позиции намеренно недолётная, доводит `ensureVisible`).
+  - Иконка уведомлений: `@drawable/ic_notification` (плейсхолдер-вектор, заменяется своей
+    картинкой) вместо `@mipmap/ic_launcher` (был пустой кружок).
+  - Локальные уведомления о сообщениях, когда приложение свёрнуто (процесс жив): общий текст
+    без превью содержимого, канал `messages`, только при `lifecycleState != resumed`.
+  - Fallback presigned → московский relay: если прямой PUT/GET в MinIO упал (не отмена),
+    заливка/скачивание автоматически идут старым путём через Москву — Токио перестал быть SPOF.
+  - Авто-busy при полностью убитом приложении (см. выше про звонки, `CallBusyResponder.kt`).
+  - Медиа-пикер «спотыкается» при открытии + вылет: причина — `_initLiveCamera`
+    (availableCameras + `CameraController.initialize` = целый граф CameraX) запускался в
+    `initState`, конкурируя за кадры с открывающей анимацией; а `dispose()` синхронно звал
+    `_liveCamera?.dispose()`, который при закрытии шторки во время `initialize()` был no-op
+    (контроллер ещё локальный) → граф CameraX утекал и финализировался в фоне на корутине
+    `CXCP-01` → нативный SIGSEGV. Фикс: камера поднимается только ПОСЛЕ `_openSheet()` и
+    только если шторку не закрыли; `_initLiveCamera` сам закрывает контроллер, если
+    `!mounted/_disposed/_closing` к моменту завершения `initialize()`; закрытие камеры
+    (`_disposeLiveCamera`) ждёт `_cameraInitFuture` и мемоизировано. Тайминг-логи
+    `MediaPicker +Nms …` пока оставлены для подтверждения.
 
 ## Как обновлять этот файл
 

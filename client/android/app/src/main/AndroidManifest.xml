@@ -32,6 +32,12 @@
         android:icon="@mipmap/ic_launcher"
         android:largeHeap="true"
         android:enableOnBackInvokedCallback="true">
+        <!-- Иконка для уведомлений FCM с блоком notification (если сервер
+             когда-нибудь такие пришлёт) — без неё Android рисует пустой
+             кружок из launcher-иконки. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

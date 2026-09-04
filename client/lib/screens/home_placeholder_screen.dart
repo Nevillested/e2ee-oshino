@@ -1305,7 +1305,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
                         ),
                       ),
                 subtitle: Text(
-                  entry.lastMessage,
+                  ChatStore.decodePreview(entry.lastMessage),
                   style: TextStyle(
                     color: AppColors.textMuted,
                     fontSize: 14,

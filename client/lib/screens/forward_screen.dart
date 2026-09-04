@@ -125,7 +125,7 @@ class _ForwardScreenState extends State<ForwardScreen> {
                           style: TextStyle(color: AppColors.textPrimary),
                         ),
                   subtitle: Text(
-                    entry.lastMessage,
+                    ChatStore.decodePreview(entry.lastMessage),
                     style: TextStyle(color: AppColors.textMuted),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

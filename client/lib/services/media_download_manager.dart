@@ -476,25 +476,43 @@ class MediaDownloadManager {
     // уже лежащего хвоста, не с нуля.
     int encTotal = 0;
     var delay = const Duration(seconds: 2);
+    void reportDl(double p) {
+      _progress[id] = p;
+      _progressCtl.add(id);
+    }
+
     for (var attempt = 1; ; attempt++) {
       try {
-        // presigned GET — байты качаются напрямую из MinIO (files.oshino.space),
-        // мимо московского сервера. Берём свежий URL на каждой попытке: если
-        // прошлый истёк (2ч) — новый его заменит. Тут же приходит и полный
-        // размер, так что отдельный HEAD не нужен.
-        final presigned = await _api.presignMediaGet(token, id);
-        encTotal = await _api.downloadEncryptedMediaResumable(
-          token,
-          id,
-          partial,
-          directUrl: presigned.url,
-          knownTotalBytes: presigned.sizeBytes > 0 ? presigned.sizeBytes : null,
-          onProgress: (p) {
-            _progress[id] = p;
-            _progressCtl.add(id);
-          },
-          cancelToken: cancel,
-        );
+        try {
+          // presigned GET — байты качаются напрямую из MinIO
+          // (files.oshino.space), мимо московского сервера. Свежий URL на
+          // каждой попытке (истёкший за 2ч заменяется). Тут же полный
+          // размер — отдельный HEAD не нужен.
+          final presigned = await _api.presignMediaGet(token, id);
+          encTotal = await _api.downloadEncryptedMediaResumable(
+            token,
+            id,
+            partial,
+            directUrl: presigned.url,
+            knownTotalBytes: presigned.sizeBytes > 0
+                ? presigned.sizeBytes
+                : null,
+            onProgress: reportDl,
+            cancelToken: cancel,
+          );
+        } catch (e) {
+          if (cancel.isCancelled) rethrow;
+          // presigned/Токио недоступны — качаем через московский relay
+          // (старый эндпоинт `GET /media/{id}`, тоже с Range-докачкой).
+          DebugLog.log('MediaDownloadManager $id presigned GET failed ($e) — relay fallback');
+          encTotal = await _api.downloadEncryptedMediaResumable(
+            token,
+            id,
+            partial,
+            onProgress: reportDl,
+            cancelToken: cancel,
+          );
+        }
         break;
       } catch (e) {
         if (cancel.isCancelled || attempt >= _networkRetries) rethrow;

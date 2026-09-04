@@ -328,6 +328,69 @@ class ChatStore {
   static String _messagesKey(String peerLogin) => 'messages:$peerLogin';
   static const _peersIndexKey = 'known_peers';
 
+  /// Превью последнего сообщения в списке чатов. Системные подписи
+  /// (тип медиа / исход звонка) НЕ переводим при сохранении — храним
+  /// стабильный маркер '\uE000<тип>[:<арг>]', а список чатов переводит его
+  /// в момент отрисовки (decodePreview). Иначе смена языка в настройках
+  /// не меняла бы уже сохранённые превью (жалоба: «Абонент не отвечает»
+  /// оставался по-русски после переключения на английский). Обычный текст и
+  /// подписи к медиа (пользовательский ввод) хранятся как есть.
+  static const _previewMark = '\uE000';
+
+  static String previewMarker(StoredMessage m) {
+    if (m.isCallLog) {
+      return '$_previewMark' 'call:${m.callOutcome ?? 'no_answer'}';
+    }
+    if (m.isVoice) return '$_previewMark' 'voice';
+    if (m.isVideoNote) return '$_previewMark' 'videoNote';
+    if (m.isMedia) {
+      final caption = m.text.trim();
+      final oldFrozen = caption.startsWith('\u{1F4F7}') ||
+          caption.startsWith('\u{1F3AC}') ||
+          caption.startsWith('\u{1F4CE}') ||
+          caption.startsWith('\u{1F3A5}') ||
+          caption.startsWith('\u{1F3A4}');
+      if (caption.isNotEmpty && !oldFrozen) return caption;
+      if (m.isFile) {
+        return (m.fileName != null && m.fileName!.isNotEmpty)
+            ? '$_previewMark' 'file:${m.fileName}'
+            : '$_previewMark' 'file';
+      }
+      if (m.isVideo) return '$_previewMark' 'video';
+      return '$_previewMark' 'photo';
+    }
+    return m.text;
+  }
+
+  /// Обратно: маркер → локализованная строка. Не-маркерные строки — как есть.
+  static String decodePreview(String raw) {
+    if (!raw.startsWith(_previewMark)) return raw;
+    final body = raw.substring(_previewMark.length);
+    final colon = body.indexOf(':');
+    final type = colon == -1 ? body : body.substring(0, colon);
+    final arg = colon == -1 ? '' : body.substring(colon + 1);
+    switch (type) {
+      case 'voice':
+        return '\u{1F3A4} ${tr('media.voiceNote')}';
+      case 'videoNote':
+        return '\u{1F3A5} ${tr('media.videoNote')}';
+      case 'photo':
+        return '\u{1F4F7} ${tr('media.photo')}';
+      case 'video':
+        return '\u{1F3AC} ${tr('media.video')}';
+      case 'file':
+        return arg.isNotEmpty ? arg : '\u{1F4CE} ${tr('media.file')}';
+      case 'call':
+        return switch (arg) {
+          'answered' => '\u{1F4DE} ${tr('call.answered')}',
+          'missed' => '\u{1F4DE} ${tr('call.missed')}',
+          _ => '\u{1F4DE} ${tr('call.noAnswer')}',
+        };
+      default:
+        return raw;
+    }
+  }
+
   static final _changesController = StreamController<void>.broadcast();
   static Stream<void> get changes => _changesController.stream;
 
@@ -486,7 +549,7 @@ class ChatStore {
     if (!added) return;
     await _touchPeer(
       peerLogin,
-      message.text,
+      previewMarker(message),
       message.timestamp,
       accountId: accountId,
       incrementUnread: incrementUnread,
@@ -538,15 +601,7 @@ class ChatStore {
     );
     await _touchPeer(
       peerLogin,
-      last.isVoice
-          ? '🎤 ${tr('media.voiceNote')}'
-          : last.isVideoNote
-          ? '🎥 ${tr('media.videoNote')}'
-          : last.isMedia
-          ? (last.isFile
-                ? (last.fileName ?? '📎 ${tr('media.file')}')
-                : '📷 ${tr('media.photo')}')
-          : last.text,
+      previewMarker(last),
       last.timestamp,
       accountId: accountId,
       incrementUnread: incrementUnread,
@@ -844,7 +899,7 @@ class ChatStore {
         final last = remaining.reduce(
           (a, b) => a.timestamp >= b.timestamp ? a : b,
         );
-        existing.first.lastMessage = last.text;
+        existing.first.lastMessage = previewMarker(last);
         existing.first.lastTimestamp = last.timestamp;
         existing.first.lastMessageIsMine = last.isMine;
         existing.first.lastMessageIsRead = last.status == 'read';

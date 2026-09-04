@@ -1797,10 +1797,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (groupIndex == -1) return;
 
     final maxExtent = _scrollController.position.maxScrollExtent;
+    final viewport = _scrollController.position.viewportDimension;
     final estimate = groups.length <= 1
         ? 0.0
         : (groupIndex / (groups.length - 1)) * maxExtent;
-    final clampedEstimate = estimate.clamp(0.0, maxExtent);
+    // Намеренно НЕДОлетаем на ~пол-экрана: линейная оценка по индексу
+    // группы часто перелетает реальную позицию (сообщения разной высоты),
+    // и тогда финальный ensureVisible возвращал скролл назад — «отскок
+    // резинкой» (жалоба пользователя). Если недолететь, ensureVisible
+    // всегда доводит В ОДНУ сторону — воспринимается как одно движение.
+    final clampedEstimate = (estimate - viewport * 0.5).clamp(0.0, maxExtent);
 
     // Скорость перелёта — фиксированные px/мс (не константная длительность),
     // чтобы близкая цель летела быстро, а очень дальняя не растягивалась на
@@ -6809,7 +6815,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       // на высоту списка под ней не влияет.
                       if (!_isNotes)
                         OngoingCallBanner(peerLogin: widget.peerLogin),
-                      if (_pinnedMessageId != null) _buildPinnedBanner(),
+                      // Плавное появление/исчезновение баннера закрепа
+                      // (ТЗ): AnimatedSize тянет высоту, AnimatedSwitcher
+                      // кросс-фейдит содержимое (в т.ч. при смене самого
+                      // закреплённого сообщения).
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOut,
+                        alignment: Alignment.topCenter,
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 200),
+                          child: _pinnedMessageId != null
+                              ? KeyedSubtree(
+                                  key: ValueKey('pin:$_pinnedMessageId'),
+                                  child: _buildPinnedBanner(),
+                                )
+                              : const SizedBox(
+                                  key: ValueKey('no-pin'),
+                                  width: double.infinity,
+                                ),
+                        ),
+                      ),
                     ],
                   ),
                 ),

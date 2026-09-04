@@ -525,14 +525,24 @@ class CallService {
   /// Слежение за появлением/пропаданием устройств вывода (bluetooth
   /// подключили/отключили посреди звонка) — flutter_webrtc шлёт
   /// onDeviceChange.
+  Timer? _audioRouteDebounce;
   void _startAudioRouteWatch() {
     if (_audioRouteWatching) return;
     _audioRouteWatching = true;
-    navigator.mediaDevices.ondevicechange = (_) =>
-        unawaited(_refreshAudioOutputs());
+    // flutter_webrtc/AudioSwitch шлёт onDeviceChange пачками (в т.ч. в ответ
+    // на наш же selectAudioOutput) — дебаунсим, иначе re-entrant _applyAudioRoute
+    // гонялся с _updateProximityScreenOff и ронял wake-lock датчика приближения.
+    navigator.mediaDevices.ondevicechange = (_) {
+      _audioRouteDebounce?.cancel();
+      _audioRouteDebounce = Timer(
+        const Duration(milliseconds: 300),
+        () => unawaited(_refreshAudioOutputs()),
+      );
+    };
   }
 
   void _stopAudioRouteWatch() {
+    _audioRouteDebounce?.cancel();
     if (!_audioRouteWatching) return;
     _audioRouteWatching = false;
     navigator.mediaDevices.ondevicechange = null;
@@ -588,32 +598,55 @@ class CallService {
     await _applyAudioRoute();
   }
 
+  bool _proximityUpdateRunning = false;
+  bool _proximityUpdatePending = false;
   Future<void> _updateProximityScreenOff() async {
-    // Гасим экран по датчику приближения только когда звук реально идёт в
-    // ушной динамик — на громкой связи / в гарнитуре / bluetooth телефон
-    // держат не у лица.
-    final shouldEnable =
-        _state == CallState.connected && _effectiveAudioRoute == 'earpiece';
-    if (shouldEnable == _proximityScreenOffActive) return;
-
-    if (shouldEnable) {
-      _proximitySensorAvailable ??= await _checkProximityAvailable();
-      if (_proximitySensorAvailable != true) return;
+    // Датчик приближения гасит экран только когда звук реально идёт в
+    // УШНОЙ ДИНАМИК (не громкая связь / не гарнитура / не bluetooth —
+    // там телефон не у лица). Сериализуем: несколько re-entrant вызовов
+    // (смена маршрута + onDeviceChange одновременно) раньше гонялись и
+    // оставляли болтающуюся подписку, из-за чего wake-lock не захватывался
+    // — экран не гас при переключении bluetooth → ушной динамик.
+    if (_proximityUpdateRunning) {
+      _proximityUpdatePending = true;
+      return;
     }
-
-    _proximityScreenOffActive = shouldEnable;
+    _proximityUpdateRunning = true;
     try {
-      if (shouldEnable) {
-        await ProximitySensor.setProximityScreenOff(true);
-        await _proximitySub?.cancel();
-        _proximitySub = ProximitySensor.events.listen((_) {}, onError: (_) {});
-      } else {
-        await _proximitySub?.cancel();
-        _proximitySub = null;
-        await ProximitySensor.setProximityScreenOff(false);
+      final shouldEnable =
+          _state == CallState.connected && _effectiveAudioRoute == 'earpiece';
+      if (shouldEnable != _proximityScreenOffActive) {
+        if (shouldEnable) {
+          _proximitySensorAvailable ??= await _checkProximityAvailable();
+        }
+        if (!shouldEnable || _proximitySensorAvailable == true) {
+          _proximityScreenOffActive = shouldEnable;
+          try {
+            // Всегда полный ре-цикл подписки: флаг ставим ДО listen()
+            // (wake-lock захватывается в нативном onListen), старую подписку
+            // гасим в любом случае.
+            await _proximitySub?.cancel();
+            _proximitySub = null;
+            await ProximitySensor.setProximityScreenOff(shouldEnable);
+            if (shouldEnable) {
+              _proximitySub =
+                  ProximitySensor.events.listen((_) {}, onError: (_) {});
+            }
+            DebugLog.log(
+              'CallService proximity screen-off = $shouldEnable '
+              '(route=$_effectiveAudioRoute state=$_state)',
+            );
+          } catch (e) {
+            DebugLog.log('CallService proximity toggle failed: $e');
+          }
+        }
       }
-    } catch (_) {
-      // Датчика нет/платформа не поддерживает — звонок это ломать не должно.
+    } finally {
+      _proximityUpdateRunning = false;
+      if (_proximityUpdatePending) {
+        _proximityUpdatePending = false;
+        await _updateProximityScreenOff();
+      }
     }
   }
 

@@ -52,9 +52,28 @@ class CallRingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand, isRinging=$isRinging, instance=$this")
+
+        val incomingCallId = intent?.getStringExtra(EXTRA_CALL_ID)
+
+        // Второй параллельный звонок, пока мы уже звоним по первому: живого
+        // Dart-слоя нет (иначе call_busy по WebSocket послал бы сам
+        // CallService), поэтому нативно говорим второму звонящему "занят" и
+        // НЕ перебиваем текущий рингтон. startForeground обязателен — нас
+        // подняли через startForegroundService.
+        if (isRinging &&
+            incomingCallId != null &&
+            currentCallId != null &&
+            incomingCallId != currentCallId
+        ) {
+            Log.d(TAG, "onStartCommand: второй звонок $incomingCallId поверх активного $currentCallId — авто-busy")
+            startForeground(NOTIFICATION_ID, buildNotification(), foregroundServiceType())
+            CallBusyResponder.sendBusy(applicationContext, incomingCallId)
+            return START_NOT_STICKY
+        }
+
         // Может прийти без call_id (например повторный вызов из другого
         // источника push) — тогда просто сохраняем уже известный.
-        intent?.getStringExtra(EXTRA_CALL_ID)?.let { currentCallId = it }
+        incomingCallId?.let { currentCallId = it }
         intent?.getStringExtra(EXTRA_CALLER_DEVICE_ID)?.let { currentCallerDeviceId = it }
         startForeground(NOTIFICATION_ID, buildNotification(), foregroundServiceType())
 

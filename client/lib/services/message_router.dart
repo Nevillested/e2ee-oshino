@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:flutter/widgets.dart' show WidgetsBinding, AppLifecycleState;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../api/api_client.dart';
@@ -17,6 +18,7 @@ import '../storage/peer_account_store.dart';
 import '../storage/peer_identity_store.dart';
 import 'active_chat_tracker.dart';
 import 'debug_log.dart';
+import 'local_notifications.dart';
 import 'message_cleanup.dart';
 import 'send_lock.dart';
 import 'send_queue_processor.dart';
@@ -549,7 +551,16 @@ class MessageRouter {
       // WebSocket-соединению всё равно проигрывало звук.
       if (!chatIsOpen && !_silentTypes.contains(inner.type)) {
         final muted = await ChatStore.isChatMuted(ownerInfo.login);
-        if (!muted) SoundService.playMessageSound();
+        if (!muted) {
+          SoundService.playMessageSound();
+          // Приложение свёрнуто (но процесс жив, сообщение дошло по WS) —
+          // показываем локальное уведомление. В foreground не показываем
+          // (ТЗ пользователя): там пользователь и так в приложении.
+          if (WidgetsBinding.instance.lifecycleState !=
+              AppLifecycleState.resumed) {
+            unawaited(showBackgroundMessageNotification());
+          }
+        }
       }
     } catch (e, stackTrace) {
       debugPrint('MessageRouter: ошибка обработки сообщения: $e\n$stackTrace');

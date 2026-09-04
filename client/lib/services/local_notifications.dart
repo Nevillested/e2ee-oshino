@@ -1,5 +1,10 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import '../l10n/app_strings.dart';
+
+/// id канала уведомлений о сообщениях (совпадает с push_service.dart).
+const messagesChannelId = 'messages';
+
 /// Единственный на весь (живой, foreground-движок) экземпляр
 /// flutter_local_notifications и единственная точка его initialize().
 ///
@@ -38,10 +43,35 @@ Future<void> ensureLocalNotificationsInitialized() async {
   _initialized = true;
   await localNotifications.initialize(
     const InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+      android: AndroidInitializationSettings('@drawable/ic_notification'),
     ),
     onDidReceiveNotificationResponse: _handleResponse,
     onDidReceiveBackgroundNotificationResponse:
         onBackgroundNotificationResponse,
   );
+}
+
+/// Локальное уведомление о новом сообщении, пришедшем по WebSocket, пока
+/// приложение свёрнуто (процесс жив). Без содержимого — только сигнал
+/// «загляни». В foreground не вызывается (см. message_router.dart).
+/// Тот же id (0) и канал, что и у пуша при закрытом приложении
+/// (push_service.pushBackgroundHandler) — не плодим дубли.
+Future<void> showBackgroundMessageNotification() async {
+  try {
+    await ensureLocalNotificationsInitialized();
+    await localNotifications.show(
+      0,
+      'Oshinobu',
+      tr('push.newMessageBody'),
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          messagesChannelId,
+          tr('push.messagesChannelName'),
+          channelDescription: tr('push.messagesChannelDescription'),
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
+      ),
+    );
+  } catch (_) {}
 }

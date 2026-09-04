@@ -7,6 +7,7 @@ import '../api/api_client.dart';
 import '../crypto/media_cipher.dart';
 import '../crypto/streaming_file_cipher.dart';
 import '../l10n/app_strings.dart';
+import 'debug_log.dart';
 import '../models/picked_media.dart';
 import '../storage/chat_store.dart';
 import '../storage/chunked_upload_session_store.dart';
@@ -251,6 +252,11 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         } finally {
           await raf.close();
         }
+        void partProgress(double partPercent) {
+          inFlight[pn] = (partPercent / 100 * len).round();
+          reportProgress();
+        }
+
         await _retryChunkedStep(
           () async {
             inFlight[pn] = 0;
@@ -260,14 +266,16 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
                 chunk,
                 contentLength: chunk.length,
                 cancelToken: cancelToken,
-                onProgress: (partPercent) {
-                  inFlight[pn] = (partPercent / 100 * len).round();
-                  reportProgress();
-                },
+                onProgress: partProgress,
               );
             } catch (e) {
+              if (cancelToken.isCancelled) rethrow;
               inFlight.remove(pn);
-              // Истёкший / битый URL — перезапросить свежий к след. попытке.
+              // presigned не прошёл (истёкший URL / Токио / туннель).
+              // Fallback: заливаем ЭТУ часть через московский сервер
+              // (старый relay-эндпоинт) — MinIO не различает, как часть
+              // долетела. Заодно перезапрашиваем свежий presigned-URL на
+              // случай следующего повтора.
               try {
                 final fresh = await apiClient.presignMediaPartUrls(
                   token,
@@ -277,7 +285,16 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
                 );
                 if (fresh[pn] != null) partUrls[pn] = fresh[pn]!;
               } catch (_) {}
-              rethrow;
+              DebugLog.log('media_upload: part $pn presigned FAILED ($e) — relay fallback');
+              await apiClient.uploadChunkedPart(
+                token,
+                sessionMediaId,
+                sessionUploadId,
+                pn,
+                chunk,
+                cancelToken: cancelToken,
+                onProgress: partProgress,
+              );
             }
           },
           cancelToken: cancelToken,
@@ -353,25 +370,38 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         // VPS в Токио → FRP до NAS), мимо московского сервера. Строку в
         // media_files сервер создаёт на /finalize — после проверки, что
         // объект нужного размера реально долетел.
-        final presigned = await apiClient.presignMediaPut(token);
-        await apiClient.putToPresignedUrl(
-          presigned.url,
-          encTempFile,
-          contentLength: encrypted.ciphertext.length,
-          onProgress: (p) => onProgress?.call(p),
-          cancelToken: cancelToken,
-        );
-        await _retryChunkedStep(
-          () => apiClient.finalizeMediaUpload(
+        try {
+          final presigned = await apiClient.presignMediaPut(token);
+          await apiClient.putToPresignedUrl(
+            presigned.url,
+            encTempFile,
+            contentLength: encrypted.ciphertext.length,
+            onProgress: (p) => onProgress?.call(p),
+            cancelToken: cancelToken,
+          );
+          await apiClient.finalizeMediaUpload(
             token,
             presigned.mediaId,
             peerAccountIdForUpload,
             encrypted.ciphertext.length,
             fileName,
-          ),
-          cancelToken: cancelToken,
-        );
-        mediaId = presigned.mediaId;
+          );
+          mediaId = presigned.mediaId;
+        } catch (e) {
+          if (cancelToken.isCancelled) rethrow;
+          // presigned не сработал (Токио/туннель недоступны) — грузим весь
+          // файл через московский сервер (старый relay-эндпоинт).
+          DebugLog.log(
+            'media_upload: presigned non-chunked FAILED ($e) — relay fallback',
+          );
+          mediaId = await apiClient.uploadEncryptedMediaFileWithProgress(
+            token,
+            encTempFile.path,
+            peerAccountIdForUpload,
+            onProgress: (p) => onProgress?.call(p),
+            cancelToken: cancelToken,
+          );
+        }
       } finally {
         try {
           await encTempFile.delete();
