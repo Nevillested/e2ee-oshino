@@ -197,7 +197,7 @@ class StreamingFileCipher {
           output: outputFile,
         );
       } catch (e) {
-        DebugLog.log('NativeFileCipher encrypt failed ($e) — Dart-isolate fallback');
+        DebugLog.error('NativeFileCipher encrypt failed ($e) — Dart-isolate fallback');
       }
     }
     final keyB64 = await compute(encryptFileIsolateEntry, {
@@ -222,7 +222,7 @@ class StreamingFileCipher {
         );
         return;
       } catch (e) {
-        DebugLog.log('NativeFileCipher decrypt failed ($e) — Dart-isolate fallback');
+        DebugLog.error('NativeFileCipher decrypt failed ($e) — Dart-isolate fallback');
       }
     }
     await compute(decryptFileIsolateEntry, {

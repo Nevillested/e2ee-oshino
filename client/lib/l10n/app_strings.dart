@@ -384,11 +384,6 @@ class AppStrings {
       AppLocale.ru: 'Не удалось отправить жалобу',
       AppLocale.en: 'Failed to send the report',
     },
-    'error.feedbackFailed': {
-      AppLocale.ru: 'Не удалось отправить отзыв',
-      AppLocale.en: 'Failed to send feedback',
-    },
-
     'encryption.info': {
       AppLocale.ru:
           'Переписка защищена сквозным шифрованием: ключи создаются '
@@ -1175,39 +1170,6 @@ class AppStrings {
       AppLocale.ru: 'Политика конфиденциальности',
       AppLocale.en: 'Privacy Policy',
     },
-    'about.feedback': {
-      AppLocale.ru: 'Обратная связь',
-      AppLocale.en: 'Feedback',
-    },
-    'about.feedbackHint': {
-      AppLocale.ru: 'Расскажите, что понравилось или что стоит улучшить',
-      AppLocale.en: "Tell us what you liked or what we should improve",
-    },
-    'about.feedbackEmpty': {
-      AppLocale.ru: 'Напишите хотя бы пару слов',
-      AppLocale.en: 'Please write at least a few words',
-    },
-    'about.feedbackSent': {
-      AppLocale.ru: 'Спасибо! Отзыв отправлен',
-      AppLocale.en: 'Thanks! Feedback sent',
-    },
-    'about.shareLog': {
-      AppLocale.ru: 'Поделиться логом',
-      AppLocale.en: 'Share debug log',
-    },
-    'about.logEmpty': {
-      AppLocale.ru: 'Лог пока пуст',
-      AppLocale.en: 'Log is empty',
-    },
-    'about.clearLog': {
-      AppLocale.ru: 'Очистить лог',
-      AppLocale.en: 'Clear debug log',
-    },
-    'about.logCleared': {
-      AppLocale.ru: 'Лог очищен',
-      AppLocale.en: 'Log cleared',
-    },
-
     'account.logoutTitle': {
       AppLocale.ru: 'Выйти из аккаунта?',
       AppLocale.en: 'Log out?',

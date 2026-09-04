@@ -57,7 +57,7 @@ Future<X3dhOutgoing> establishOutgoingRoot({
     ),
   );
   if (!signedPrekeyValid || !identityDhValid) {
-    DebugLog.log(
+    DebugLog.error(
       'X3DH establishOutgoingRoot FAILED: signature verification rejected — possible tampering/impersonation',
     );
     throw Exception(
@@ -166,7 +166,7 @@ Future<List<int>?> establishIncomingSessionRaw(
   final myIdentityDhKeyPair = myIdentityDhResult.keyPair;
   final mySignedPrekeyPair = await KeyStore.getStoredSignedPrekeyPair();
   if (mySignedPrekeyPair == null) {
-    DebugLog.log(
+    DebugLog.error(
       'X3DH establishIncomingSessionRaw FAILED: no local signed prekey stored — '
       'cannot accept X3DH init (device setup incomplete or wiped)',
     );

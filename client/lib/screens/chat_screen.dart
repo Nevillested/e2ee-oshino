@@ -2145,7 +2145,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       });
       return true;
     } catch (e, stackTrace) {
-      DebugLog.log(
+      DebugLog.error(
         'ChatScreen control message send FAILED type=${inner.type} '
         'to=$_currentPeerDeviceId error=$e @ '
         '${stackTrace.toString().split('\n').take(2).join(' | ')}',
@@ -2246,7 +2246,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         );
       });
     } catch (e, stackTrace) {
-      DebugLog.log(
+      DebugLog.error(
         'ChatScreen send FAILED (text messageId=$messageId) '
         'to=$_currentPeerDeviceId error=$e @ '
         '${stackTrace.toString().split('\n').take(2).join(' | ')}',

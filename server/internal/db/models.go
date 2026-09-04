@@ -72,6 +72,7 @@ type Feedback struct {
 	Message      string
 	CreatedAt    pgtype.Timestamptz
 	ReviewedAt   pgtype.Timestamptz
+	Kind         string
 }
 
 type InviteCode struct {

@@ -60,6 +60,7 @@ class _CallScreenState extends State<CallScreen> {
         ? null
         : AvatarCache.get(widget.peerAccountId);
     _call.setCallScreenVisible(true);
+    _call.setCallUiOnTop(true);
     _init();
     _statusSub = _call.statusUpdates.listen((_) {
       if (mounted) setState(() {});
@@ -176,6 +177,7 @@ class _CallScreenState extends State<CallScreen> {
     // экран прямо сейчас: звонок может продолжаться и после ухода отсюда
     // (в т.ч. в системном PiP).
     _call.setCallScreenVisible(false);
+    _call.setCallUiOnTop(false);
     _durationTicker?.cancel();
     _statusSub?.cancel();
     _audioRouteSub?.cancel();

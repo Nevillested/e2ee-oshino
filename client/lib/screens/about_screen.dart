@@ -1,14 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../api/api_client.dart';
 import '../l10n/app_locale.dart';
 import '../l10n/app_strings.dart';
-import '../services/debug_log.dart';
-import '../session.dart';
 import '../theme/app_theme.dart';
-import '../widgets/app_loading_indicator.dart';
 import '../widgets/frosted_dialog.dart';
 import '../widgets/theme_reactive.dart';
 
@@ -37,6 +32,13 @@ Future<void> showAboutWindow(BuildContext context) {
   );
 }
 
+// Раньше здесь были ещё три пункта: "Отзыв" (ручной текст), "Поделиться
+// логом" (системный диалог "Отправить через...") и "Очистить лог" — все три
+// требовали, чтобы пользователь сам вспомнил зайти сюда и что-то сделать.
+// Убраны и объединены в одно: DebugLog.error() + CrashReporter теперь сами,
+// без единого диалога, шлют диагностику на сервер при настоящей ошибке (см.
+// CrashReporter — троттлинг, только метаданные, никогда содержимое
+// сообщений) и сами же чистят лог после успешной отправки.
 class AboutScreen extends StatefulWidget {
   const AboutScreen({super.key});
 
@@ -68,33 +70,6 @@ class _AboutScreenState extends State<AboutScreen> {
       // Нет приложения, способного открыть ссылку, или запрет от ОС —
       // молча игнорируем, как и _openLink в chat_screen.dart.
     }
-  }
-
-  /// Лог пишется постоянно (см. DebugLog) — эта кнопка просто отдаёт файл
-  /// через системный диалог "Поделиться", чтобы можно было переслать его
-  /// куда угодно (себе на почту, в другой чат) сразу же, как баг
-  /// воспроизвёлся, не дожидаясь доступа к компьютеру с adb.
-  Future<void> _shareDebugLog() async {
-    final file = await DebugLog.getFile();
-    if (!await file.exists()) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(tr('about.logEmpty'))));
-      return;
-    }
-    await Share.shareXFiles([XFile(file.path)], text: 'Oshinobu debug log');
-  }
-
-  /// "Очистить лог" (ТЗ пользователя — "если разросся, пользователь мог
-  /// его сам сбросить") — без подтверждения: сам лог диагностический, его
-  /// потеря ничего не ломает и никак не влияет на переписку.
-  Future<void> _clearDebugLog() async {
-    await DebugLog.clear();
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(tr('about.logCleared'))));
   }
 
   @override
@@ -132,116 +107,6 @@ class _AboutScreenState extends State<AboutScreen> {
             style: TextStyle(color: AppColors.textPrimary),
           ),
           onTap: () => _openUrl(_privacyUrl),
-        ),
-        ListTile(
-          leading: Icon(Icons.feedback_outlined, color: AppColors.textMuted),
-          title: Text(
-            tr('about.feedback'),
-            style: TextStyle(color: AppColors.textPrimary),
-          ),
-          onTap: () => showDialog<void>(
-            context: context,
-            builder: (context) => const _FeedbackDialog(),
-          ),
-        ),
-        ListTile(
-          leading: Icon(Icons.bug_report_outlined, color: AppColors.textMuted),
-          title: Text(
-            tr('about.shareLog'),
-            style: TextStyle(color: AppColors.textPrimary),
-          ),
-          onTap: _shareDebugLog,
-        ),
-        ListTile(
-          leading: Icon(
-            Icons.delete_sweep_outlined,
-            color: AppColors.textMuted,
-          ),
-          title: Text(
-            tr('about.clearLog'),
-            style: TextStyle(color: AppColors.textPrimary),
-          ),
-          onTap: _clearDebugLog,
-        ),
-      ],
-    );
-  }
-}
-
-class _FeedbackDialog extends StatefulWidget {
-  const _FeedbackDialog();
-
-  @override
-  State<_FeedbackDialog> createState() => _FeedbackDialogState();
-}
-
-class _FeedbackDialogState extends State<_FeedbackDialog> {
-  final _controller = TextEditingController();
-  bool _isLoading = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  Future<void> _handleSend() async {
-    final text = _controller.text.trim();
-    if (text.isEmpty) {
-      setState(() => _error = tr('about.feedbackEmpty'));
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-    final token = await Session.getToken();
-    if (token == null) return;
-    try {
-      await ApiClient().sendFeedback(token, text);
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(tr('about.feedbackSent'))));
-    } on ApiException catch (e) {
-      setState(() => _error = e.message);
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FrostedDialog(
-      title: Text(
-        tr('about.feedback'),
-        style: TextStyle(color: AppColors.textPrimary),
-      ),
-      content: TextField(
-        controller: _controller,
-        maxLines: 5,
-        style: TextStyle(color: AppColors.textPrimary),
-        decoration: InputDecoration(
-          hintText: tr('about.feedbackHint'),
-          errorText: _error,
-        ),
-        onChanged: (_) {
-          if (_error != null) setState(() => _error = null);
-        },
-      ),
-      actions: [
-        TextButton(
-          onPressed: _isLoading ? null : () => Navigator.pop(context),
-          child: Text(tr('common.cancel')),
-        ),
-        TextButton(
-          onPressed: _isLoading ? null : _handleSend,
-          child: _isLoading
-              ? const AppLoadingIndicator(size: 18)
-              : Text(tr('common.send')),
         ),
       ],
     );

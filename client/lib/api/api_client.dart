@@ -1506,8 +1506,15 @@ class ApiClient {
     }
   }
 
-  /// POST /feedback — произвольный отзыв из экрана "О приложении".
-  Future<void> sendFeedback(String token, String message) async {
+  /// POST /feedback — раньше принимал произвольный текст, набранный
+  /// пользователем в "О приложении" (кнопка убрана, см. CrashReporter),
+  /// теперь — автоматический диагностический лог (только метаданные,
+  /// НИКОГДА содержимое сообщений, см. class-comment DebugLog), с
+  /// kind='auto_crash', чтобы на сервере отличать от исторических ручных
+  /// отзывов. Не бросаем при неудаче наверх пользователю (нет экрана,
+  /// который бы это показывал) — вызывающий (CrashReporter) сам решает,
+  /// что делать с исключением.
+  Future<void> reportCrashLog(String token, String logText) async {
     final response = await http
         .post(
           Uri.parse('${ApiConfig.baseUrl}/feedback'),
@@ -1515,13 +1522,11 @@ class ApiClient {
             'Authorization': 'Bearer $token',
             'Content-Type': 'application/json',
           },
-          body: jsonEncode({'message': message}),
+          body: jsonEncode({'message': logText, 'kind': 'auto_crash'}),
         )
-        .timeout(const Duration(seconds: 8));
+        .timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
-      throw ApiException(
-        '${tr('error.feedbackFailed')} (${response.statusCode})',
-      );
+      throw ApiException('crash report failed (${response.statusCode})');
     }
   }
 }

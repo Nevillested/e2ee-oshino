@@ -80,7 +80,7 @@ func runListFeedback(ctx context.Context, queries *db.Queries, reader *bufio.Rea
 		if row.ReviewedAt.Valid {
 			status = "рассмотрен " + row.ReviewedAt.Time.Format("2006-01-02 15:04")
 		}
-		fmt.Printf("%d) [%s] %s — %s\n   %s\n", i+1, created, row.AccountLogin, status, row.Message)
+		fmt.Printf("%d) [%s] (%s) %s — %s\n   %s\n", i+1, created, row.Kind, row.AccountLogin, status, row.Message)
 	}
 
 	fmt.Print("\nПометить как рассмотренный — введи номер (Enter, чтобы пропустить): ")

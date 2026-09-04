@@ -38,6 +38,29 @@ class DebugLog {
     _writeChain = _writeChain.then((_) => _append(message)).catchError((_) {});
   }
 
+  // Вызывается только из мест, где авто-отправка лога разработчику реально
+  // оправдана (см. CrashReporter) — НЕ из каждого DebugLog.log(...) подряд.
+  // Разделение сознательное: обычный log() — просто breadcrumb для истории,
+  // error() — сигнал "это стоит того, чтобы прислать стек прямо сейчас".
+  // Явные два метода вместо угадывания по ключевым словам в тексте: новый
+  // happy-path лог, который кто-то добавит в будущем, никогда case-по-
+  // ошибке случайно не триггернёт отправку, а настоящая ошибка не
+  // потеряется из-за того, что забыли вписать нужное слово в текст.
+  static void error(String message) {
+    log(message);
+    _onError?.call();
+  }
+
+  static void Function()? _onError;
+
+  /// Регистрирует, что вызывать при DebugLog.error() — см. CrashReporter.init().
+  /// DebugLog намеренно ничего не знает про сеть/сессию/API сам (низкоуровневая
+  /// утилита, используется в т.ч. из crypto/*, где такой зависимости бы не
+  /// место) — просто дёргает зарегистрированный колбэк.
+  static void setErrorHook(void Function() hook) {
+    _onError = hook;
+  }
+
   static Future<void> _append(String message) async {
     try {
       final file = await _getFile();

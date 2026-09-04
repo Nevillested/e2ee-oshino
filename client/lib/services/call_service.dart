@@ -198,6 +198,22 @@ class CallService {
     _callScreenVisibilityController.add(visible);
   }
 
+  /// true, пока на сцене — IncomingCallScreen ИЛИ CallScreen (в отличие от
+  /// isCallScreenVisible выше — только про CallScreen, для PiP/уведомлений).
+  /// Единственный потребитель — CallLockShield (widgets/call_lock_shield.dart):
+  /// это единственные два экрана, которым разрешено быть видимыми, пока
+  /// телефон физически заблокирован, а MainActivity показывает Activity
+  /// поверх локскрина ради звонка (см. подробный комментарий в
+  /// CallLockShield про то, почему этого флага раньше не хватало).
+  bool isCallUiOnTop = false;
+  final _callUiOnTopController = StreamController<bool>.broadcast();
+  Stream<bool> get callUiOnTopUpdates => _callUiOnTopController.stream;
+
+  void setCallUiOnTop(bool visible) {
+    isCallUiOnTop = visible;
+    _callUiOnTopController.add(visible);
+  }
+
   /// true, пока Activity реально находится в настоящем системном
   /// Picture-in-Picture (см. MainActivity.kt/PipService) — плавающее окошко
   /// видно поверх ВСЕЙ системы (домашний экран, другие приложения), а не
@@ -784,7 +800,7 @@ class CallService {
       );
       return {...encrypted, ...headerFields};
     } catch (e) {
-      DebugLog.log('CallService encrypt-FAILED to=$peerDeviceId error=$e');
+      DebugLog.error('CallService encrypt-FAILED to=$peerDeviceId error=$e');
       return null;
     }
   }
@@ -833,7 +849,7 @@ class CallService {
       );
       return null;
     } catch (e) {
-      DebugLog.log('CallService decrypt-FAILED from=$senderDeviceId error=$e');
+      DebugLog.error('CallService decrypt-FAILED from=$senderDeviceId error=$e');
       unawaited(MessageRouter.reportSignalDecryptFailure(senderDeviceId));
       return null;
     }
@@ -921,7 +937,7 @@ class CallService {
       await _peerConnection!.setLocalDescription(offer);
       await _send('call_offer', {'sdp': offer.sdp, 'renegotiation': true});
     } catch (e, st) {
-      DebugLog.log(
+      DebugLog.error(
         'CallService _renegotiate() FAILED (был signalingState=$signalingBefore): $e',
       );
       debugPrint('CallService _renegotiate() FAILED: $e\n$st');
@@ -1046,7 +1062,7 @@ class CallService {
       // расходится. До соединения _durationText() показывает пусто.
       _setState(CallState.connected);
     } catch (e, st) {
-      DebugLog.log('CallService acceptCall() FAILED error=$e');
+      DebugLog.error('CallService acceptCall() FAILED error=$e');
       debugPrint('CallService acceptCall() FAILED: $e\n$st');
       rethrow;
     } finally {
@@ -1515,7 +1531,7 @@ class CallService {
             await _peerConnection!.setLocalDescription(answer);
             await _send('call_answer', {'sdp': answer.sdp});
           } catch (e, st) {
-            DebugLog.log(
+            DebugLog.error(
               'CallService renegotiation FAILED (был signalingState=$signalingBefore): $e',
             );
             debugPrint('CallService renegotiation FAILED: $e\n$st');

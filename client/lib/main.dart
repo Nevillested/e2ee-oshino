@@ -2,6 +2,7 @@ import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/material.dart';
 import 'navigator_key.dart';
 import 'screens/splash_screen.dart';
+import 'services/crash_reporter.dart';
 import 'services/debug_log.dart';
 import 'services/keyboard_insets.dart';
 import 'storage/partial_download_store.dart';
@@ -10,6 +11,7 @@ import 'storage/text_scale_store.dart';
 import 'storage/theme_store.dart';
 import 'theme/app_theme.dart';
 import 'widgets/app_lock_gate.dart';
+import 'widgets/call_lock_shield.dart';
 import 'widgets/system_pip_video_view.dart';
 
 void main() {
@@ -18,14 +20,16 @@ void main() {
   // Единая точка, куда стекаются ВСЕ невыловленные ошибки — и синхронные
   // ошибки фреймворка (FlutterError.onError), и асинхронные ошибки вне
   // зоны (PlatformDispatcher.onError). Пишем их в debug_log.txt с первыми
-  // кадрами стека и причиной, чтобы по присланному пользователем файлу
-  // можно было понять, что и почему упало (ТЗ пользователя). НИКОГДА не
-  // логируем содержимое сообщений — сюда попадает только текст ошибки и
+  // кадрами стека и причиной — DebugLog.error() (а не .log()) вдобавок
+  // будит CrashReporter, который тихо, без единого диалога, шлёт лог на
+  // сервер (см. её собственный comment про троттлинг/приватность). НИКОГДА
+  // не логируем содержимое сообщений — сюда попадает только текст ошибки и
   // трасса, но осторожность не лишняя.
+  CrashReporter.init();
   final priorOnError = FlutterError.onError;
   FlutterError.onError = (details) {
     final frames = details.stack?.toString().split('\n').take(4).join(' | ');
-    DebugLog.log(
+    DebugLog.error(
       'FlutterError: ${details.exceptionAsString()}'
       '${details.library != null ? ' [${details.library}]' : ''}'
       '${frames != null ? ' @ $frames' : ''}',
@@ -33,11 +37,12 @@ void main() {
     priorOnError?.call(details);
   };
   PlatformDispatcher.instance.onError = (error, stack) {
-    DebugLog.log(
+    DebugLog.error(
       'Uncaught: $error @ ${stack.toString().split('\n').take(4).join(' | ')}',
     );
     // Не роняем всё приложение из-за одиночной невыловленной асинхронной
-    // ошибки — она записана, этого достаточно для разбора.
+    // ошибки — она записана (и уходит в CrashReporter), этого достаточно
+    // для разбора.
     return true;
   };
 
@@ -101,12 +106,19 @@ class _AppState extends State<_App> {
               data: MediaQuery.of(context).copyWith(
                 textScaler: TextScaler.linear(TextScaleStore.notifier.value),
               ),
-              child: AppLockGate(
-                child: Stack(
-                  children: [
-                    if (child != null) child,
-                    const SystemPipVideoView(),
-                  ],
+              // CallLockShield — САМЫЙ внешний слой, поверх даже AppLockGate:
+              // должен уметь скрыть вообще всё приложение (включая экран
+              // ввода PIN) на заблокированном по звонку телефоне, см. его
+              // собственный подробный комментарий про то, какую дыру он
+              // закрывает.
+              child: CallLockShield(
+                child: AppLockGate(
+                  child: Stack(
+                    children: [
+                      if (child != null) child,
+                      const SystemPipVideoView(),
+                    ],
+                  ),
                 ),
               ),
             );

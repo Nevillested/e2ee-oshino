@@ -370,7 +370,7 @@ class PendingSendRetrier {
         }
       }
       await PendingSendStore.remove(id);
-      DebugLog.log('PendingSendRetrier id=$id permanently abandoned: $e');
+      DebugLog.error('PendingSendRetrier id=$id permanently abandoned: $e');
       return RetryOutcome.permanentlyFailed;
     } catch (e) {
       if (peerLogin != null) {
@@ -385,7 +385,7 @@ class PendingSendRetrier {
       job['state'] = 'failed';
       await PendingSendStore.add(Map<String, dynamic>.from(job));
       _snapshotCtl.add(null);
-      DebugLog.log('PendingSendRetrier id=$id send-FAILED error=$e — marked failed');
+      DebugLog.error('PendingSendRetrier id=$id send-FAILED error=$e — marked failed');
       return RetryOutcome.willRetryLater;
     } finally {
       _inFlight.remove(id);
@@ -444,7 +444,7 @@ class PendingSendRetrier {
       // чистку кэша переживают — дозаливаем из них, оригинал не нужен.
       final resumable = await ChunkedUploadSessionStore.get(id) != null;
       if (!resumable) {
-        DebugLog.log(
+        DebugLog.error(
           'PendingSendRetrier id=$id source gone and not resumable — permanent',
         );
         throw _PermanentRetryFailure('local file missing');
@@ -633,7 +633,7 @@ class PendingSendRetrier {
         // дозаливаем из него. Иначе вся группа окончательно провалена.
         final resumable = await ChunkedUploadSessionStore.get(mid) != null;
         if (!resumable) {
-          DebugLog.log(
+          DebugLog.error(
             'PendingSendRetrier id=$id media_group file gone & not resumable — '
             'giving up on the whole group permanently (${file.path})',
           );

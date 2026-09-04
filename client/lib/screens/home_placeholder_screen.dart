@@ -669,28 +669,20 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
     // открывает сам, напрямую через глобальный rootNavigatorKey — этот
     // листенер эмитится только для звонков, требующих ручного выбора
     // "принять/отклонить".
-    CallService.instance.incomingCalls.listen((info) async {
-      final currentToken = await Session.getToken();
-      String peerLogin = tr('common.unknown');
-      String peerAccountId = '';
-      if (currentToken != null) {
-        final owner = await ApiClient().getDeviceOwnerInfo(
-          currentToken,
-          info.peerDeviceId,
-        );
-        if (owner != null) {
-          peerLogin = owner.login;
-          peerAccountId = owner.accountId;
-        }
-      }
+    // Пушим экран входящего звонка СИНХРОННО, ещё до похода в сеть за именем
+    // звонящего (IncomingCallScreen резолвит его сам, см. там). На
+    // заблокированном устройстве (см. MainActivity.applyLockScreenFlagsIfNeeded)
+    // это критично: пока этот экран не появился, реально виден и кликабелен
+    // именно этот экран — обычный список чатов ПОД ним, — и любая задержка
+    // (в т.ч. сетевой getDeviceOwnerInfo) держала бы его на виду без единого
+    // введённого пароля.
+    CallService.instance.incomingCalls.listen((info) {
       if (!mounted) return;
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => IncomingCallScreen(
-            peerLogin: peerLogin,
-            peerAccountId: peerAccountId,
-          ),
+          builder: (context) =>
+              IncomingCallScreen(peerDeviceId: info.peerDeviceId),
         ),
       );
     });

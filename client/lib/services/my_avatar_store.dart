@@ -61,7 +61,7 @@ class MyAvatarStore {
         notifier.value = bytes;
       }
     } catch (e) {
-      DebugLog.log('MyAvatarStore.init: диск-файл есть, но НЕ ЧИТАЕТСЯ: $e');
+      DebugLog.error('MyAvatarStore.init: диск-файл есть, но НЕ ЧИТАЕТСЯ: $e');
     }
 
     // getMyAvatar теперь бросает исключение на сетевую ошибку (см. её
@@ -95,7 +95,7 @@ class MyAvatarStore {
     } catch (e) {
       // Диск недоступен/переполнен — не критично, просто в следующий раз
       // холодный старт снова пойдёт в сеть без мгновенного превью.
-      DebugLog.log('MyAvatarStore._writeToDisk: ОШИБКА записи: $e');
+      DebugLog.error('MyAvatarStore._writeToDisk: ОШИБКА записи: $e');
     }
   }
 

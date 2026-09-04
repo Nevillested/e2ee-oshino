@@ -435,7 +435,7 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       _watchForStall(newController);
       _startDiagTicker(newController);
     } catch (e) {
-      DebugLog.log('VideoNote _startFresh() FAILED error=$e');
+      DebugLog.error('VideoNote _startFresh() FAILED error=$e');
       if (mounted) setState(() => _loading = false);
     }
   }

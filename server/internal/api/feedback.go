@@ -8,8 +8,19 @@ import (
 	"strings"
 )
 
+// Раньше сюда попадал только текст, набранный пользователем вручную в
+// "О приложении" (kind по умолчанию "user" — см. миграцию 021). Теперь
+// основной источник — CrashReporter на клиенте: тихая автоматическая
+// отправка diagnostic-лога при настоящей ошибке, kind="auto_crash" (см.
+// client/lib/services/crash_reporter.dart). Ручная форма отзыва убрана из
+// приложения полностью, но сам эндпоинт/таблица переиспользованы как есть —
+// разбираться со старыми и новыми записями удобнее в одном месте (см.
+// server/cmd/admin/reports_feedback.go).
+const maxFeedbackBodyBytes = 2 * 1024 * 1024
+
 type FeedbackRequest struct {
 	Message string `json:"message"`
+	Kind    string `json:"kind"`
 }
 
 func NewFeedbackHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
@@ -20,6 +31,7 @@ func NewFeedbackHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, maxFeedbackBodyBytes)
 		var req FeedbackRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Ошибка декодирования JSON", http.StatusBadRequest)
@@ -32,6 +44,11 @@ func NewFeedbackHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 			return
 		}
 
+		kind := strings.TrimSpace(req.Kind)
+		if kind == "" {
+			kind = "user"
+		}
+
 		account, err := queries.GetAccountByID(r.Context(), session.AccountID)
 		if err != nil {
 			http.Error(w, "Ошибка получения аккаунта", http.StatusInternalServerError)
@@ -42,6 +59,7 @@ func NewFeedbackHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 			AccountID:    session.AccountID,
 			AccountLogin: account.Login,
 			Message:      message,
+			Kind:         kind,
 		}
 		if err := queries.CreateFeedback(r.Context(), params); err != nil {
 			log.Printf("feedback: ошибка сохранения: %v", err)
@@ -49,7 +67,7 @@ func NewFeedbackHandler(queries *db.Queries) func(http.ResponseWriter, *http.Req
 			return
 		}
 
-		log.Printf("feedback: получен отзыв от %s", account.Login)
+		log.Printf("feedback: получено (kind=%s) от %s", kind, account.Login)
 		w.WriteHeader(http.StatusOK)
 	}
 }

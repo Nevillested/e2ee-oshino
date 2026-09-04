@@ -190,7 +190,7 @@ class MessageRouter {
         // свежую сессию, а мы этого не заметили, потому что у нас
         // формально "было" старое состояние), пробуем принять её как
         // новую и повторить один раз, прежде чем считать это неудачей.
-        DebugLog.log(
+        DebugLog.error(
           'Router decrypt-FAILED from=$senderDeviceId error=$e '
           'isFreshSession=$isFreshSession '
           'envelope.message_number=${envelope['message_number']} '
@@ -201,7 +201,7 @@ class MessageRouter {
             ? null
             : await _establishFreshIncoming(senderDeviceId, envelope);
         if (fresh == null) {
-          DebugLog.log(
+          DebugLog.error(
             'Router decrypt-FAILED from=$senderDeviceId — no fallback available '
             '(envelope carries no X3DH init fields, or session was already fresh)',
           );
@@ -274,7 +274,7 @@ class MessageRouter {
           // Теперь — через обычную обработку decrypt-failure: после порога
           // она подтвердит доставку и пошлёт session_reset, что вылечит и
           // саму сессию (следующий хендшейк пойдёт с совпадающим числом DH).
-          DebugLog.log(
+          DebugLog.error(
             'Router: fresh X3DH re-decrypt ALSO failed ($e2) from=$senderDeviceId '
             '— routing to decrypt-failure handling to break the redelivery loop',
           );
@@ -558,7 +558,7 @@ class MessageRouter {
     } catch (e, stackTrace) {
       debugPrint('MessageRouter: ошибка обработки сообщения: $e\n$stackTrace');
       final firstFrame = stackTrace.toString().split('\n').take(3).join(' | ');
-      DebugLog.log(
+      DebugLog.error(
         'Router FAILED from=$senderDeviceId deliveryId=${deliveryId ?? '-'} '
         'error=$e @ $firstFrame',
       );
@@ -606,7 +606,7 @@ class MessageRouter {
     final previous = await PeerIdentityStore.get(senderDeviceId);
     final previousIdentityDh = previous?['identity_dh'];
     if (previousIdentityDh != null && previousIdentityDh != newIdentityDh) {
-      DebugLog.log(
+      DebugLog.error(
         'Router SECURITY-WARNING identity_dh_pubkey CHANGED for from=$senderDeviceId '
         '— either a legitimate reinstall or a possible key substitution; '
         'session established anyway, verify via safety-number screen if unsure',
@@ -654,7 +654,7 @@ class MessageRouter {
     // заново при каждом переподключении бесконечно.
     if (deliveryId != null) {
       WebSocketService.instance.ackDelivery(deliveryId);
-      DebugLog.log(
+      DebugLog.error(
         'Router giving up on undecryptable delivery=$deliveryId from=$senderDeviceId',
       );
     }

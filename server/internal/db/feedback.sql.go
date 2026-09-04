@@ -12,23 +12,29 @@ import (
 )
 
 const createFeedback = `-- name: CreateFeedback :exec
-INSERT INTO feedback (account_id, account_login, message)
-VALUES ($1, $2, $3)
+INSERT INTO feedback (account_id, account_login, message, kind)
+VALUES ($1, $2, $3, $4)
 `
 
 type CreateFeedbackParams struct {
 	AccountID    pgtype.UUID
 	AccountLogin string
 	Message      string
+	Kind         string
 }
 
 func (q *Queries) CreateFeedback(ctx context.Context, arg CreateFeedbackParams) error {
-	_, err := q.db.Exec(ctx, createFeedback, arg.AccountID, arg.AccountLogin, arg.Message)
+	_, err := q.db.Exec(ctx, createFeedback,
+		arg.AccountID,
+		arg.AccountLogin,
+		arg.Message,
+		arg.Kind,
+	)
 	return err
 }
 
 const listFeedback = `-- name: ListFeedback :many
-SELECT id, account_id, account_login, message, created_at, reviewed_at FROM feedback ORDER BY created_at DESC
+SELECT id, account_id, account_login, message, created_at, reviewed_at, kind FROM feedback ORDER BY created_at DESC
 `
 
 func (q *Queries) ListFeedback(ctx context.Context) ([]Feedback, error) {
@@ -47,6 +53,7 @@ func (q *Queries) ListFeedback(ctx context.Context) ([]Feedback, error) {
 			&i.Message,
 			&i.CreatedAt,
 			&i.ReviewedAt,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}

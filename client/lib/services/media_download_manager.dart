@@ -417,7 +417,7 @@ class MediaDownloadManager {
     } catch (e) {
       if (_forgotten.contains(spec.mediaId)) return _Outcome.forgotten;
       if (_userCancelled.contains(spec.mediaId)) return _Outcome.cancelled;
-      DebugLog.log('MediaDownloadManager id=${spec.mediaId} failed: $e');
+      DebugLog.error('MediaDownloadManager id=${spec.mediaId} failed: $e');
       return _Outcome.failed;
     }
   }
