@@ -42,11 +42,6 @@ Future<X3dhOutgoing> establishOutgoingRoot({
   );
   final remoteOneTimePrekeyBase64 = bundle['one_time_prekey'] as String?;
 
-  DebugLog.log(
-    'X3DH establishOutgoingRoot: prekey bundle received, '
-    'hasOneTimePrekey=${remoteOneTimePrekeyBase64 != null}',
-  );
-
   final signedPrekeyValid = await _ed25519.verify(
     remoteSignedPrekeyBytes,
     signature: Signature(
@@ -60,10 +55,6 @@ Future<X3dhOutgoing> establishOutgoingRoot({
       remoteIdentityDhSignature,
       publicKey: remoteIdentityPubkey,
     ),
-  );
-  DebugLog.log(
-    'X3DH establishOutgoingRoot: signature check signedPrekeyValid=$signedPrekeyValid '
-    'identityDhValid=$identityDhValid',
   );
   if (!signedPrekeyValid || !identityDhValid) {
     DebugLog.log(
@@ -129,8 +120,7 @@ Future<X3dhOutgoing> establishOutgoingRoot({
   final rootKey = await _deriveRootKey(ikm);
   DebugLog.log(
     'X3DH establishOutgoingRoot OK: root key derived '
-    '(${remoteOneTimePrekeyBase64 != null ? "4" : "3"} DH steps, '
-    'ephemeralPubkey=${base64Encode(ephemeralPublicKey.bytes)})',
+    '(${remoteOneTimePrekeyBase64 != null ? "4" : "3"} DH steps)',
   );
 
   return X3dhOutgoing(
@@ -154,10 +144,8 @@ Future<List<int>?> establishIncomingSessionRaw(
   final senderIdentityDhBytes = header['sender_identity_dh_pubkey'] as String?;
   final senderEphemeralBytes = header['ephemeral_pubkey'] as String?;
   if (senderIdentityDhBytes == null || senderEphemeralBytes == null) {
-    DebugLog.log(
-      'X3DH establishIncomingSessionRaw: envelope carries no X3DH init fields '
-      '(sender_identity_dh_pubkey/ephemeral_pubkey missing) — not a session-init message',
-    );
+    // Не session-init сообщение (нет X3DH-полей) — это не ошибка сама по
+    // себе, вызывающая сторона решает, что делать (обычно уже был лог DROP).
     return null;
   }
 
@@ -184,10 +172,6 @@ Future<List<int>?> establishIncomingSessionRaw(
     );
     return null;
   }
-  DebugLog.log(
-    'X3DH establishIncomingSessionRaw: accepting init, '
-    'usedOneTimePrekey=${usedOneTimePrekeyBase64 != null}',
-  );
 
   final dh1 = await _x25519.sharedSecretKey(
     keyPair: mySignedPrekeyPair,

@@ -442,14 +442,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _awaitingKeyboardOpen = false;
   bool _hasText = false;
   double _lastReserved = 0;
-  double? _lastLoggedBottomInset;
-  // Диагностика жалобы "при опускании клавиатуры на миг видна пустая
-  // панель эмодзи, потом резко исчезает" (особенно после выхода из чата и
-  // повторного входа) — логируем состояние (keyboardVisible/_emojiMode/
-  // _awaitingKeyboardOpen/emojiReserved), но только когда оно РЕАЛЬНО
-  // меняется, а не на каждый build() — иначе лог захлебнётся (build()
-  // вызывается на каждый кадр анимации клавиатуры).
-  String? _lastLoggedEmojiKeyboardState;
   // См. _handleScroll и триггер в build() ниже: пока клавиатура/эмодзи-панель
   // открывается, viewport физически сжимается кадр за кадром, maxScrollExtent
   // растёт БЫСТРЕЕ, чем успевает докрутить компенсирующий _scrollToBottom —
@@ -1006,17 +998,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (type == 'presence') {
       final online = event['Online'] as bool? ?? false;
       final lastSeenMs = (event['LastSeenMs'] as num?)?.toInt() ?? 0;
-      // Диагностика жалобы "собеседник показан онлайн, хотя телефон не
-      // трогали" — на этом устройстве (наблюдателе) фиксируем каждое живое
-      // presence-событие от собеседника с временем получения; сопоставить
-      // с серверным логом notifyPresenceSubscribers/ws connect по времени
-      // и с "WS status -> connected" в debug_log САМОГО собеседника (если
-      // будет доступен) — так можно будет отличить настоящее подключение
-      // от ложного/дублирующего.
-      DebugLog.log(
-        'Presence event from=${event['FromDeviceId']} online=$online '
-        'lastSeenMs=$lastSeenMs (peerLogin=${widget.peerLogin})',
-      );
       if (!mounted) return;
       setState(() {
         _peerOnline = online;
@@ -1074,17 +1055,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   void _onFocusChange() {
-    // Диагностика "пустая панель эмодзи при закрытии клавиатуры" — этот
-    // колбэк дёргается НЕ на каждый кадр (в отличие от build()), а только
-    // на реальные события фокуса, поэтому лог тут не захлёбывается и даёт
-    // точную последовательность событий вокруг момента, когда что-то
-    // пошло не так.
-    DebugLog.log(
-      'Chat _onFocusChange hasFocus=${_textFocusNode.hasFocus} '
-      'emojiMode=$_emojiMode awaitingKeyboardOpen=$_awaitingKeyboardOpen '
-      'keyboardVisibleDebounced=$_keyboardVisibleDebounced '
-      'realInset=${mounted ? MediaQuery.of(context).viewInsets.bottom : 'n/a'}',
-    );
     // Резерв места (reserved в build()) сам вычисляется на лету из
     // keyboardVisible/_emojiMode на каждой перестройке — здесь нужно
     // только не дать эмодзи-панели остаться включённой, если фокус
@@ -1106,10 +1076,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // (просто перескочила на другое поле), rawKeyboardVisible на
     // следующем же кадре сама вернёт _keyboardVisibleDebounced в true.
     if (!_textFocusNode.hasFocus && _keyboardVisibleDebounced) {
-      DebugLog.log(
-        'Chat _onFocusChange: фокус потерян, немедленно keyboardVisibleDebounced=false '
-        '(было true, минуя _keyboardCloseDebounceDelay)',
-      );
       _keyboardCloseDebounceTimer?.cancel();
       _keyboardCloseDebounceTimer = null;
       setState(() => _keyboardVisibleDebounced = false);
@@ -2066,8 +2032,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (state != null) return state;
 
     DebugLog.log(
-      'ChatScreen establishing fresh X3DH outgoing session to=$_currentPeerDeviceId '
-      '(no local session found)',
+      'ChatScreen: fresh X3DH outgoing session to=$_currentPeerDeviceId (no local session)',
     );
     final token = await Session.getToken();
     final myDeviceId = await KeyStore.getStoredDeviceId();
@@ -2156,11 +2121,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _pendingInitHeader = null;
 
         final next = await state.nextSendingKey();
-        DebugLog.log(
-          'ChatScreen sending key (control msg type=${inner.type}) '
-          'to=$_currentPeerDeviceId messageNumber=${next.header['message_number']} '
-          'ratchetPubkey=${next.header['ratchet_pubkey']}',
-        );
         await SessionStore.saveState(_currentPeerDeviceId, state);
 
         final headerFields = <String, dynamic>{
@@ -2187,7 +2147,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     } catch (e, stackTrace) {
       DebugLog.log(
         'ChatScreen control message send FAILED type=${inner.type} '
-        'to=$_currentPeerDeviceId error=$e\n$stackTrace',
+        'to=$_currentPeerDeviceId error=$e @ '
+        '${stackTrace.toString().split('\n').take(2).join(' | ')}',
       );
       return false;
     }
@@ -2257,11 +2218,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         _pendingInitHeader = null;
 
         final next = await state.nextSendingKey();
-        DebugLog.log(
-          'ChatScreen sending key (text messageId=${inner.messageId}) '
-          'to=$_currentPeerDeviceId messageNumber=${next.header['message_number']} '
-          'ratchetPubkey=${next.header['ratchet_pubkey']}',
-        );
         await SessionStore.saveState(_currentPeerDeviceId, state);
 
         final headerFields = <String, dynamic>{
@@ -2289,13 +2245,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           peerLogin: widget.peerLogin,
         );
       });
-      DebugLog.log(
-        'ChatScreen send OK (text messageId=$messageId) to=$_currentPeerDeviceId',
-      );
     } catch (e, stackTrace) {
       DebugLog.log(
         'ChatScreen send FAILED (text messageId=$messageId) '
-        'to=$_currentPeerDeviceId error=$e\n$stackTrace',
+        'to=$_currentPeerDeviceId error=$e @ '
+        '${stackTrace.toString().split('\n').take(2).join(' | ')}',
       );
       await ChatStore.updateMessageStatus(
         widget.peerLogin,
@@ -3271,10 +3225,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     try {
       final bytes = await generateVideoThumbnail(videoPath);
       if (bytes == null) {
-        DebugLog.log(
-          'ChatScreen _writeLocalVideoThumbnail: generateVideoThumbnail '
-          'вернул null для videoPath=$videoPath',
-        );
+        DebugLog.log('_writeLocalVideoThumbnail: generateVideoThumbnail null for $videoPath');
         return null;
       }
       // ВАЖНО: НЕ getTemporaryDirectory() — реальный кейс с устройства:
@@ -3296,19 +3247,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         '${thumbDir.path}/vthumb_${DateTime.now().microsecondsSinceEpoch}.jpg',
       );
       await thumbFile.writeAsBytes(bytes);
-      DebugLog.log(
-        'ChatScreen _writeLocalVideoThumbnail: OK, '
-        'thumbPath=${thumbFile.path} bytes=${bytes.length}',
-      );
       return thumbFile.path;
     } catch (e) {
-      DebugLog.log(
-        'ChatScreen _writeLocalVideoThumbnail FAILED videoPath=$videoPath error=$e',
-      );
+      DebugLog.log('_writeLocalVideoThumbnail FAILED videoPath=$videoPath error=$e');
       return null;
     }
   }
-
 
   Future<void> _processQueuedMedia(
     PickedMedia item,
@@ -4476,16 +4420,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // тот самый localPreviewPath, записанный ЕЩЁ в момент отправки (см.
     // _writeLocalVideoThumbnail в _sendPickedMedia) — ничего заново
     // генерировать не нужно, только прочитать уже готовый файл.
-    DebugLog.log(
-      'ChatScreen _resolveVideoThumbnailBytes: messageId=${msg.messageId} '
-      'isMine=${msg.isMine} localPreviewPath=${msg.localPreviewPath}',
-    );
     if (msg.isMine && msg.localPreviewPath != null) {
       final previewFile = File(msg.localPreviewPath!);
       final exists = await previewFile.exists();
-      DebugLog.log(
-        'ChatScreen _resolveVideoThumbnailBytes: localPreviewPath exists=$exists',
-      );
       debugPrint(
         'ChatScreen[${identityHashCode(this)}] _resolveVideoThumbnailBytes '
         'localPreviewPath=${msg.localPreviewPath} exists=$exists',
@@ -6438,10 +6375,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         if (!mounted) return;
         _keyboardCloseDebounceTimer = null;
         final stillClosed = _liveKeyboardInsetPx(context) <= 50;
-        DebugLog.log(
-          'Chat _keyboardCloseDebounceTimer fired stillClosed=$stillClosed '
-          'emojiMode=$_emojiMode awaitingKeyboardOpen=$_awaitingKeyboardOpen',
-        );
         if (stillClosed) {
           setState(() => _keyboardVisibleDebounced = false);
         }
@@ -6452,21 +6385,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // см. комментарий у зазора-спейсера ниже про то, почему брать его надо
     // ИМЕННО отсюда, а не из MediaQuery.padding.
     final systemBottomInset = MediaQuery.of(context).viewPadding.bottom;
-    // Диагностика для жалобы "на Samsung с 3-кнопочной навигацией панель
-    // сообщения перекрыта системной панелью" — на Pixel (gesture-навигация)
-    // такого не воспроизвели, а слепой переход на SafeArea тут неверен
-    // (сознательно отключён чуть ниже — он ломает высоту эмодзи-панели,
-    // см. комментарий у зазора-спейсера). Логируем только при реальном
-    // изменении значения, а не на каждый build(), чтобы не забить лог.
-    if (_lastLoggedBottomInset != systemBottomInset) {
-      _lastLoggedBottomInset = systemBottomInset;
-      DebugLog.log(
-        'Chat composer systemBottomInset=$systemBottomInset '
-        'padding.bottom=${MediaQuery.of(context).padding.bottom} '
-        'viewInsets.bottom=$realInset',
-      );
-    }
-
     // Измеряем высоту клавиатуры только когда она перестала МЕНЯТЬСЯ —
     // во время собственной анимации выезда ОС на некоторых устройствах
     // (замечено на Pixel 7) realInset несколько кадров подряд идёт с
@@ -6545,22 +6463,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final emojiReserved = (_emojiMode || _awaitingKeyboardOpen)
         ? (_keyboardHeight - realInset).clamp(0.0, _keyboardHeight)
         : 0.0;
-    // Диагностика "пустая панель эмодзи на миг видна при закрытии
-    // клавиатуры" — тут все значения, от которых зависит, покажется ли
-    // на экране пустой (Offstage-содержимым) прямоугольник ненулевой
-    // высоты (см. Container(height: emojiReserved, ...) ниже). Логируем
-    // только при изменении состояния (round — чтобы не плодить строку на
-    // каждый дробный кадр анимации realInset), иначе build() (кадр в
-    // кадр во время анимации клавиатуры) забьёт лог за секунды.
-    final emojiKeyboardState =
-        'keyboardVisible=$keyboardVisible emojiMode=$_emojiMode '
-        'awaitingKeyboardOpen=$_awaitingKeyboardOpen '
-        'realInset=${realInset.round()} '
-        'emojiReserved=${emojiReserved.round()}';
-    if (_lastLoggedEmojiKeyboardState != emojiKeyboardState) {
-      _lastLoggedEmojiKeyboardState = emojiKeyboardState;
-      DebugLog.log('Chat emoji/keyboard state: $emojiKeyboardState');
-    }
     // restGap — зазор до низа экрана в состоянии покоя (клавиатура и
     // эмодзи-панель обе закрыты). gapHeight — то же самое, но выведенное
     // ПЛАВНОЙ функцией живого realInset, а не отдельной анимацией ПОСЛЕ
@@ -6963,9 +6865,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                             ),
                                                           ),
                                                           onPressed: () {
-                                                            DebugLog.log(
-                                                              'Chat emoji-icon tap, emojiMode was $_emojiMode',
-                                                            );
                                                             if (_emojiMode) {
                                                               // Настоящая клавиатура ещё не
                                                               // поднялась — держим reserved на
@@ -7041,19 +6940,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                                     .center,
                                                             onTap: () {
                                                               if (_emojiMode) {
-                                                                // Диагностика "пустая панель эмодзи" —
                                                                 // ЭТА ветка, в отличие от кнопки-иконки
                                                                 // выше, НЕ выставляет
                                                                 // _awaitingKeyboardOpen: реальный фокус
                                                                 // на поле придёт сам собой (тап уже
-                                                                // произошёл по нему), но если он
-                                                                // почему-то задержится — emojiReserved
-                                                                // в build() успеет схлопнуться в 0 ещё
-                                                                // до появления настоящей клавиатуры.
-                                                                DebugLog.log(
-                                                                  'Chat TextField onTap: emojiMode true->false '
-                                                                  '(без _awaitingKeyboardOpen)',
-                                                                );
+                                                                // произошёл по нему).
                                                                 setState(
                                                                   () =>
                                                                       _emojiMode =

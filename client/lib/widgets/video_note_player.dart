@@ -127,11 +127,15 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       }
       final pos = controller.value.position;
       final stuck = pos == _lastDiagPosition;
-      DebugLog.log(
-        'VideoNote diag-tick messageId=${widget.messageId} stuck=$stuck '
-        'isBuffering=${controller.value.isBuffering} '
-        '${_stateSnapshot(controller)}',
-      );
+      // Пишем только когда позиция реально перестала двигаться посреди
+      // воспроизведения (или появилась ошибка) — штатное проигрывание не шумит.
+      if (stuck || controller.value.hasError) {
+        DebugLog.log(
+          'VideoNote diag-tick messageId=${widget.messageId} stuck=$stuck '
+          'isBuffering=${controller.value.isBuffering} '
+          '${_stateSnapshot(controller)}',
+        );
+      }
       _lastDiagPosition = pos;
     });
   }
@@ -144,7 +148,6 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
   @override
   void initState() {
     super.initState();
-    DebugLog.log('VideoNote initState messageId=${widget.messageId}');
     // Свой кадр-превью грузить не нужно — у своих сообщений он либо уже
     // есть локально (localPreviewPath), либо появится после отправки
     // (тогда виджет пересоберётся с новым localPreviewPath). Чужие —
@@ -180,12 +183,6 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
   @override
   void didUpdateWidget(covariant VideoNotePlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.messageId != widget.messageId) {
-      DebugLog.log(
-        'VideoNote didUpdateWidget messageId changed '
-        '${oldWidget.messageId} -> ${widget.messageId}',
-      );
-    }
     // Своё сообщение только что отправилось — localPreviewPath пропал
     // из null? нет, наоборот: он был null → появился (или наоборот, редкий
     // случай) не наш кейс. Актуальный переход — было "нет resolveThumbnail
@@ -202,10 +199,6 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
 
   @override
   void dispose() {
-    DebugLog.log(
-      'VideoNote dispose messageId=${widget.messageId} '
-      'hadController=${_controller != null} playing=$_playing',
-    );
     _stopDiagTicker();
     _controller?.removeListener(_onTick);
     _controller?.dispose();
@@ -227,15 +220,12 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
     widget.coordinator!.activate(
       id,
       pause: () {
-        DebugLog.log('VideoNote coordinator->pause messageId=$id');
         unawaited(_doPause());
       },
       resume: () {
-        DebugLog.log('VideoNote coordinator->resume messageId=$id');
         unawaited(_doResume());
       },
       stop: () {
-        DebugLog.log('VideoNote coordinator->stop messageId=$id');
         unawaited(_doStop());
       },
     );
@@ -268,11 +258,7 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       await _startFresh();
       return;
     }
-    DebugLog.log('VideoNote _doResume() start ${_stateSnapshot(controller)}');
     await controller.play();
-    DebugLog.log(
-      'VideoNote _doResume() play() returned ${_stateSnapshot(controller)}',
-    );
     if (mounted) setState(() => _playing = true);
     _registerWithCoordinator();
     _watchForStall(controller);
@@ -296,10 +282,10 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
       Future.delayed(const Duration(milliseconds: 400), () async {
         if (!mounted || _controller != controller) return;
         final moved = controller.value.position != posAtPlay;
-        DebugLog.log(
-          'VideoNote stall-check moved=$moved ${_stateSnapshot(controller)}',
-        );
         if (moved) return;
+        DebugLog.log(
+          'VideoNote stall-check: playback did not advance ${_stateSnapshot(controller)}',
+        );
         _stopDiagTicker();
         controller.removeListener(_onTick);
         try {
@@ -386,24 +372,11 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
   // Android. Оставляем логи как есть — полезны и для будущей диагностики).
   Future<void> _toggle() async {
     final controller = _controller;
-    DebugLog.log(
-      'VideoNote _toggle() called messageId=${widget.messageId} '
-      'hasController=${controller != null} playing=$_playing loading=$_loading '
-      '${controller != null ? _stateSnapshot(controller) : ''}',
-    );
     if (controller != null) {
       if (_playing) {
         await _doPause();
-        DebugLog.log(
-          'VideoNote _toggle() paused, setting playing=false '
-          '${_stateSnapshot(controller)}',
-        );
       } else {
         await _doResume();
-        DebugLog.log(
-          'VideoNote _toggle() resume flow done, setting playing=true '
-          '${_stateSnapshot(controller)}',
-        );
       }
       return;
     }
@@ -457,9 +430,6 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
         _loading = false;
       });
       await newController.play();
-      DebugLog.log(
-        'VideoNote _startFresh() play ${_stateSnapshot(newController)}',
-      );
       if (mounted) setState(() => _playing = true);
       _registerWithCoordinator();
       _watchForStall(newController);
@@ -477,23 +447,12 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
         c.value.position >= c.value.duration) {
       if (_handlingEnd) {
         // addListener у video_player может выстрелить несколько раз
-        // подряд, пока позиция ещё не сброшена предыдущим вызовом — без
-        // этого гварда сюда могли одновременно попасть несколько
-        // параллельных pause()+seekTo(0), гоняющихся друг за другом по
-        // одному и тому же platform-каналу. Логируем сам факт — если это
-        // реально происходит часто, вот прямое тому доказательство.
-        DebugLog.log(
-          'VideoNote _onTick() end-of-video re-entrant call SKIPPED '
-          'pos=${c.value.position} dur=${c.value.duration}',
-        );
+        // подряд, пока позиция ещё не сброшена предыдущим вызовом — гвард
+        // от параллельных pause()+dispose по одному platform-каналу.
         return;
       }
       _handlingEnd = true;
       _stopDiagTicker();
-      DebugLog.log(
-        'VideoNote _onTick() end-of-video detected ${_stateSnapshot(c)} '
-        'currentlyPlayingFlag=$_playing',
-      );
       try {
         // Раньше тут были pause()+seekTo(0), доигрывая старый контроллер —
         // по debug_log это ЕДИНСТВЕННОЕ место, откуда начинается стабильно
@@ -506,7 +465,6 @@ class _VideoNotePlayerState extends State<VideoNotePlayer> {
         c.removeListener(_onTick);
         await c.pause();
         await c.dispose();
-        DebugLog.log('VideoNote _onTick() disposed controller after end');
         if (mounted) {
           setState(() {
             _controller = null;

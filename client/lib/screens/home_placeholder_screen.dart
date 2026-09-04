@@ -22,7 +22,6 @@ import '../services/my_profile_store.dart';
 import '../services/peer_profile_cache.dart';
 import '../services/pending_send_retrier.dart';
 import '../services/pip_service.dart';
-import '../services/debug_log.dart';
 import '../services/prekey_replenisher.dart';
 import '../services/send_queue_processor.dart';
 import '../services/push_service.dart';
@@ -239,7 +238,6 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
   }
 
   void _closeSearch() {
-    DebugLog.log('HomePlaceholder _closeSearch() called');
     _searchDebounce?.cancel();
     _searchFocusNode.unfocus();
     unawaited(_searchAnimController.reverse());
@@ -1027,13 +1025,7 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
         _suppressNextSearchKeyboardClose = false;
       } else {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _searchActive) {
-            DebugLog.log(
-              'HomePlaceholder search: keyboard disappeared while search '
-              'active (back/IME-dismiss/etc.) — closing search to match',
-            );
-            _closeSearch();
-          }
+          if (mounted && _searchActive) _closeSearch();
         });
       }
     }
@@ -1053,18 +1045,6 @@ class _HomePlaceholderScreenState extends State<HomePlaceholderScreen>
       // лишним.
       canPop: _selectedTab == 0 && !_searchActive,
       onPopInvokedWithResult: (didPop, result) {
-        // Диагностика для жалобы "swipe-back не закрывает поиск" — этот
-        // лог должен появиться в debug-логе ПРИ КАЖДОМ системном back
-        // (кнопка/жест), независимо от результата. Если его в логе НЕТ
-        // после swipe-back — значит событие вообще не доходит до
-        // PopScope (проблема на уровне Android/предиктивного back, не в
-        // этой логике); если ЕСТЬ, но поиск не закрылся — проблема в
-        // _closeSearch()/перерисовке. Одно наблюдение вместо ещё одной
-        // догадки.
-        DebugLog.log(
-          'HomePlaceholder onPopInvokedWithResult didPop=$didPop '
-          'searchActive=$_searchActive selectedTab=$_selectedTab',
-        );
         if (didPop) return;
         if (_searchActive) {
           _closeSearch();

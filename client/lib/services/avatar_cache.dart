@@ -90,9 +90,6 @@ class AvatarCache {
       if (await diskFile.exists()) {
         try {
           final diskBytes = await diskFile.readAsBytes();
-          DebugLog.log(
-            'AvatarCache.get($accountId): читаю с диска, ${diskBytes.length} байт',
-          );
           _cache[accountId] = diskBytes;
           _cachedAt[accountId] = DateTime.now();
           unawaited(_refreshInBackground(accountId));
@@ -177,9 +174,6 @@ class AvatarCache {
       final tmp = File('${file.path}.tmp');
       await tmp.writeAsBytes(bytes, flush: true);
       await tmp.rename(file.path);
-      DebugLog.log(
-        'AvatarCache._writeToDisk($accountId): записал ${bytes.length} байт',
-      );
     } catch (e) {
       // Диск переполнен/недоступен на запись — не критично, просто в
       // следующий раз холодный старт снова пойдёт в сеть. Логируем — та же
@@ -206,10 +200,6 @@ class AvatarCache {
     if (token == null) return (ok: false, bytes: null);
     try {
       final bytes = await ApiClient().getAvatar(token, accountId);
-      DebugLog.log(
-        'AvatarCache._fetch($accountId): сервер ответил, ${bytes?.length ?? 0} байт '
-        '(null=${bytes == null})',
-      );
       return (ok: true, bytes: bytes);
     } catch (e) {
       DebugLog.log('AvatarCache._fetch($accountId): сетевая ошибка: $e');

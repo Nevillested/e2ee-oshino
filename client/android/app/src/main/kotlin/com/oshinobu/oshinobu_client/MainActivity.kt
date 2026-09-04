@@ -67,6 +67,11 @@ private const val DOWNLOADS_SUBFOLDER = "Oshinobu"
 // запрошенная пользователем загрузка файла и приложение свёрнуто.
 private const val MEDIA_DL_FGS_CHANNEL = "oshinobu/media_download_fgs"
 
+// См. FileCipher.kt + client/lib/crypto/native_file_cipher.dart: аппаратный
+// AES-256-GCM для файлов вместо чистого Dart (~4 МБ/с → сотни МБ/с). Формат
+// блоков идентичен streaming_file_cipher.dart, чтобы старые клиенты читали.
+private const val FILE_CIPHER_CHANNEL = "oshinobu/file_cipher"
+
 // Те же ключи используются в CallRingService/call_ring_plugin (отдельный
 // Gradle-модуль, поэтому не общие константы, а просто одинаковые строки в
 // обоих местах).
@@ -431,6 +436,31 @@ class MainActivity : FlutterFragmentActivity() {
                 "stop" -> {
                     MediaDownloadForegroundService.stop(applicationContext)
                     result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FILE_CIPHER_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "encryptFile" -> {
+                    val input = call.argument<String>("input")
+                    val output = call.argument<String>("output")
+                    if (input == null || output == null) {
+                        result.error("file_cipher", "input/output is null", null)
+                    } else {
+                        FileCipher.encrypt(input, output, result)
+                    }
+                }
+                "decryptFile" -> {
+                    val input = call.argument<String>("input")
+                    val output = call.argument<String>("output")
+                    val key = call.argument<String>("key")
+                    if (input == null || output == null || key == null) {
+                        result.error("file_cipher", "input/output/key is null", null)
+                    } else {
+                        FileCipher.decrypt(input, output, key, result)
+                    }
                 }
                 else -> result.notImplemented()
             }

@@ -5,6 +5,8 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart' show compute;
+import '../services/debug_log.dart';
+import 'native_file_cipher.dart';
 
 /// Потоковое (chunked) шифрование файлов — для больших файлов вместо
 /// media_cipher.dart, чтобы не держать весь файл в оперативке. Файл режется
@@ -180,11 +182,24 @@ class StreamingFileCipher {
     }
   }
 
-  /// Шифрование в фоновом изоляте — см. encryptFileIsolateEntry.
+  /// Шифрует файл, НЕ грузя UI-поток: на Android — аппаратный AES через
+  /// нативный канал (см. NativeFileCipher, ~4 МБ/с чистого Dart → сотни
+  /// МБ/с); везде ещё — чистый Dart в фоновом изоляте (encryptFileIsolateEntry).
+  /// Формат байт на диске одинаковый в обоих случаях.
   static Future<Uint8List> encryptFileInIsolate({
     required File inputFile,
     required File outputFile,
   }) async {
+    if (NativeFileCipher.isSupported) {
+      try {
+        return await NativeFileCipher.encryptFileToFile(
+          input: inputFile,
+          output: outputFile,
+        );
+      } catch (e) {
+        DebugLog.log('NativeFileCipher encrypt failed ($e) — Dart-isolate fallback');
+      }
+    }
     final keyB64 = await compute(encryptFileIsolateEntry, {
       'input': inputFile.path,
       'output': outputFile.path,
@@ -192,13 +207,25 @@ class StreamingFileCipher {
     return base64Decode(keyB64);
   }
 
-  /// Расшифровка в фоновом изоляте — см. decryptFileIsolateEntry.
+  /// См. [encryptFileInIsolate] — то же для расшифровки.
   static Future<void> decryptFileInIsolate({
     required File inputFile,
     required File outputFile,
     required List<int> keyBytes,
-  }) {
-    return compute(decryptFileIsolateEntry, {
+  }) async {
+    if (NativeFileCipher.isSupported) {
+      try {
+        await NativeFileCipher.decryptFileToFile(
+          input: inputFile,
+          output: outputFile,
+          keyBytes: keyBytes,
+        );
+        return;
+      } catch (e) {
+        DebugLog.log('NativeFileCipher decrypt failed ($e) — Dart-isolate fallback');
+      }
+    }
+    await compute(decryptFileIsolateEntry, {
       'input': inputFile.path,
       'output': outputFile.path,
       'key': base64Encode(keyBytes),

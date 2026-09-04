@@ -54,10 +54,7 @@ class MessageResend {
       Map<String, dynamic>? initHeader;
 
       if (state == null) {
-        DebugLog.log(
-          'MessageResend establishing fresh X3DH outgoing session to=$peerDeviceId '
-          '(no local session found)',
-        );
+        DebugLog.log('MessageResend: fresh X3DH session to=$peerDeviceId (no local session)');
         final token = await Session.getToken();
         final bundle = await ApiClient().getPrekeyBundle(token!, peerDeviceId);
         await PeerAccountStore.save(peerDeviceId, bundle['account_id'] as String);
@@ -77,11 +74,6 @@ class MessageResend {
       }
 
       final next = await state.nextSendingKey();
-      DebugLog.log(
-        'MessageResend sending key (retry type=${inner.type} messageId=${inner.messageId}) '
-        'to=$peerDeviceId messageNumber=${next.header['message_number']} '
-        'ratchetPubkey=${next.header['ratchet_pubkey']}',
-      );
       await SessionStore.saveState(peerDeviceId, state);
 
       final headerFields = <String, dynamic>{

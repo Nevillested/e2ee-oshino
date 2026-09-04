@@ -79,7 +79,7 @@ class RatchetState {
     required SimpleKeyPair ephemeralKeyPair,
   }) async {
     final chainKey = await _hkdf(rootKey, 'oshinobu-init', 32);
-    DebugLog.log('RatchetState initAsSender: fresh session created from X3DH root key');
+    DebugLog.log('RatchetState initAsSender: fresh session from X3DH root key');
     return RatchetState(
       rootKey: rootKey,
       sendingRatchetKeyPair: ephemeralKeyPair,
@@ -93,10 +93,7 @@ class RatchetState {
   }) async {
     final chainKey = await _hkdf(rootKey, 'oshinobu-init', 32);
     final freshKeyPair = await _x25519.newKeyPair();
-    DebugLog.log(
-      'RatchetState initAsReceiver: fresh session created from X3DH root key, '
-      'remoteEphemeralPubkey=${base64Encode(remoteEphemeralPubkey)}',
-    );
+    DebugLog.log('RatchetState initAsReceiver: fresh session from X3DH root key');
     return RatchetState(
       rootKey: rootKey,
       sendingRatchetKeyPair: freshKeyPair,
@@ -122,10 +119,6 @@ class RatchetState {
     sendingRatchetKeyPair = newKeyPair;
     sendMessageNumber = 0;
     needsSendingRatchet = false;
-    final newPublic = await newKeyPair.extractPublicKey();
-    DebugLog.log(
-      'RatchetState DH-step SENDING: new epoch, newRatchetPubkey=${base64Encode(newPublic.bytes)}',
-    );
   }
 
   Future<void> _dhRatchetStepForReceiving(List<int> newRemotePubkey) async {
@@ -147,16 +140,17 @@ class RatchetState {
     // Новая цепочка — старые "пропущенные" ключи из предыдущей эпохи
     // больше не актуальны, они относились к другому receivingChainKey.
     skippedReceivingKeys = {};
-    DebugLog.log(
-      'RatchetState DH-step RECEIVING: new epoch, newRemotePubkey=${base64Encode(newRemotePubkey)}'
-      '${droppedSkipped > 0 ? ", dropped $droppedSkipped skipped key(s) from previous epoch (now unrecoverable if they arrive late)" : ""}',
-    );
+    if (droppedSkipped > 0) {
+      DebugLog.log(
+        'RatchetState DH-step RECEIVING: new epoch, dropped $droppedSkipped '
+        'skipped key(s) from previous epoch (unrecoverable if they arrive late)',
+      );
+    }
   }
 
   Future<({Map<String, dynamic> header, List<int> messageKey})>
   nextSendingKey() async {
     if (needsSendingRatchet) {
-      DebugLog.log('RatchetState nextSendingKey: needsSendingRatchet=true, performing DH step first');
       await _dhRatchetStepForSending();
     }
     final messageKey = await _hmacBytes(sendingChainKey!, 1);

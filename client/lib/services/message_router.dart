@@ -83,9 +83,6 @@ class MessageRouter {
     // Транспортный довесок от WebSocketService (см. комментарий там) —
     // не часть самого конверта, вынимаем до передачи дальше.
     final deliveryId = envelope.remove('_deliveryId') as String?;
-    DebugLog.log(
-      'Router incoming from=$senderDeviceId deliveryId=${deliveryId ?? '-'}',
-    );
 
     await SendLock.run(
       senderDeviceId,
@@ -146,21 +143,6 @@ class MessageRouter {
       var state = await SessionStore.getState(senderDeviceId);
       var isFreshSession = false;
 
-      // Временное расширенное логирование расшифровки на период
-      // closed-тестирования (см. обсуждение с пользователем) — снимаем
-      // перед релизом в проде. Логируем только БЕЗОПАСНЫЕ метаданные:
-      // публичные ключи ratchet (это Diffie-Hellman public key, не
-      // секрет), номера сообщений, счётчики — НИКОГДА rootKey/chain key/
-      // message key и уж тем более текст сообщения.
-      DebugLog.log(
-        'Router decrypt-attempt from=$senderDeviceId '
-        'hadLocalSession=${state != null} '
-        'envelopeHasX3dhInit=${envelope['ephemeral_pubkey'] != null} '
-        'envelope.message_number=${envelope['message_number']} '
-        'envelope.ratchet_pubkey=${envelope['ratchet_pubkey']} '
-        '${state != null ? _stateDebugInfo(state) : ''}',
-      );
-
       if (state == null) {
         final fresh = await _establishFreshIncoming(senderDeviceId, envelope);
         if (fresh == null) {
@@ -180,9 +162,6 @@ class MessageRouter {
           return;
         }
         await _clearNoSessionFirstSeen(senderDeviceId);
-        DebugLog.log(
-          'Router accepted fresh X3DH init from=$senderDeviceId (no prior session)',
-        );
         state = fresh;
         isFreshSession = true;
       }
@@ -289,9 +268,6 @@ class MessageRouter {
       await SessionStore.saveState(senderDeviceId, state);
 
       final inner = InnerMessage.decode(rawInner);
-      DebugLog.log(
-        'Router decrypted from=$senderDeviceId type=${inner.type} messageId=${inner.messageId}',
-      );
       final ownerInfo = await _resolveOwner(senderDeviceId);
       if (ownerInfo == null) {
         DebugLog.log(
@@ -538,9 +514,6 @@ class MessageRouter {
       if (deliveryId != null) {
         WebSocketService.instance.ackDelivery(deliveryId);
       }
-      DebugLog.log(
-        'Router OK from=$senderDeviceId type=${inner.type} messageId=${inner.messageId}',
-      );
 
       // Реакция/пин/правка/удаление — служебные события, не самостоятельные
       // сообщения: не заслуживают звука, даже если чат закрыт (собеседник
@@ -564,8 +537,10 @@ class MessageRouter {
       }
     } catch (e, stackTrace) {
       debugPrint('MessageRouter: ошибка обработки сообщения: $e\n$stackTrace');
+      final firstFrame = stackTrace.toString().split('\n').take(3).join(' | ');
       DebugLog.log(
-        'Router FAILED from=$senderDeviceId deliveryId=${deliveryId ?? '-'} error=$e',
+        'Router FAILED from=$senderDeviceId deliveryId=${deliveryId ?? '-'} '
+        'error=$e @ $firstFrame',
       );
     }
   }

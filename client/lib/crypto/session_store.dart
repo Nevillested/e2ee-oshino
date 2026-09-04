@@ -16,29 +16,12 @@ class SessionStore {
   ) async {
     final json = await state.toJson();
     await _storage.write(key: _key(remoteDeviceId), value: jsonEncode(json));
-    DebugLog.log(
-      'SessionStore saveState device=$remoteDeviceId '
-      'sendMsgNum=${state.sendMessageNumber} receiveMsgNum=${state.receiveMessageNumber} '
-      'skippedKeys=${state.skippedReceivingKeys.keys.toList()} '
-      'needsSendingRatchet=${state.needsSendingRatchet}',
-    );
   }
 
   static Future<RatchetState?> getState(String remoteDeviceId) async {
     final stored = await _storage.read(key: _key(remoteDeviceId));
-    if (stored == null) {
-      DebugLog.log('SessionStore getState device=$remoteDeviceId: no local session');
-      return null;
-    }
-    final state = RatchetState.fromJson(
-      jsonDecode(stored) as Map<String, dynamic>,
-    );
-    DebugLog.log(
-      'SessionStore getState device=$remoteDeviceId: loaded '
-      'sendMsgNum=${state.sendMessageNumber} receiveMsgNum=${state.receiveMessageNumber} '
-      'skippedKeys=${state.skippedReceivingKeys.keys.toList()}',
-    );
-    return state;
+    if (stored == null) return null;
+    return RatchetState.fromJson(jsonDecode(stored) as Map<String, dynamic>);
   }
 
   /// Стирает сессию с конкретным собеседником — следующая же попытка

@@ -59,14 +59,9 @@ class MyAvatarStore {
       if (await file.exists()) {
         final bytes = await file.readAsBytes();
         notifier.value = bytes;
-        DebugLog.log(
-          'MyAvatarStore.init: прочитал с диска ${bytes.length} байт',
-        );
       }
     } catch (e) {
-      DebugLog.log(
-        'MyAvatarStore.init: файл на диске есть, но НЕ ЧИТАЕТСЯ: $e',
-      );
+      DebugLog.log('MyAvatarStore.init: диск-файл есть, но НЕ ЧИТАЕТСЯ: $e');
     }
 
     // getMyAvatar теперь бросает исключение на сетевую ошибку (см. её
@@ -97,7 +92,6 @@ class MyAvatarStore {
       final tmp = File('${file.path}.tmp');
       await tmp.writeAsBytes(bytes, flush: true);
       await tmp.rename(file.path);
-      DebugLog.log('MyAvatarStore._writeToDisk: записал ${bytes.length} байт');
     } catch (e) {
       // Диск недоступен/переполнен — не критично, просто в следующий раз
       // холодный старт снова пойдёт в сеть без мгновенного превью.

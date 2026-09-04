@@ -882,7 +882,6 @@ class CallService {
     // нужно провести повторное согласование (renegotiation), а не полный
     // новый звонок.
     _peerConnection!.onRenegotiationNeeded = () async {
-      DebugLog.log('CallService onRenegotiationNeeded fired, state=$_state');
       if (_state != CallState.connected) return;
       await _renegotiate();
     };
@@ -890,18 +889,11 @@ class CallService {
 
   Future<void> _renegotiate() async {
     final signalingBefore = _peerConnection?.signalingState;
-    DebugLog.log(
-      'CallService _renegotiate() start signalingState=$signalingBefore',
-    );
     _makingOffer = true;
     try {
       final offer = await _peerConnection!.createOffer();
       await _peerConnection!.setLocalDescription(offer);
       await _send('call_offer', {'sdp': offer.sdp, 'renegotiation': true});
-      DebugLog.log(
-        'CallService _renegotiate() offer отправлен, '
-        'signalingState=${_peerConnection!.signalingState}',
-      );
     } catch (e, st) {
       DebugLog.log(
         'CallService _renegotiate() FAILED (был signalingState=$signalingBefore): $e',
@@ -995,7 +987,6 @@ class CallService {
       DebugLog.log('CallService acceptCall() SKIP — уже state=connected');
       return;
     }
-    DebugLog.log('CallService acceptCall() старт, peerDeviceId=$_peerDeviceId');
     _accepting = true;
     try {
       micEnabled = true;
@@ -1023,7 +1014,6 @@ class CallService {
       await _send('call_answer', {'sdp': answer.sdp});
       _setStatus(tr('call.connecting'));
       _setState(CallState.connected);
-      DebugLog.log('CallService acceptCall() успешно завершён');
     } catch (e, st) {
       DebugLog.log('CallService acceptCall() FAILED error=$e');
       debugPrint('CallService acceptCall() FAILED: $e\n$st');
@@ -1289,10 +1279,6 @@ class CallService {
     _switchingCamera = true;
     final wasFront = _usingFrontCamera;
     final nextFacingMode = wasFront ? 'environment' : 'user';
-    DebugLog.log(
-      'CallService switchCamera() start, currentlyFront=$wasFront '
-      '-> requesting facingMode=$nextFacingMode',
-    );
     try {
       // Сначала отпускаем старую камеру — см. комментарий выше метода.
       await localStream?.removeTrack(oldTrack);
@@ -1331,9 +1317,6 @@ class CallService {
       await localStream?.addTrack(newTrack);
       _videoTrack = newTrack;
       _usingFrontCamera = actualFacingMode == 'user';
-      DebugLog.log(
-        'CallService switchCamera() done, nowFront=$_usingFrontCamera',
-      );
     } catch (e) {
       DebugLog.log('CallService switchCamera() FAILED error=$e');
     } finally {
@@ -1500,10 +1483,6 @@ class CallService {
             final answer = await _peerConnection!.createAnswer();
             await _peerConnection!.setLocalDescription(answer);
             await _send('call_answer', {'sdp': answer.sdp});
-            DebugLog.log(
-              'CallService renegotiation: answer отправлен, '
-              'signalingState=${_peerConnection!.signalingState}',
-            );
           } catch (e, st) {
             DebugLog.log(
               'CallService renegotiation FAILED (был signalingState=$signalingBefore): $e',

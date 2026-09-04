@@ -5,7 +5,6 @@ import '../storage/chunked_upload_session_store.dart';
 import '../storage/media_cache.dart';
 import '../storage/pending_send_store.dart';
 import '../storage/send_queue_store.dart';
-import 'debug_log.dart';
 import 'send_ack_registry.dart';
 import 'upload_cancel_registry.dart';
 
@@ -75,11 +74,6 @@ Future<void> purgeMessageArtifacts(StoredMessage msg) async {
     await SendQueueStore.remove(key);
     SendAckRegistry.cancel(key);
   }
-
-  DebugLog.log(
-    'purgeMessageArtifacts messageId=${msg.messageId} '
-    'mediaId=${mediaId ?? '-'} groupId=${msg.groupId ?? '-'}',
-  );
 }
 
 /// То же самое сразу для целого списка сообщений (массовое удаление,

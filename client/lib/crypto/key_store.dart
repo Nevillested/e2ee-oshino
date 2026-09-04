@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import '../services/debug_log.dart';
 
 /// Хранит и генерирует все криптографические ключи устройства.
 ///
@@ -239,7 +238,6 @@ class KeyStore {
     for (final entry in list) {
       final map = entry as Map<String, dynamic>;
       if (map['public'] == publicKeyBase64) {
-        DebugLog.log('KeyStore one-time prekey lookup pubkey=$publicKeyBase64 FOUND');
         return SimpleKeyPairData(
           base64Decode(map['private'] as String),
           publicKey: SimplePublicKey(
@@ -250,11 +248,6 @@ class KeyStore {
         );
       }
     }
-    DebugLog.log(
-      'KeyStore one-time prekey lookup pubkey=$publicKeyBase64 NOT FOUND '
-      '(already consumed earlier, or never belonged to this device — X3DH '
-      'will proceed without the 4th DH)',
-    );
     return null;
   }
 }

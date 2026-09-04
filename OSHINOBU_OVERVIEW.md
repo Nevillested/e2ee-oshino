@@ -334,7 +334,10 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
       крупный файл, скачивание). Реальный замер скорости — на телефоне (эмулятор режет сеть
       QEMU). Не сделано, если после замера всё ещё медленно: конвейер «шифрование ∥ заливка»
       (сейчас шифруется весь файл во временный → потом заливка).
-- [ ] **Батч правок (2026-09-04, готовится к релизу `1.0.0+36`)** — код готов, не собрано:
+- [x] **Батч правок `1.0.0+36`** (2026-09-04) — собрано, закоммичено, сервер задеплоен,
+      опубликовано. Проверено на устройстве: медиа-пикер, датчик приближения, иконка
+      уведомлений о сообщениях, анимации, смена языка, fallback presigned→Москва (проверено
+      выключением токийского VPS), авто-busy. Пункты ниже — тот батч:
   - Датчик приближения: сериализация `_updateProximityScreenOff` (гонка при BT→ушной динамик
     убрана), дебаунс `ondevicechange` 300 мс.
   - Системные превью в списке чатов больше не замораживаются переведённой строкой: хранится
@@ -343,8 +346,12 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
   - Анимация появления/исчезновения панели закреплённого сообщения (`AnimatedSize` +
     `AnimatedSwitcher`); переброс к закреплённому больше не «перелетает и отскакивает»
     (оценка позиции намеренно недолётная, доводит `ensureVisible`).
-  - Иконка уведомлений: `@drawable/ic_notification` (плейсхолдер-вектор, заменяется своей
-    картинкой) вместо `@mipmap/ic_launcher` (был пустой кружок).
+  - Иконка уведомлений: `@drawable/ic_notification` (5 плотностей, монохромный силуэт)
+    вместо `@mipmap/ic_launcher` (был пустой кружок). Для сообщений — через
+    `flutter_local_notifications` init + `default_notification_icon` в манифесте; для звонков
+    (нативные `CallRingService` / `OngoingCallNotifier` в плагине, свой модуль — своего
+    `R.drawable` нет) — через `Context.callNotificationIcon()` = `getIdentifier` по имени с
+    fallback на `applicationInfo.icon`.
   - Локальные уведомления о сообщениях, когда приложение свёрнуто (процесс жив): общий текст
     без превью содержимого, канал `messages`, только при `lifecycleState != resumed`.
   - Fallback presigned → московский relay: если прямой PUT/GET в MinIO упал (не отмена),
@@ -358,8 +365,54 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
     `CXCP-01` → нативный SIGSEGV. Фикс: камера поднимается только ПОСЛЕ `_openSheet()` и
     только если шторку не закрыли; `_initLiveCamera` сам закрывает контроллер, если
     `!mounted/_disposed/_closing` к моменту завершения `initialize()`; закрытие камеры
-    (`_disposeLiveCamera`) ждёт `_cameraInitFuture` и мемоизировано. Тайминг-логи
-    `MediaPicker +Nms …` пока оставлены для подтверждения.
+    (`_disposeLiveCamera`) ждёт `_cameraInitFuture` и мемоизировано.
+- [ ] **Батч правок (2026-09-04, готовится к релизу `1.0.0+37`)** — код готов, не собрано:
+  - Иконка уведомлений в звонках (был всё ещё пустой кружок — уведомления о сообщениях
+    починены в `+36`): нативные `CallRingService` / `OngoingCallNotifier` брали
+    `applicationInfo.icon`; теперь `Context.callNotificationIcon()` (`NotificationIcon.kt`) =
+    `getIdentifier("ic_notification")` с fallback (drawable в модуле приложения, у плагина
+    своего `R.drawable` нет).
+  - Логирование: `DebugLog.log` сокращён ~230 → ~130 вызовов — убран happy-path per-message /
+    per-frame трейс (WS recv/send/ack, Router incoming/decrypt-attempt/OK, SessionStore
+    get/save, ratchet, X3DH bundle/sig-ok, sending-key в chat_screen и хелперах, avatar-кэши,
+    трейс воспроизведения видео-заметок, шум клавиатуры/эмодзи в chat_screen, трейс поиска в
+    home_placeholder). Оставлены и обогащены все `catch`/ошибки/decrypt-FAILED/DROP/смены
+    состояния; Router FAILED и chat_screen send-FAILED теперь пишут первые кадры стека.
+  - `DebugLog._maxBytes` 8 МБ → 1 МБ; `_resetOnceKey` v1 → v2 (разовая очистка накопленных за
+    closed-тест логов срабатывает заново при этом обновлении).
+  - Новый глобальный сток ошибок в `main.dart`: `FlutterError.onError` +
+    `PlatformDispatcher.instance.onError` → `DebugLog` (текст ошибки + 4 кадра стека);
+    `PlatformDispatcher.onError` возвращает true (записать, но не ронять приложение из-за
+    одиночной асинхронной ошибки). Раньше в `main()` обработчика ошибок не было вообще.
+  - Тайминг-логи `MediaPicker +Nms …` убраны (медиа-пикер подтверждён рабочим).
+  - **Аппаратный AES-256-GCM для файлов.** Замер (288 МБ, канал 100 Мбит из Армении):
+    шифрование 70 c (~4 МБ/с, чистый Dart), заливка 76 c (~30 Мбит/с — 3 части) — итого
+    ~146 c, поровну. Правки:
+    - `android/.../FileCipher.kt` + канал `oshinobu/file_cipher` в MainActivity: потоковый
+      `javax.crypto` `AES/GCM/NoPadding` на своём Executor-потоке. Формат блоков БАЙТ-В-БАЙТ
+      как у `StreamingFileCipher` (4-байт BE длина, `ct||tag`, nonce = `0×4 || uint64_be(idx)`,
+      AAD = `"<idx>:<0|1>"`, завершающий пустой блок для файла, кратного 4 МБ) — старый
+      Dart-расшифровщик у собеседника читает без изменений. Кросс-проверка формата в обе
+      стороны: `test/streaming_file_cipher_interop_test.dart` (встроенный Java-порт, тот же JCA).
+    - `NativeFileCipher` (Dart) + диспетчеризация в `StreamingFileCipher.encryptFileInIsolate` /
+      `decryptFileInIsolate`: Android → нативно; иначе (iOS/desktop/тесты) или при сбое канала
+      → прежний чистый Dart в `compute`-изоляте (с логом причины). Ожидание: 70 c → ~2–3 c,
+      те же и на расшифровке у получателя.
+    - `media_upload.dart`: части заливаются ПОТОКОМ (`encTempFile.openRead(offset,end)`, новый
+      поток на каждую попытку `_retryChunkedStep`); пул параллельных частей 3 → 6 (одиночный
+      TCP на RTT ~150–200 мс упирается в ~10 Мбит, больше потоков = больше суммарной полосы).
+      Прогресс теперь по ПОДТВЕРЖДЁННЫМ частям, а не по «в полёте» (Cronet буферизует тело
+      запроса → `onSendProgress` там врёт). Размер части (сервер, 8 МБ) не трогали.
+  - **Транспорт медиа-запросов → Cronet** (`native_dio_adapter` + `cronet_http`, только
+    `_mediaDioClient()` в `api_client.dart`; auth/WS как были). Даёт HTTP/2 сейчас, а когда на
+    токийском nginx включат `http3` — QUIC/BBR (одиночный TCP на международном плече упирается
+    в окно, у QUIC этого нет). На iOS — URLSession. Cronet — `cronet-embedded` (см.
+    `android/app/build.gradle.kts`: `play-services-cronet` даёт коллизию namespace
+    `org.chromium.net` в AGP 8), +~1.5 МБ на ABI (Play доставляет один). Если Cronet-провайдер
+    недоступен (AOSP-эмулятор) — `createFallbackAdapter` → обычный dart:io.
+  - **Замерить заново с устройства** после этого билда: шифрование должно стать секундами,
+    заливка — быстрее за счёт 6 частей + Cronet H2. Если канал всё ещё не заполнен — включить
+    `http3` на токийском nginx (UDP/443, `Alt-Svc`) + BBR+fq на ядре VPS → тогда заработает QUIC.
 
 ## Как обновлять этот файл
 

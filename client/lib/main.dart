@@ -1,3 +1,4 @@
+import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/material.dart';
 import 'navigator_key.dart';
 import 'screens/splash_screen.dart';
@@ -12,6 +13,34 @@ import 'widgets/app_lock_gate.dart';
 import 'widgets/system_pip_video_view.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Единая точка, куда стекаются ВСЕ невыловленные ошибки — и синхронные
+  // ошибки фреймворка (FlutterError.onError), и асинхронные ошибки вне
+  // зоны (PlatformDispatcher.onError). Пишем их в debug_log.txt с первыми
+  // кадрами стека и причиной, чтобы по присланному пользователем файлу
+  // можно было понять, что и почему упало (ТЗ пользователя). НИКОГДА не
+  // логируем содержимое сообщений — сюда попадает только текст ошибки и
+  // трасса, но осторожность не лишняя.
+  final priorOnError = FlutterError.onError;
+  FlutterError.onError = (details) {
+    final frames = details.stack?.toString().split('\n').take(4).join(' | ');
+    DebugLog.log(
+      'FlutterError: ${details.exceptionAsString()}'
+      '${details.library != null ? ' [${details.library}]' : ''}'
+      '${frames != null ? ' @ $frames' : ''}',
+    );
+    priorOnError?.call(details);
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    DebugLog.log(
+      'Uncaught: $error @ ${stack.toString().split('\n').take(4).join(' | ')}',
+    );
+    // Не роняем всё приложение из-за одиночной невыловленной асинхронной
+    // ошибки — она записана, этого достаточно для разбора.
+    return true;
+  };
+
   runApp(const _App());
 }
 

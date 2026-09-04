@@ -89,15 +89,6 @@ class WebSocketService {
   Stream<void> get sessionInvalidated => _sessionInvalidController.stream;
 
   void connect(String token, String deviceId) {
-    // Временное расширенное логирование на период closed-тестирования
-    // (см. обсуждение с пользователем) — картина подключений/шифрования
-    // разрастётся в DebugLog заметно подробнее обычного, специально ради
-    // диагностики жалоб на надёжность соединений и расшифровки. Уберём
-    // перед релизом в проде, когда данных за 2 недели теста хватит.
-    DebugLog.log(
-      'WS connect() called deviceId=$deviceId '
-      'existingChannel=${_channel != null ? identityHashCode(_channel) : 'none'}',
-    );
     _token = token;
     _deviceId = deviceId;
     _manuallyDisconnected = false;
@@ -106,10 +97,7 @@ class WebSocketService {
     // делает это перед переоткрытием — на всякий случай ведём себя так же
     // и здесь, чтобы старый канал не остался висеть осиротевшим).
     if (_channel != null) {
-      DebugLog.log(
-        'WS connect() found a LIVE channel already open — closing it before '
-        'opening a new one (this is exactly the "parallel connection" case)',
-      );
+      DebugLog.log('WS connect() closed a still-open channel before reconnecting');
     }
     _subscription?.cancel();
     _channel?.sink.close();
@@ -132,11 +120,6 @@ class WebSocketService {
   }
 
   void _forceReconnect() {
-    DebugLog.log(
-      'WS _forceReconnect() called (connectivity restored) '
-      'manuallyDisconnected=$_manuallyDisconnected '
-      'existingChannel=${_channel != null ? identityHashCode(_channel) : 'none'}',
-    );
     if (_manuallyDisconnected) return;
     _subscription?.cancel();
     _channel?.sink.close();
@@ -180,9 +163,6 @@ class WebSocketService {
       pingInterval: const Duration(seconds: 45),
     );
     _channel = channel;
-    DebugLog.log(
-      'WS _openConnection() opening channel=${identityHashCode(channel)}',
-    );
 
     // connect() возвращает канал сразу, а само подключение (включая DNS)
     // происходит асинхронно — если сети нет ("Failed host lookup" и т.п.),
@@ -201,10 +181,6 @@ class WebSocketService {
     channel.ready
         .timeout(const Duration(seconds: 8))
         .then((_) {
-          DebugLog.log(
-            'WS _openConnection() channel=${identityHashCode(channel)} ready OK '
-            'isCurrent=${identical(_channel, channel)}',
-          );
           _setStatus(ConnectionStatus.connected);
           // Сервер по умолчанию считает свежее соединение "на переднем
           // плане" (см. registry.Add на сервере) — верно почти всегда
@@ -220,11 +196,8 @@ class WebSocketService {
           // Могли успеть переподключиться другим циклом, пока эта, уже
           // отвязанная попытка донашивала свой таймаут — тогда трогать
           // текущее (уже другое) соединение нельзя.
-          DebugLog.log(
-            'WS _openConnection() channel=${identityHashCode(channel)} FAILED error=$e '
-            'isCurrent=${identical(_channel, channel)}',
-          );
           if (!identical(_channel, channel)) return;
+          DebugLog.log('WS connect failed: $e — will retry');
           debugPrint(
             'WebSocketService: не удалось подключиться ($e), повтор через reconnect',
           );
@@ -239,10 +212,6 @@ class WebSocketService {
           final outer = jsonDecode(raw as String) as Map<String, dynamic>;
           final type = outer['Type'] as String?;
           final frameDeliveryId = outer['DeliveryId'];
-          DebugLog.log(
-            'WS recv type=$type'
-            '${frameDeliveryId is String && frameDeliveryId.isNotEmpty ? ' deliveryId=$frameDeliveryId' : ''}',
-          );
 
           if (type == 'ack') {
             // Подтверждение НАШЕЙ исходящей отправки (см. websocket.go:
@@ -320,18 +289,18 @@ class WebSocketService {
             }
             _messageController.add(envelope);
           }
-        } catch (_) {}
+        } catch (e) {
+          DebugLog.log('WS recv: failed to parse frame: $e');
+        }
       },
       onError: (Object e) {
-        DebugLog.log(
-          'WS channel=${identityHashCode(channel)} onError error=$e',
-        );
+        DebugLog.log('WS onError: $e — reconnecting');
         _scheduleReconnect();
       },
       onDone: () {
         DebugLog.log(
-          'WS channel=${identityHashCode(channel)} onDone '
-          'closeCode=${channel.closeCode} closeReason=${channel.closeReason}',
+          'WS onDone closeCode=${channel.closeCode} '
+          'closeReason=${channel.closeReason} — reconnecting',
         );
         _scheduleReconnect();
       },
@@ -339,10 +308,6 @@ class WebSocketService {
   }
 
   void _scheduleReconnect() {
-    DebugLog.log(
-      'WS _scheduleReconnect() called manuallyDisconnected=$_manuallyDisconnected '
-      'hadNetwork=$_hadNetwork',
-    );
     _channel = null;
     _subscription?.cancel();
     if (_manuallyDisconnected) return;
@@ -362,8 +327,8 @@ class WebSocketService {
       // проверяем, не отозвал ли сервер токен (например, вход выполнен
       // на другом устройстве). Если отозвал — дальше пытаться бессмысленно.
       final valid = await ApiClient().checkSession(token);
-      DebugLog.log('WS _scheduleReconnect() checkSession -> $valid');
       if (valid == false) {
+        DebugLog.log('WS session invalid (logged in elsewhere) — stopping reconnect');
         // Именно false — сервер явно ответил "токен невалиден", это точно
         // принудительный логаут (вход с другого устройства).
         _manuallyDisconnected = true;
@@ -382,19 +347,12 @@ class WebSocketService {
       // выполняющийся этот коллбэк. Без проверки ниже мы бы открыли ВТОРОЕ
       // соединение поверх уже живого — сервер это видит как дубликат и
       // закрывает более старое, обрывая только что установленную связь.
-      if (_channel != null) {
-        DebugLog.log(
-          'WS _scheduleReconnect() timer fired but channel already exists '
-          '(race with _forceReconnect) — skipping duplicate _openConnection()',
-        );
-        return;
-      }
+      if (_channel != null) return; // гонка с _forceReconnect — не плодим второе соединение
       _openConnection();
     });
   }
 
   void disconnect() {
-    DebugLog.log('WS disconnect() called (manual)');
     _manuallyDisconnected = true;
     _reconnectTimer?.cancel();
     _connectivitySubscription?.cancel();
@@ -408,7 +366,6 @@ class WebSocketService {
   /// его (см. комментарий в listener() выше про то, почему ack больше не
   /// шлётся отсюда же по факту получения кадра).
   void ackDelivery(String deliveryId) {
-    DebugLog.log('WS send ack deliveryId=$deliveryId connected=$isConnected');
     if (!isConnected) return;
     _channel!.sink.add(jsonEncode({'Type': 'ack', 'DeliveryId': deliveryId}));
   }
@@ -446,10 +403,6 @@ class WebSocketService {
       'DeliveryId': deliveryId,
       'Silent': silent,
     };
-    DebugLog.log(
-      'WS sendEnvelope to=$toDeviceId deliveryId=$deliveryId '
-      'channel=${identityHashCode(_channel)}',
-    );
     _channel!.sink.add(jsonEncode(message));
   }
 

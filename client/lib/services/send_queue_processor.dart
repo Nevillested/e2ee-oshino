@@ -44,7 +44,6 @@ class SendQueueProcessor {
     _started = true;
     WebSocketService.instance.statusUpdates.listen((status) {
       if (status == ConnectionStatus.connected) {
-        DebugLog.log('SendQueueProcessor sweep triggered by reconnect');
         unawaited(_sweep());
       }
     });
@@ -91,7 +90,9 @@ class SendQueueProcessor {
 
   Future<void> _sweep() async {
     final items = await SendQueueStore.getAll();
-    DebugLog.log('SendQueueProcessor sweep: ${items.length} item(s) pending');
+    if (items.isNotEmpty) {
+      DebugLog.log('SendQueueProcessor sweep: ${items.length} item(s) pending');
+    }
     for (final item in items) {
       unawaited(
         _attempt(
@@ -221,7 +222,6 @@ class SendQueueProcessor {
     Future<void> Function()? onAcked,
   ) async {
     await SendQueueStore.remove(id);
-    DebugLog.log('SendQueueProcessor id=$id acked, removed from queue');
     if (messageId != null && peerLogin != null) {
       await ChatStore.updateMessageStatus(peerLogin, messageId, 'sent');
     }

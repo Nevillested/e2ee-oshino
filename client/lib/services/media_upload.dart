@@ -221,18 +221,20 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         );
       }
 
-      // Прогресс: подтверждённые части + «в полёте» по каждой активной.
+      // Прогресс считаем по ПОДТВЕРЖДЁННЫМ частям, а не по «в полёте»:
+      // Cronet-транспорт (см. ApiClient._mediaDioClient) буферизует тело
+      // запроса перед отправкой, поэтому onSendProgress там взлетает до
+      // 100% ещё до реальной передачи — учитывать его = показывать ложные
+      // «100%» на много секунд. Часть = 8 МБ, на 288 МБ это 36 шагов —
+      // достаточно плавно.
       var confirmedBytes = 0;
       for (final pn in confirmedParts) {
         if (pn >= 1 && pn <= totalParts) confirmedBytes += partLen(pn);
       }
-      final inFlight = <int, int>{};
       var lastReportedPct = -1.0;
       void reportProgress() {
         if (totalSize <= 0) return;
-        final done =
-            confirmedBytes + inFlight.values.fold<int>(0, (a, b) => a + b);
-        final pct = (done / totalSize * 100).clamp(0.0, 100.0);
+        final pct = (confirmedBytes / totalSize * 100).clamp(0.0, 100.0);
         if (pct - lastReportedPct >= 0.5 || pct >= 100) {
           lastReportedPct = pct;
           onProgress?.call(pct);
@@ -244,33 +246,21 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
       Future<void> uploadOnePart(int pn) async {
         final len = partLen(pn);
         final offset = (pn - 1) * partSize;
-        final Uint8List chunk;
-        final raf = await encTempFile.open();
-        try {
-          await raf.setPosition(offset);
-          chunk = await raf.read(len);
-        } finally {
-          await raf.close();
-        }
-        void partProgress(double partPercent) {
-          inFlight[pn] = (partPercent / 100 * len).round();
-          reportProgress();
-        }
 
         await _retryChunkedStep(
           () async {
-            inFlight[pn] = 0;
             try {
+              // Часть заливаем ПОТОКОМ (диапазон байт temp-файла). Новый
+              // поток на каждую попытку — потому и создаётся ВНУТРИ лямбды
+              // _retryChunkedStep.
               await apiClient.putToPresignedUrl(
                 partUrls[pn]!,
-                chunk,
-                contentLength: chunk.length,
+                encTempFile.openRead(offset, offset + len),
+                contentLength: len,
                 cancelToken: cancelToken,
-                onProgress: partProgress,
               );
             } catch (e) {
               if (cancelToken.isCancelled) rethrow;
-              inFlight.remove(pn);
               // presigned не прошёл (истёкший URL / Токио / туннель).
               // Fallback: заливаем ЭТУ часть через московский сервер
               // (старый relay-эндпоинт) — MinIO не различает, как часть
@@ -286,6 +276,16 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
                 if (fresh[pn] != null) partUrls[pn] = fresh[pn]!;
               } catch (_) {}
               DebugLog.log('media_upload: part $pn presigned FAILED ($e) — relay fallback');
+              // relay-эндпоинт принимает байты целиком — для редкого
+              // fallback-пути читаем часть разово.
+              final raf = await encTempFile.open();
+              final Uint8List chunk;
+              try {
+                await raf.setPosition(offset);
+                chunk = await raf.read(len);
+              } finally {
+                await raf.close();
+              }
               await apiClient.uploadChunkedPart(
                 token,
                 sessionMediaId,
@@ -293,21 +293,29 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
                 pn,
                 chunk,
                 cancelToken: cancelToken,
-                onProgress: partProgress,
               );
             }
           },
           cancelToken: cancelToken,
         );
-        inFlight.remove(pn);
         confirmedBytes += len;
         reportProgress();
       }
 
-      // Пул: до 3 частей одновременно. Это параллелизм ВНУТРИ одной
-      // загрузки — отдельный файловый воркер PendingSendRetrier по-прежнему
-      // один, модель очередей не меняется.
-      const partConcurrency = 3;
+      // Пул параллельных частей ВНУТРИ одной загрузки — отдельный файловый
+      // воркер PendingSendRetrier по-прежнему один, модель очередей не
+      // меняется. 6, а не 3: на «толстом длинном» международном канале
+      // (RTT ~150–200 мс) одиночный TCP-поток упирается в окно ~10 Мбит —
+      // больше параллельных потоков = больше суммарной полосы (замер из
+      // Армении: 3 части давали ~30 Мбит при 100 Мбит канала).
+      //
+      // По памяти: на dart:io-транспорте часть реально стримится с диска;
+      // на Cronet-транспорте (native_dio_adapter буферизует тело запроса
+      // целиком) — до partSize (8 МБ) на активную часть, т.е. ~48 МБ пик на
+      // время заливки. Приемлемо; если на слабом устройстве OOM — снизить
+      // до 4. Если канал всё ещё не заполнен после замера — поднять (и
+      // дальше уже HTTP/3 на nginx для QUIC/BBR).
+      const partConcurrency = 6;
       var nextIdx = 0;
       Object? firstError;
       Future<void> poolWorker() async {

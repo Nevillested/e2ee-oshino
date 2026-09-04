@@ -32,11 +32,6 @@ class ControlMessageSender {
         var state = await SessionStore.getState(peerDeviceId);
         Map<String, dynamic>? initHeader;
 
-        DebugLog.log(
-          'ControlMessageSender send to=$peerDeviceId type=${inner.type} '
-          'hadLocalSession=${state != null}',
-        );
-
         if (state == null) {
           final token = await Session.getToken();
           final bundle = await ApiClient().getPrekeyBundle(
@@ -60,17 +55,10 @@ class ControlMessageSender {
             ephemeralKeyPair: outgoing.ephemeralKeyPair,
           );
           initHeader = outgoing.initHeader;
-          DebugLog.log(
-            'ControlMessageSender established fresh X3DH outgoing session to=$peerDeviceId',
-          );
+          DebugLog.log('ControlMessageSender: fresh X3DH session to=$peerDeviceId');
         }
 
         final next = await state.nextSendingKey();
-        DebugLog.log(
-          'ControlMessageSender sending key to=$peerDeviceId '
-          'messageNumber=${next.header['message_number']} '
-          'ratchetPubkey=${next.header['ratchet_pubkey']}',
-        );
         await SessionStore.saveState(peerDeviceId, state);
 
         final headerFields = <String, dynamic>{

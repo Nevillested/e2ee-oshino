@@ -289,7 +289,7 @@ class CallRingService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Oshinobu")
             .setContentText(if (AppLocale.isRussian(this)) "Входящий звонок" else "Incoming call")
-            .setSmallIcon(applicationInfo.icon)
+            .setSmallIcon(callNotificationIcon())
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setOngoing(true)

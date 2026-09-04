@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:video_player/video_player.dart';
 import '../l10n/app_strings.dart';
-import '../services/debug_log.dart';
 import '../services/media_asset_cache.dart';
 import '../theme/app_theme.dart';
 import 'app_loading_indicator.dart';
@@ -152,16 +151,9 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
   // объяснение там же, почему именно так).
   Timer? _sheetSettleTimer;
 
-  // Диагностика лагов открытия плитки медиа (ТЗ пользователя: «подлагивает,
-  // будто обо что-то спотыкается»). Убрать, когда причина найдена.
-  final _sw = Stopwatch()..start();
-  void _plog(String what) =>
-      DebugLog.log('MediaPicker +${_sw.elapsedMilliseconds}ms $what');
-
   @override
   void initState() {
     super.initState();
-    _plog('initState');
     MediaAssetCache.revision.addListener(_onAssetsRevisionChanged);
     _load();
     // Параллельно с загрузкой файлов (заполнением плиток) — сама открывающая
@@ -169,14 +161,12 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
     // kAttachmentSheetRestFraction. addPostFrameCallback — DraggableScrollableController
     // должен быть уже ПРИКРЕПЛЁН к построенному DraggableScrollableSheet.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      _plog('first frame');
       await _openSheet();
       // Камеру поднимаем ТОЛЬКО когда открывающая анимация доиграла — иначе
       // graph CameraX конкурирует за кадры и шторка «спотыкается». Если
       // шторку успели закрыть за время анимации — камеру не трогаем вовсе
       // (частые открытия/закрытия подряд больше не плодят графы CameraX).
       if (!mounted || _disposed || _closing) return;
-      _plog('open animation done — camera init');
       _cameraInitFuture = _initLiveCamera();
     });
     _sheetController.addListener(_onSheetSizeChanged);
@@ -330,7 +320,6 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
   Future<void> _initLiveCamera() async {
     CameraController? controller;
     try {
-      _plog('camera: availableCameras start');
       final cameras = await availableCameras();
       if (!mounted || _disposed || _closing) return;
       final back = cameras.firstWhere(
@@ -342,9 +331,7 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
         ResolutionPreset.low,
         enableAudio: false,
       );
-      _plog('camera: initialize start');
       await controller.initialize();
-      _plog('camera: initialized');
       if (!mounted || _disposed || _closing) {
         // Шторку закрыли, пока камера инициализировалась. НЕ бросаем граф
         // CameraX на произвол — иначе его фоновая финализация роняет процесс.
@@ -382,20 +369,14 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
   /// открывающая анимация, отсюда и промелькивающий спиннер. Здесь просто
   /// забираем уже готовый (или почти готовый) результат.
   Future<void> _load() async {
-    _plog('_load: MediaAssetCache.get() await start');
     _applyPage(await MediaAssetCache.get());
-    _plog('_load: applied cached page');
     // Stale-while-revalidate + живое отслеживание медиатеки: показали
     // мгновенно кэш, а следом перечитываем свежую первую страницу — новые
     // фото/видео (снятые в другом приложении или в камере) появляются сразу
     // при открытии, а не через минуты. MediaAssetCache.refresh тикнет
     // revision — его же слушатель ниже подхватит и изменения ВО ВРЕМЯ того,
     // как шторка уже открыта.
-    unawaited(
-      MediaAssetCache.refresh().whenComplete(
-        () => _plog('_load: revalidate (refresh) done'),
-      ),
-    );
+    unawaited(MediaAssetCache.refresh());
   }
 
   void _onAssetsRevisionChanged() {
@@ -406,7 +387,6 @@ class _MediaPickerSheetBodyState extends State<_MediaPickerSheetBody> {
 
   void _applyPage(MediaAssetPage page) {
     if (!mounted) return;
-    _plog('_applyPage: ${page.assets.length} assets, setState');
     if (page.path == null && page.assets.isEmpty && !page.isLimited) {
       // path == null без ограниченного доступа — либо нет прав вообще,
       // либо в галерее пусто; в обоих случаях просто показываем пустую

@@ -5,7 +5,11 @@ import '../config.dart';
 import '../l10n/app_strings.dart';
 import 'dart:typed_data';
 import 'package:dio/dio.dart' as dio;
+import 'package:dio/io.dart' show IOHttpClientAdapter;
+import 'package:native_dio_adapter/native_dio_adapter.dart';
+import 'package:cronet_http/cronet_http.dart' show CronetEngine;
 import 'dart:io';
+import '../services/debug_log.dart';
 
 /// Отдельный тип ошибки для сетевых/серверных проблем — так их удобно
 /// ловить в UI через try/catch и показывать пользователю e.toString().
@@ -38,13 +42,39 @@ class ApiClient {
   static const _mediaConnectTimeout = Duration(seconds: 15);
   static const _mediaTransferTimeout = Duration(minutes: 5);
 
+  // ОДИН общий Dio на все медиа-запросы (presigned PUT/GET файлов) за всё
+  // время жизни приложения — раньше _mediaDioClient() создавал новый на
+  // КАЖДЫЙ вызов, то есть каждая часть чанковой загрузки заново поднимала
+  // TCP+TLS (на RTT ~150–200 мс это ~0.3–0.5 c впустую на часть). Теперь
+  // соединения переиспользуются между частями и повторами.
+  //
+  // Транспорт — NativeAdapter: на Android это Cronet (из Google Play
+  // Services, вес APK ~0), даёт HTTP/2, а когда на токийском nginx включат
+  // http3 — ещё и QUIC/BBR (одиночный TCP на международном плече упирается
+  // в окно, у QUIC этой проблемы нет). На iOS — URLSession. Если Cronet-
+  // провайдер на устройстве выключен (AOSP-эмулятор, девайс без GMS) —
+  // createFallbackAdapter возвращает обычный dart:io-транспорт.
+  static dio.Dio? _sharedMediaDio;
+
   dio.Dio _mediaDioClient() {
-    return dio.Dio(
+    return _sharedMediaDio ??= dio.Dio(
       dio.BaseOptions(
         connectTimeout: _mediaConnectTimeout,
         sendTimeout: _mediaTransferTimeout,
         receiveTimeout: _mediaTransferTimeout,
       ),
+    )..httpClientAdapter = NativeAdapter(
+      createCronetEngine: () => CronetEngine.build(
+        enableHttp2: true,
+        enableQuic: true,
+        enableBrotli: false, // медиа зашифрованы — сжимать нечего
+      ),
+      createFallbackAdapter: (error, stackTrace) {
+        DebugLog.log(
+          'media transport: Cronet недоступен ($error) — dart:io fallback',
+        );
+        return IOHttpClientAdapter();
+      },
     );
   }
 

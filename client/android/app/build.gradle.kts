@@ -79,4 +79,17 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+
+    // cronet_http (транспорт медиа-запросов, см. api_client.dart) по умолчанию
+    // тянет com.google.android.gms:play-services-cronet, а он приносит
+    // org.chromium.net:cronet-api + cronet-shared с ОДИНАКОВЫМ namespace
+    // 'org.chromium.net' — merger манифестов AGP 8 это отвергает
+    // ("Namespace is used in multiple modules"). Берём единый embedded-
+    // артефакт Cronet (тот же путь, что дал бы --dart-define=cronetHttpNoPlay=true):
+    // +~1.5 МБ на ABI в бандле (Play доставляет один ABI на устройство), зато
+    // без зависимости от версии Cronet в Google Play Services на устройстве.
+    configurations.all {
+        exclude(group = "com.google.android.gms", module = "play-services-cronet")
+    }
+    implementation("org.chromium.net:cronet-embedded:143.7445.0")
 }

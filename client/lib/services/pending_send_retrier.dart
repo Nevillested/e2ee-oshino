@@ -362,7 +362,6 @@ class PendingSendRetrier {
           return RetryOutcome.permanentlyFailed;
       }
       await PendingSendStore.remove(id);
-      DebugLog.log('PendingSendRetrier id=$id sent successfully');
       return RetryOutcome.sent;
     } on _PermanentRetryFailure catch (e) {
       if (peerLogin != null) {

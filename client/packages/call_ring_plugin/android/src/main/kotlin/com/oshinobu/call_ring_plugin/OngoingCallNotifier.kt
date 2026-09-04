@@ -81,7 +81,7 @@ object OngoingCallNotifier {
         return NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle("Oshinobu")
             .setContentText(if (ru) "Идёт разговор с $peerLogin" else "Call in progress with $peerLogin")
-            .setSmallIcon(context.applicationInfo.icon)
+            .setSmallIcon(context.callNotificationIcon())
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setOngoing(true)
             .setAutoCancel(false)

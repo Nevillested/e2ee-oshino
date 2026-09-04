@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+36
+version: 1.0.0+37
 
 environment:
   sdk: ^3.12.2
@@ -49,6 +49,11 @@ dependencies:
   audioplayers: ^6.8.1
   record: ^6.0.0
   dio: ^5.11.0
+  # Транспорт для медиа-запросов (presigned PUT/GET файлов): Cronet на
+  # Android, URLSession на iOS. HTTP/2 сейчас + QUIC/BBR когда на токийском
+  # nginx включат http3 (одиночный TCP на международном плече упирается в
+  # окно, у QUIC этого нет). Применяется ТОЛЬКО к _mediaDioClient().
+  native_dio_adapter: ^1.4.0
   emoji_picker_flutter: ^4.5.3
   file_picker: ^8.1.2
   open_file: ^4.0.0
