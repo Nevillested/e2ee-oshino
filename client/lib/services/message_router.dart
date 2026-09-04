@@ -256,11 +256,31 @@ class MessageRouter {
           rethrow;
         }
         DebugLog.log(
-          'Router recovered via fresh X3DH init from=$senderDeviceId after decrypt failure',
+          'Router: fresh X3DH established from=$senderDeviceId, retrying decrypt',
         );
-        final messageKey = await fresh.nextReceivingKey(envelope);
-        rawInner = await decryptMessage(messageKey, envelope);
-        state = fresh;
+        try {
+          final messageKey = await fresh.nextReceivingKey(envelope);
+          rawInner = await decryptMessage(messageKey, envelope);
+          state = fresh;
+        } catch (e2) {
+          // Свежую сессию из X3DH-полей конверта подняли, но ЭТУ доставку
+          // всё равно не расшифровать — типовая причина: отправитель строил
+          // корневой ключ по 4-DH с одноразовым prekey, который у нас уже
+          // израсходован, а наш свежий 3-DH root ему не равен. Это
+          // невосстановимо (само первое сообщение потеряно). РАНЬШЕ
+          // исключение улетало во внешний catch → "Router FAILED" БЕЗ ack →
+          // сервер передоставлял это сообщение каждые ~20 с бесконечно
+          // (в логе пользователя — 36+ минут подряд, жгло батарею/сеть).
+          // Теперь — через обычную обработку decrypt-failure: после порога
+          // она подтвердит доставку и пошлёт session_reset, что вылечит и
+          // саму сессию (следующий хендшейк пойдёт с совпадающим числом DH).
+          DebugLog.log(
+            'Router: fresh X3DH re-decrypt ALSO failed ($e2) from=$senderDeviceId '
+            '— routing to decrypt-failure handling to break the redelivery loop',
+          );
+          await _onDecryptFailure(senderDeviceId, deliveryId);
+          rethrow;
+        }
       }
 
       await _clearFailureCount(senderDeviceId);

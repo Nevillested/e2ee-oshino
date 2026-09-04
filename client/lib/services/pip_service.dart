@@ -148,6 +148,30 @@ class PipService {
     } catch (_) {}
   }
 
+  /// Заблокирован ли сейчас экран телефона (keyguard). Нужно экрану
+  /// звонка: пока он показан ПОВЕРХ блокировки, уходить с него в остальное
+  /// приложение без разблокировки нельзя (ТЗ — приватный мессенджер).
+  static Future<bool> isDeviceLocked() async {
+    _ensureInitialized();
+    try {
+      return (await _channel.invokeMethod<bool>('isDeviceLocked')) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Просит систему показать экран разблокировки. true — пользователь
+  /// разблокировал (и show-when-locked уже снят нативно), можно уходить с
+  /// экрана звонка; false — отменил, остаёмся на экране звонка.
+  static Future<bool> requestUnlock() async {
+    _ensureInitialized();
+    try {
+      return (await _channel.invokeMethod<bool>('requestUnlock')) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// true, если приложение сейчас запущено кнопкой "Ответить" из
   /// уведомления о звонке (см. CallRingService) — тогда ближайший входящий
   /// звонок нужно принять автоматически, не дожидаясь повторного тапа уже

@@ -195,9 +195,45 @@ class _CallScreenState extends State<CallScreen> {
     return _call.status.isNotEmpty ? _call.status : tr('call.dialing');
   }
 
+  bool _leaving = false;
+
+  /// Уйти с экрана звонка (назад в приложение / свернуть) можно всегда,
+  /// КРОМЕ случая, когда экран показан ПОВЕРХ заблокированного телефона
+  /// (входящий звонок разбудил приложение через full-screen intent). Тогда
+  /// сначала разблокировка — иначе получался обход блокировки: во время
+  /// разговора можно было листать чаты на «запертом» телефоне (ТЗ: для
+  /// приватного мессенджера недопустимо). Красная кнопка (сброс) этим НЕ
+  /// ограничена — трубку кладут и с локскрина.
+  Future<void> _leaveCallScreen(VoidCallback proceed) async {
+    if (_leaving) return;
+    _leaving = true;
+    try {
+      if (await PipService.isDeviceLocked()) {
+        final unlocked = await PipService.requestUnlock();
+        if (!unlocked) return; // остаёмся на экране звонка
+      }
+      if (mounted) proceed();
+    } finally {
+      _leaving = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return ThemeReactive(builder: (context) => _build(context));
+    return PopScope(
+      // canPop:false → системный «назад» не закрывает экран сам; решаем в
+      // _leaveCallScreen. Программный Navigator.pop() (в т.ч. popUntil при
+      // завершении звонка) PopScope не трогает — экран всё равно закроется,
+      // когда звонок кончится.
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _leaveCallScreen(() {
+          if (mounted) Navigator.of(context).pop();
+        });
+      },
+      child: ThemeReactive(builder: (context) => _build(context)),
+    );
   }
 
   Widget _build(BuildContext context) {
@@ -364,7 +400,8 @@ class _CallScreenState extends State<CallScreen> {
                   color: AppColors.textPrimary,
                 ),
                 iconSize: 20,
-                onPressed: () => PipService.enterPipNow(),
+                onPressed: () =>
+                    _leaveCallScreen(() => PipService.enterPipNow()),
               ),
             ),
             Positioned(

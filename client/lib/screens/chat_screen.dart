@@ -5410,7 +5410,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         msg,
                         onProgress: onProgress,
                       ),
-                      isCached: () => MediaCache.exists(msg.mediaId!),
+                      isCached: () async =>
+                          msg.mediaId != null &&
+                          await MediaCache.exists(msg.mediaId!),
                       coordinator: _mediaCoordinator,
                       messageId: msg.messageId,
                     ),

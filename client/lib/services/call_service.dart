@@ -438,14 +438,15 @@ class CallService {
     _state = s;
     _stateController.add(s);
 
-    // Момент реального ответа — для caller это событие от WebRTC
-    // (onConnectionState), для callee — оптимистичный переход сразу после
-    // acceptCall(). В обоих случаях это единственный момент, когда
-    // _setState(connected) вызывается, поэтому фиксируем длительность
-    // именно здесь, один раз за звонок.
-    if (s == CallState.connected && _connectedAt == null) {
-      _connectedAt = DateTime.now();
-    }
+    // ВАЖНО: _connectedAt (с него считается длительность разговора на
+    // ОБОИХ экранах) больше НЕ ставится здесь. Раньше callee фиксировал
+    // его оптимистично сразу после acceptCall(), а caller — позже, по
+    // событию WebRTC onConnectionState=connected: отсюда рассинхрон
+    // таймера (у callee время шло раньше). Теперь и caller, и callee
+    // ставят _connectedAt по ОДНОМУ и тому же событию — фактическому
+    // соединению WebRTC (onConnectionState / onIceConnectionState,
+    // см. _createPeerConnection), которое наступает у обеих сторон
+    // практически одновременно (один и тот же DTLS-handshake).
 
     // Уведомление "идёт разговор" живёт здесь, а не в CallScreen — экран
     // может быть закрыт (пользователь ушёл в другой чат), пока звонок
@@ -488,7 +489,9 @@ class CallService {
     _updateWakelock();
 
     if (s == CallState.outgoingRinging) {
-      SoundService.startRingback();
+      SoundService.startRingback(
+        speakerOn: _effectiveAudioRoute == 'speaker',
+      );
     } else {
       SoundService.stopRingback();
     }
@@ -588,6 +591,13 @@ class CallService {
       speakerOn = route == 'speaker';
     }
     await _updateProximityScreenOff();
+    // Гудки дозвона едут по каналу голосового вызова — при смене вывода
+    // во время дозвона их тоже надо перенаправить (см. SoundService).
+    if (_state == CallState.outgoingRinging) {
+      unawaited(
+        SoundService.setRingbackSpeaker(_effectiveAudioRoute == 'speaker'),
+      );
+    }
     _audioRouteController.add(null);
   }
 
@@ -856,7 +866,11 @@ class CallService {
     _peerConnection!.onConnectionState = (connState) {
       DebugLog.log('CallService onConnectionState: $connState');
       if (connState == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
-        _setState(CallState.connected);
+        // Единая для обеих сторон точка старта таймера разговора (см.
+        // комментарий в _setState). ??= — если ICE-событие ниже успело
+        // раньше, оно и выигрывает; разница между ними мизерна.
+        _connectedAt ??= DateTime.now();
+        if (_state != CallState.connected) _setState(CallState.connected);
       } else if (connState ==
           RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
         endCall();
@@ -872,6 +886,18 @@ class CallService {
     // только в отдельных местах, где мы сами его логируем point-in-time.
     _peerConnection!.onIceConnectionState = (iceState) {
       DebugLog.log('CallService onIceConnectionState: $iceState');
+      // Страховка: на части устройств/сборок flutter_webrtc
+      // onConnectionState=connected приходит ненадёжно, а медиа при этом
+      // уже идёт. Тогда старт таймера цепляем к ICE connected/completed —
+      // это событие тоже общее для обеих сторон.
+      if (iceState == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+          iceState == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+        _connectedAt ??= DateTime.now();
+        if (_state == CallState.incomingRinging ||
+            _state == CallState.outgoingRinging) {
+          _setState(CallState.connected);
+        }
+      }
     };
     _peerConnection!.onSignalingState = (signalingState) {
       DebugLog.log('CallService onSignalingState: $signalingState');
@@ -1013,6 +1039,11 @@ class CallService {
 
       await _send('call_answer', {'sdp': answer.sdp});
       _setStatus(tr('call.connecting'));
+      // Оптимистичный переход экрана в "разговор" сразу после ответа —
+      // для отзывчивости. Сам ТАЙМЕР при этом не стартует: _connectedAt
+      // ставится только по факту соединения WebRTC (см. _createPeerConnection),
+      // тем же событием, что и у звонящего — иначе время на двух экранах
+      // расходится. До соединения _durationText() показывает пусто.
       _setState(CallState.connected);
     } catch (e, st) {
       DebugLog.log('CallService acceptCall() FAILED error=$e');

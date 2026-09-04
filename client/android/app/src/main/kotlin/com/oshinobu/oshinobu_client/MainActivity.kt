@@ -1,5 +1,6 @@
 package com.oshinobu.oshinobu_client
 
+import android.app.KeyguardManager
 import android.app.PictureInPictureParams
 import android.content.ContentValues
 import android.content.Context
@@ -377,6 +378,41 @@ class MainActivity : FlutterFragmentActivity() {
                 "clearShowWhenLocked" -> {
                     clearShowWhenLocked()
                     result.success(null)
+                }
+                "isDeviceLocked" -> {
+                    val km = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                    result.success(km?.isKeyguardLocked == true)
+                }
+                "requestUnlock" -> {
+                    // Экран звонка показан ПОВЕРХ блокировки (setShowWhenLocked).
+                    // Пользователь хочет уйти с него в остальное приложение —
+                    // сначала пусть разблокирует. Успех → чистим show-when-locked,
+                    // чтобы приложение дальше вело себя как обычно.
+                    val km = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                    if (km == null || !km.isKeyguardLocked) {
+                        result.success(true)
+                        return@setMethodCallHandler
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        km.requestDismissKeyguard(
+                            this,
+                            object : KeyguardManager.KeyguardDismissCallback() {
+                                override fun onDismissSucceeded() {
+                                    clearShowWhenLocked()
+                                    result.success(true)
+                                }
+                                override fun onDismissCancelled() {
+                                    result.success(false)
+                                }
+                                override fun onDismissError() {
+                                    result.success(false)
+                                }
+                            },
+                        )
+                    } else {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD)
+                        result.success(!km.isKeyguardLocked)
+                    }
                 }
                 "consumeAutoAccept" -> {
                     // "Consume" — читаем и сразу стираем флаг из текущего

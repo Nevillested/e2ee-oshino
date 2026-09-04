@@ -9,12 +9,16 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
@@ -32,6 +36,7 @@ import androidx.core.app.Person
 class CallRingService : Service() {
 
     private var mediaPlayer: MediaPlayer? = null
+    private var vibrator: Vibrator? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var isRinging = false
     private var currentCallId: String? = null
@@ -83,7 +88,7 @@ class CallRingService : Service() {
         // должно обрывать уже играющий рингтон и запускать его заново.
         if (!isRinging) {
             isRinging = true
-            startRingtone()
+            startAlerting()
             acquireWakeLock()
         }
 
@@ -115,12 +120,61 @@ class CallRingService : Service() {
             it.release()
         }
         mediaPlayer = null
+        try {
+            vibrator?.cancel()
+        } catch (_: Exception) {
+        }
+        vibrator = null
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?) = null
+
+    /// Что делать при входящем — по текущему режиму звонка телефона (ТЗ
+    /// пользователя): обычный → мелодия; виброрежим → только вибрация;
+    /// беззвучный → ничего (уведомление/полноэкранный вызов всё равно
+    /// показываются, просто молча).
+    private fun startAlerting() {
+        val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        when (am?.ringerMode) {
+            AudioManager.RINGER_MODE_SILENT -> {
+                Log.d(TAG, "startAlerting: ringer=SILENT — без звука и вибрации")
+            }
+            AudioManager.RINGER_MODE_VIBRATE -> {
+                Log.d(TAG, "startAlerting: ringer=VIBRATE — только вибрация")
+                startVibration()
+            }
+            else -> {
+                Log.d(TAG, "startAlerting: ringer=NORMAL — мелодия")
+                startRingtone()
+            }
+        }
+    }
+
+    private fun startVibration() {
+        try {
+            val vib = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager)
+                    .defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            // Пауза 0 → вибрация 800 → пауза 800, повтор с индекса 0.
+            val pattern = longArrayOf(0, 800, 800)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vib.vibrate(VibrationEffect.createWaveform(pattern, 0))
+            } else {
+                @Suppress("DEPRECATION")
+                vib.vibrate(pattern, 0)
+            }
+            vibrator = vib
+        } catch (e: Exception) {
+            Log.e(TAG, "startVibration failed", e)
+        }
+    }
 
     private fun startRingtone() {
         // Звоним тем рингтоном, что выбран у пользователя в настройках
@@ -234,9 +288,13 @@ class CallRingService : Service() {
                 } else {
                     "Incoming call notification, even when the app is closed"
                 }
-                // Звук крутит сам сервис через MediaPlayer (по кругу) —
-                // системный одноразовый звук канала тут не нужен.
+                // Звук И вибрацию канала выключаем полностью — и то, и
+                // другое сервис делает сам по режиму звонка телефона (см.
+                // startAlerting). Иначе IMPORTANCE_HIGH-канал в беззвучном
+                // режиме всё равно вибрировал бы при показе уведомления.
                 setSound(null, null)
+                enableVibration(false)
+                enableLights(false)
             }
             nm.createNotificationChannel(channel)
         }
