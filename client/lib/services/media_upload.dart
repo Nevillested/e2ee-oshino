@@ -29,17 +29,50 @@ const streamingThresholdBytes = 20 * 1024 * 1024; // 20 МБ
 /// хотя докачка для того и сделана, чтобы такое переживать. Отмена
 /// пользователем (см. UploadCancelRegistry / cancelToken) НЕ повторяется —
 /// сразу пробрасывается наверх.
+/// [label] — только для диагностики (см. DebugLog.error ниже), ни на что
+/// функционально не влияет. Раньше сбой здесь логировался только в момент
+/// падения последней попытки одной строкой без деталей — реальный кейс:
+/// пачка из 6 параллельных частей (см. partConcurrency) синхронно
+/// спотыкалась и потом ~40с ничего не летело, а понять, на каком именно
+/// шаге и почему (DNS? таймаут? какая именно ошибка?) было нельзя. Теперь
+/// каждая проваленная попытка пишет: сколько мс она реально длилась
+/// (мгновенный провал = обрыв соединения, долгий = таймаут), точный тип и
+/// текст исключения, и сколько ждём перед повтором — этого должно хватить,
+/// чтобы в следующий раз понять причину по одному только автоприсланному
+/// логу (см. CrashReporter), не выпрашивая телефон физически.
 Future<T> _retryChunkedStep<T>(
   Future<T> Function() step, {
   required dio.CancelToken cancelToken,
   int attempts = 5,
+  String label = 'chunked-step',
 }) async {
   var delay = const Duration(seconds: 2);
   for (var attempt = 1; ; attempt++) {
+    final startedAt = DateTime.now();
     try {
       return await step();
-    } catch (_) {
-      if (cancelToken.isCancelled || attempt >= attempts) rethrow;
+    } catch (e) {
+      final elapsedMs = DateTime.now().difference(startedAt).inMilliseconds;
+      if (cancelToken.isCancelled) {
+        DebugLog.log(
+          '_retryChunkedStep[$label] отменено пользователем '
+          '(attempt=$attempt, ${elapsedMs}мс на попытку)',
+        );
+        rethrow;
+      }
+      if (attempt >= attempts) {
+        DebugLog.error(
+          '_retryChunkedStep[$label] ОКОНЧАТЕЛЬНО провалено: '
+          'attempt=$attempt/$attempts, ${elapsedMs}мс на последнюю попытку, '
+          'error=$e (${e.runtimeType})',
+        );
+        rethrow;
+      }
+      DebugLog.error(
+        '_retryChunkedStep[$label] attempt=$attempt/$attempts провалена за '
+        '${elapsedMs}мс: error=$e (${e.runtimeType}) — повтор через '
+        '${delay.inSeconds}с',
+      );
       await Future<void>.delayed(delay);
       final doubled = delay * 2;
       delay = doubled > const Duration(seconds: 30)
@@ -116,6 +149,7 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         final init = await _retryChunkedStep(
           () => apiClient.initChunkedUpload(token, totalSize),
           cancelToken: cancelToken,
+          label: 'init',
         );
         await ChunkedUploadSessionStore.save(
           messageId,
@@ -155,6 +189,7 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
               existingSession.uploadId,
             ),
             cancelToken: cancelToken,
+            label: 'list-parts',
           );
           sessionMediaId = existingSession.mediaId;
           sessionUploadId = existingSession.uploadId;
@@ -217,6 +252,7 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
               pending,
             ),
             cancelToken: cancelToken,
+            label: 'part-urls',
           ),
         );
       }
@@ -249,6 +285,7 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
 
         await _retryChunkedStep(
           () async {
+            final presignedStartedAt = DateTime.now();
             try {
               // Часть заливаем ПОТОКОМ (диапазон байт temp-файла). Новый
               // поток на каждую попытку — потому и создаётся ВНУТРИ лямбды
@@ -261,7 +298,20 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
               );
             } catch (e) {
               if (cancelToken.isCancelled) rethrow;
-              // presigned не прошёл (истёкший URL / Токио / туннель).
+              final presignedMs = DateTime.now()
+                  .difference(presignedStartedAt)
+                  .inMilliseconds;
+              // presigned не прошёл (истёкший URL / relay-VPS / туннель).
+              // Мгновенный провал (единицы-десятки мс) обычно означает обрыв
+              // соединения/DNS ещё до отправки байт; долгий (секунды+) —
+              // таймаут уже во время передачи. Именно это различие и не
+              // хватало раньше, чтобы понять причину похожих ~40-секундных
+              // пауз задним числом по одному только логу.
+              DebugLog.error(
+                'media_upload: part $pn presigned PUT FAILED после '
+                '${presignedMs}мс: error=$e (${e.runtimeType}) — пробую '
+                'relay-fallback через Москву',
+              );
               // Fallback: заливаем ЭТУ часть через московский сервер
               // (старый relay-эндпоинт) — MinIO не различает, как часть
               // долетела. Заодно перезапрашиваем свежий presigned-URL на
@@ -274,8 +324,12 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
                   [pn],
                 );
                 if (fresh[pn] != null) partUrls[pn] = fresh[pn]!;
-              } catch (_) {}
-              DebugLog.log('media_upload: part $pn presigned FAILED ($e) — relay fallback');
+              } catch (e2) {
+                DebugLog.error(
+                  'media_upload: part $pn обновление presigned-URL перед '
+                  'fallback тоже провалилось: error=$e2 (${e2.runtimeType})',
+                );
+              }
               // relay-эндпоинт принимает байты целиком — для редкого
               // fallback-пути читаем часть разово.
               final raf = await encTempFile.open();
@@ -286,17 +340,39 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
               } finally {
                 await raf.close();
               }
-              await apiClient.uploadChunkedPart(
-                token,
-                sessionMediaId,
-                sessionUploadId,
-                pn,
-                chunk,
-                cancelToken: cancelToken,
-              );
+              final relayStartedAt = DateTime.now();
+              try {
+                await apiClient.uploadChunkedPart(
+                  token,
+                  sessionMediaId,
+                  sessionUploadId,
+                  pn,
+                  chunk,
+                  cancelToken: cancelToken,
+                );
+                DebugLog.log(
+                  'media_upload: part $pn relay-fallback через Москву '
+                  'УСПЕШЕН за ${DateTime.now().difference(relayStartedAt).inMilliseconds}мс',
+                );
+              } catch (e3) {
+                // ИМЕННО эта ошибка (не presigned выше) — самая вероятная
+                // причина многосекундных пауз: и основной, и запасной путь
+                // споткнулись в одном и том же окне. Тип исключения тут
+                // (например SocketException с "Failed host lookup" — DNS,
+                // против TimeoutException — путь в принципе жив, но долго)
+                // и есть ответ на вопрос "что за херня происходит".
+                DebugLog.error(
+                  'media_upload: part $pn relay-fallback через Москву ТОЖЕ '
+                  'ПРОВАЛИЛСЯ после '
+                  '${DateTime.now().difference(relayStartedAt).inMilliseconds}мс: '
+                  'error=$e3 (${e3.runtimeType})',
+                );
+                rethrow;
+              }
             }
           },
           cancelToken: cancelToken,
+          label: 'part $pn',
         );
         confirmedBytes += len;
         reportProgress();
@@ -346,6 +422,7 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
           peerAccountIdForUpload,
         ),
         cancelToken: cancelToken,
+        label: 'complete',
       );
       await ChunkedUploadSessionStore.clear(messageId);
       try {
