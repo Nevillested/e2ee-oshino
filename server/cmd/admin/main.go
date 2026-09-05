@@ -87,7 +87,7 @@ func runMenu(ctx context.Context, queries *db.Queries, reader *bufio.Reader) {
 		fmt.Println("=== Oshinobu — админ-утилита ===")
 		fmt.Println("1) Сменить пароль аккаунта")
 		fmt.Println("2) Сбросить TOTP-секрет (код аутентификатора)")
-		fmt.Println("3) Проверить состояние служб проекта")
+		fmt.Println("3) Проверить состояние инфраструктуры проекта")
 		fmt.Println("4) Сгенерировать пригласительный код")
 		fmt.Println("5) Показать все пригласительные коды")
 		fmt.Println("6) Удалить пригласительный код")
@@ -110,7 +110,7 @@ func runMenu(ctx context.Context, queries *db.Queries, reader *bufio.Reader) {
 		case "2":
 			runAction(ctx, queries, reader, resetTOTP)
 		case "3":
-			runCheckServices(ctx)
+			runCheckInfrastructure(ctx)
 		case "4":
 			runGenerateInviteCode(ctx, queries)
 		case "5":

@@ -1,7 +1,11 @@
-// check_project_services.go — пункт меню "Проверить состояние служб
-// проекта" в этой же утилите (см. main.go). Список служб и портов сверен
-// по факту с сервером (systemctl list-units, ss -tlnp), а не угадан —
-// смотрит на всё, от чего реально зависит работа приложения:
+// check_project_services.go — пункт меню "Проверить состояние
+// инфраструктуры проекта" в этой же утилите (см. main.go). Изначально был
+// только про systemd-службы этой (московской) VPS, но давно вырос за эти
+// рамки — SMTP-хост уже был внешней сетевой пробой, а теперь ещё и
+// токийский VPS (см. ниже), так что и пункт меню переименован. Список
+// служб и портов сверен по факту с сервером (systemctl list-units, ss
+// -tlnp), а не угадан — смотрит на всё, от чего реально зависит работа
+// приложения:
 //   - systemd-служба самого Go-сервера (oshinobu-server) — и отдельно
 //     HTTP-запрос к его собственному /health, раз уж он есть: "процесс
 //     жив" и "отвечает на запросы" — разные вещи, процесс может висеть
@@ -14,15 +18,28 @@
 //     хранилища в Японии, где реально крутится MinIO; если эта служба
 //     упадёт, MinIO станет недоступен даже если сам NAS в полном порядке —
 //     отдельная, самая частая точка отказа именно на стороне этой VPS;
-//   - MinIO — сам туннель целиком, сквозной проверкой (реальный вызов API
-//     через тот же путь, которым ходит приложение);
+//   - MinIO (локальный путь) — сам туннель Москва → FRP → NAS, сквозной
+//     проверкой (реальный вызов API через тот же путь, которым ходит
+//     московский сервер для служебных multipart-вызовов);
+//   - Токийский VPS (files.oshino.space) — ОТДЕЛЬНАЯ от локального MinIO
+//     проверка: та же сквозная проба (BucketExists), но через публичный
+//     presigned-эндпоинт, то есть по факту проверяет ВЕСЬ путь Москва →
+//     Токио (интернет) → FRP-туннель Токио → NAS/MinIO целиком — именно
+//     тем же способом, каким клиенты грузят/качают файлы напрямую, минуя
+//     эту VPS (см. OSHINOBU_OVERVIEW.md, "Поток данных — presigned URL").
+//     Эта VPS физически не связана с московской (звезда через NAS), так
+//     что её падение не видно ни в одной из проверок выше;
 //   - SMTP-хост почты (mail.hosting.reg.ru) — тот самый порт 587, который
 //     раньше резался провайдером, стоит держать под наблюдением на случай,
 //     если блокировку внезапно вернут или что-то изменится на их стороне.
 //
 // Сознательно НЕ проверяются: общесистемные службы ОС (ssh, cron, chrony,
 // fail2ban, cloud-init и т.п.) — они не специфичны для проекта, это
-// заботы обычного администрирования сервера, а не эта утилита.
+// заботы обычного администрирования сервера, а не эта утилита. Проверка
+// Токио тоже не заменяет диагностику доступности из РФ без VPN (DPI режет
+// именно клиентские подключения к files.oshino.space у части провайдеров,
+// не подключение самой Москвы к Токио) — см. открытый пункт в
+// OSHINOBU_OVERVIEW.md.
 //
 // Все проверки — только чтение/сетевые пробы, ничего не меняют.
 package main
@@ -44,9 +61,9 @@ import (
 
 const serviceCheckTimeout = 5 * time.Second
 
-func runCheckServices(ctx context.Context) {
+func runCheckInfrastructure(ctx context.Context) {
 	fmt.Println()
-	fmt.Println("=== Состояние служб проекта ===")
+	fmt.Println("=== Состояние инфраструктуры проекта ===")
 	fmt.Println()
 
 	checkSystemdService("oshinobu-server")
@@ -57,6 +74,7 @@ func runCheckServices(ctx context.Context) {
 	checkSystemdService("coturn")
 	checkSystemdService("e2ee-frps")
 	checkMinio(ctx)
+	checkTokyoRelay(ctx)
 	checkSMTP()
 
 	fmt.Println()
@@ -172,6 +190,50 @@ func checkMinio(ctx context.Context) {
 		return
 	}
 	printResult("MinIO", true, fmt.Sprintf("подключение успешно, бакет %q на месте", bucket))
+}
+
+// checkTokyoRelay — та же идея, что checkMinio выше (реальный BucketExists,
+// не просто TCP-коннект), но через ПУБЛИЧНЫЙ presigned-эндпоинт
+// (MINIO_PUBLIC_ENDPOINT = files.oshino.space) вместо локального
+// MINIO_ENDPOINT — тот же клиент, что server/main.go создаёт для подписи
+// presigned-URL (см. minioPresign там же), только сам presign — чистая
+// локальная криптография и никуда не стучится, а BucketExists — самый
+// обычный HTTP-запрос, поэтому именно им и проверяем: он идёт по
+// НАСТОЯЩЕМУ пути Москва → интернет → nginx в Токио → FRP-туннель до NAS →
+// MinIO, то есть по факту это проверка всей отдельной, физически не
+// связанной с московской VPS инфраструктуры разом.
+func checkTokyoRelay(ctx context.Context) {
+	label := "Токио: files.oshino.space"
+
+	endpoint := os.Getenv("MINIO_PUBLIC_ENDPOINT")
+	bucket := os.Getenv("MINIO_BUCKET")
+	if endpoint == "" {
+		printResult(label, false, "переменная MINIO_PUBLIC_ENDPOINT не задана в .env")
+		return
+	}
+
+	client, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(os.Getenv("MINIO_ACCESS_KEY"), os.Getenv("MINIO_SECRET_KEY"), ""),
+		Secure: os.Getenv("MINIO_PUBLIC_SECURE") != "false",
+	})
+	if err != nil {
+		printResult(label, false, err.Error())
+		return
+	}
+
+	ctxTimeout, cancel := context.WithTimeout(ctx, serviceCheckTimeout)
+	defer cancel()
+
+	exists, err := client.BucketExists(ctxTimeout, bucket)
+	if err != nil {
+		printResult(label, false, "путь Москва → Токио → FRP → NAS/MinIO недоступен: "+err.Error())
+		return
+	}
+	if !exists {
+		printResult(label, false, fmt.Sprintf("подключился, но бакет %q не найден", bucket))
+		return
+	}
+	printResult(label, true, fmt.Sprintf("presigned-путь до NAS жив, бакет %q на месте", bucket))
 }
 
 // checkSMTP — просто TCP-подключение к почтовому хосту, без реальной

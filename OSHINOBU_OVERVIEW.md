@@ -98,9 +98,18 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
   **`frpc-e2ee-tokyo`** (скрипт+конфиг `/mnt/tank/e2ee/scripts/frpc-tokyo/`, только
   `minio-api` 9000 — консоль через Токио НЕ пробрасываем) держит туннель MinIO → Токио на
   `127.0.0.1:9000`, nginx его проксирует. FRP-токены Токио: `frpc-tokyo/.env` на NAS +
-  `frps.toml` на Токио. **Харднинг Токио:** ufw (только 22/80/443/7000), fail2ban, 1 ГБ swap,
-  SSH — только по ключу (`/etc/ssh/sshd_config.d/99-hardening.conf`: `PasswordAuthentication
-  no`, `PermitRootLogin prohibit-password`).
+  `frps.toml` на Токио. **Харднинг Токио:** ufw (22/80/443/7000/tcp + 443/udp — см. ниже,
+  добавлен 2026-09-05), fail2ban, 1 ГБ swap, SSH — только по ключу
+  (`/etc/ssh/sshd_config.d/99-hardening.conf`: `PasswordAuthentication no`,
+  `PermitRootLogin prohibit-password`).
+  **HTTP/3 включён (2026-09-05)** — пакетный nginx 1.28.3 из репозитория Ubuntu уже собран с
+  `--with-http_v3_module`, пересборка не понадобилась. В серверном блоке `files.oshino.space`
+  добавлены `listen 443 quic reuseport;` (+ `[::]:443`), `http3 on;`, `quic_retry on;`
+  (защита от spoofed-адресов на UDP) и `add_header Alt-Svc 'h3=":443"; ma=86400' always;`
+  — остальной блок (SigV4-критичные `proxy_*`, Certbot-строки) не тронут. `ufw allow 443/udp`
+  (обе версии IP). Подтверждено: `nginx -t` чисто, `curl -sI .../minio/health/live` отдаёт
+  заголовок `Alt-Svc`. Cronet на клиенте сам решает, договориться ли на QUIC вместо HTTP/2 —
+  отдельного флага в приложении не нужно (см. «Транспорт медиа-запросов → Cronet» выше).
 - **DNS:** `files.oshino.space A → 202.182.112.9` в Route53 (обычная A-запись, зона
   `oshino.space` осталась на Route53 — не мигрировали из-за почты reg.ru + старого
   не-e2ee сайта `oshino.space` + авто-renew TLS).
@@ -190,8 +199,9 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
 4. **Транспорт для медиа-запросов → Cronet** (`native_dio_adapter` + `cronet_http`, только
    `ApiClient._mediaDioClient()`; auth/WS не тронуты). На Android — `cronet-embedded`
    (не `play-services-cronet`: у него конфликт namespace `org.chromium.net` с AGP 8, см.
-   `android/app/build.gradle.kts`). Даёт HTTP/2 сейчас; QUIC/BBR — когда на токийском nginx
-   включат `http3` (не сделано). Прогресс отправки теперь считается по ПОДТВЕРЖДЁННЫМ частям,
+   `android/app/build.gradle.kts`). HTTP/3 на токийском nginx включён (2026-09-05, см. ниже) —
+   Cronet сам решает, договориться ли с сервером на QUIC вместо HTTP/2, отдельного флага на
+   клиенте для этого не нужно. Прогресс отправки теперь считается по ПОДТВЕРЖДЁННЫМ частям,
    а не «в полёте» — Cronet буферизует тело запроса целиком перед отправкой, из-за чего
    `onSendProgress` показывал бы ложные 100% заранее.
 
@@ -501,7 +511,7 @@ presigned-путь по-настоящему.
     только если шторку не закрыли; `_initLiveCamera` сам закрывает контроллер, если
     `!mounted/_disposed/_closing` к моменту завершения `initialize()`; закрытие камеры
     (`_disposeLiveCamera`) ждёт `_cameraInitFuture` и мемоизировано.
-- [ ] **Батч правок (2026-09-04, готовится к релизу `1.0.0+37`)** — код готов, не собрано:
+- [x] **Батч правок (2026-09-04, релиз `1.0.0+37`)** — собрано и опубликовано:
   - Иконка уведомлений в звонках (был всё ещё пустой кружок — уведомления о сообщениях
     починены в `+36`): нативные `CallRingService` / `OngoingCallNotifier` брали
     `applicationInfo.icon`; теперь `Context.callNotificationIcon()` (`NotificationIcon.kt`) =
@@ -539,9 +549,10 @@ presigned-путь по-настоящему.
       Прогресс теперь по ПОДТВЕРЖДЁННЫМ частям, а не по «в полёте» (Cronet буферизует тело
       запроса → `onSendProgress` там врёт). Размер части (сервер, 8 МБ) не трогали.
   - **Транспорт медиа-запросов → Cronet** (`native_dio_adapter` + `cronet_http`, только
-    `_mediaDioClient()` в `api_client.dart`; auth/WS как были). Даёт HTTP/2 сейчас, а когда на
-    токийском nginx включат `http3` — QUIC/BBR (одиночный TCP на международном плече упирается
-    в окно, у QUIC этого нет). На iOS — URLSession. Cronet — `cronet-embedded` (см.
+    `_mediaDioClient()` в `api_client.dart`; auth/WS как были). HTTP/3 на токийском nginx
+    включён (2026-09-05) — Cronet сам умеет договориться на QUIC/BBR вместо HTTP/2 (одиночный
+    TCP на международном плече упирается в окно, у QUIC этого нет). На iOS — URLSession. Cronet
+    — `cronet-embedded` (см.
     `android/app/build.gradle.kts`: `play-services-cronet` даёт коллизию namespace
     `org.chromium.net` в AGP 8), +~1.5 МБ на ABI (Play доставляет один). Если Cronet-провайдер
     недоступен (AOSP-эмулятор) — `createFallbackAdapter` → обычный dart:io.
@@ -558,7 +569,7 @@ presigned-путь по-настоящему.
       на Токио, новый домен/IP при SNI-блоке, CDN, хранилище ближе к РФ). Решение: **держим
       оба пути заливки (presigned Токио + московский relay), релизим, доступностью РФ
       занимаемся после.** Следующий шаг — выяснить, блок по SNI или по IP.
-- [ ] **Батч правок звонков (2026-09-04, готовится к `1.0.0+38`)** — код готов, не собрано:
+- [x] **Батч правок звонков (2026-09-04, релиз `1.0.0+38`)** — собрано и опубликовано:
   - **Режим звонка телефона** (`CallRingService.startAlerting`): обычный → мелодия; виброрежим
     → только вибрация (`Vibrator` waveform, permission `VIBRATE` в плагине); беззвучный →
     ничего (уведомление/full-screen всё равно показываются). Канал уведомления — `setSound(null)`
@@ -656,10 +667,9 @@ presigned-путь по-настоящему.
     новая колонка `kind` (миграция `021_feedback_kind.sql`, дефолт `'user'` для истории),
     автоотчёты идут с `kind='auto_crash'`. `NewFeedbackHandler` — `http.MaxBytesReader` на
     2 МБ. Админ-утилита (`reports_feedback.go`) показывает `kind` в списке.
-  - **Не проверено в Google Play Data Safety** — по договорённости с пользователем, проверят
-    отдельно, нужно ли обновлять декларацию (диагностика по сути то же самое, что сервер и так
-    легитимно видит про переписку — метаданные, не контент, — но формально это может подпадать
-    под отдельный пункт декларации).
+  - **Google Play Data Safety обновлён (2026-09-05)** — раздел App info and performance →
+    Crash logs: Collected (без Shared), не ephemeral, сбор обязателен (тумблера отключения в
+    приложении нет), purpose = Analytics. Отправлено на ревью вместе с `1.0.0+39`, опубликовано.
   - Миграцию `021_feedback_kind.sql` нужно применить на сервере вручную (владелец деплоит по
     SSH) до того, как обновлённый клиент уйдёт в прод — иначе `INSERT` с `kind` упадёт на
     несуществующей колонке.
