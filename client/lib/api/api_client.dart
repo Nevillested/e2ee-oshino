@@ -9,7 +9,6 @@ import 'package:dio/io.dart' show IOHttpClientAdapter;
 import 'package:native_dio_adapter/native_dio_adapter.dart';
 import 'package:cronet_http/cronet_http.dart' show CronetEngine;
 import 'dart:io';
-import '../services/debug_log.dart';
 
 /// Отдельный тип ошибки для сетевых/серверных проблем — так их удобно
 /// ловить в UI через try/catch и показывать пользователю e.toString().
@@ -69,12 +68,7 @@ class ApiClient {
         enableQuic: true,
         enableBrotli: false, // медиа зашифрованы — сжимать нечего
       ),
-      createFallbackAdapter: (error, stackTrace) {
-        DebugLog.log(
-          'media transport: Cronet недоступен ($error) — dart:io fallback',
-        );
-        return IOHttpClientAdapter();
-      },
+      createFallbackAdapter: (error, stackTrace) => IOHttpClientAdapter(),
     );
   }
 

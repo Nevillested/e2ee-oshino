@@ -53,13 +53,7 @@ Future<T> _retryChunkedStep<T>(
       return await step();
     } catch (e) {
       final elapsedMs = DateTime.now().difference(startedAt).inMilliseconds;
-      if (cancelToken.isCancelled) {
-        DebugLog.log(
-          '_retryChunkedStep[$label] отменено пользователем '
-          '(attempt=$attempt, ${elapsedMs}мс на попытку)',
-        );
-        rethrow;
-      }
+      if (cancelToken.isCancelled) rethrow;
       if (attempt >= attempts) {
         DebugLog.error(
           '_retryChunkedStep[$label] ОКОНЧАТЕЛЬНО провалено: '
@@ -350,10 +344,6 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
                   chunk,
                   cancelToken: cancelToken,
                 );
-                DebugLog.log(
-                  'media_upload: part $pn relay-fallback через Москву '
-                  'УСПЕШЕН за ${DateTime.now().difference(relayStartedAt).inMilliseconds}мс',
-                );
               } catch (e3) {
                 // ИМЕННО эта ошибка (не presigned выше) — самая вероятная
                 // причина многосекундных пауз: и основной, и запасной путь
@@ -474,11 +464,8 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
           mediaId = presigned.mediaId;
         } catch (e) {
           if (cancelToken.isCancelled) rethrow;
-          // presigned не сработал (Токио/туннель недоступны) — грузим весь
+          // presigned не сработал (relay-VPS/туннель недоступны) — грузим весь
           // файл через московский сервер (старый relay-эндпоинт).
-          DebugLog.log(
-            'media_upload: presigned non-chunked FAILED ($e) — relay fallback',
-          );
           mediaId = await apiClient.uploadEncryptedMediaFileWithProgress(
             token,
             encTempFile.path,
