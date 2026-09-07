@@ -483,36 +483,15 @@ class MediaDownloadManager {
 
     for (var attempt = 1; ; attempt++) {
       try {
-        try {
-          // presigned GET — байты качаются напрямую из MinIO
-          // (files.oshino.space), мимо московского сервера. Свежий URL на
-          // каждой попытке (истёкший за 2ч заменяется). Тут же полный
-          // размер — отдельный HEAD не нужен.
-          final presigned = await _api.presignMediaGet(token, id);
-          encTotal = await _api.downloadEncryptedMediaResumable(
-            token,
-            id,
-            partial,
-            directUrl: presigned.url,
-            knownTotalBytes: presigned.sizeBytes > 0
-                ? presigned.sizeBytes
-                : null,
-            onProgress: reportDl,
-            cancelToken: cancel,
-          );
-        } catch (e) {
-          if (cancel.isCancelled) rethrow;
-          // presigned/Токио недоступны — качаем через московский relay
-          // (старый эндпоинт `GET /media/{id}`, тоже с Range-докачкой).
-          DebugLog.log('MediaDownloadManager $id presigned GET failed ($e) — relay fallback');
-          encTotal = await _api.downloadEncryptedMediaResumable(
-            token,
-            id,
-            partial,
-            onProgress: reportDl,
-            cancelToken: cancel,
-          );
-        }
+        // Единственный путь: `GET /media/{id}` через московский сервер, с
+        // Range-докачкой с места обрыва. Один поток, прогресс монотонный.
+        encTotal = await _api.downloadEncryptedMediaResumable(
+          token,
+          id,
+          partial,
+          onProgress: reportDl,
+          cancelToken: cancel,
+        );
         break;
       } catch (e) {
         if (cancel.isCancelled || attempt >= _networkRetries) rethrow;

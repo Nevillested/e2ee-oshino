@@ -32,9 +32,9 @@ const streamingThresholdBytes = 20 * 1024 * 1024; // 20 МБ
 /// [label] — только для диагностики (см. DebugLog.error ниже), ни на что
 /// функционально не влияет. Раньше сбой здесь логировался только в момент
 /// падения последней попытки одной строкой без деталей — реальный кейс:
-/// пачка из 6 параллельных частей (см. partConcurrency) синхронно
-/// спотыкалась и потом ~40с ничего не летело, а понять, на каком именно
-/// шаге и почему (DNS? таймаут? какая именно ошибка?) было нельзя. Теперь
+/// части синхронно спотыкались и потом ~40с ничего не летело, а понять,
+/// на каком именно шаге и почему (DNS? таймаут? какая именно ошибка?)
+/// было нельзя. Теперь
 /// каждая проваленная попытка пишет: сколько мс она реально длилась
 /// (мгновенный провал = обрыв соединения, долгий = таймаут), точный тип и
 /// текст исключения, и сколько ждём перед повтором — этого должно хватить,
@@ -227,36 +227,16 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         return (offset + partSize > totalSize) ? totalSize - offset : partSize;
       }
 
-      // Ещё не залитые части. presigned PUT-URL для них — ОДНИМ запросом
-      // (сервер подписывает локально, для ≤63 частей это мгновенно); байты
-      // самих частей идут НАПРЯМУЮ в MinIO (files.oshino.space), мимо
-      // московского сервера.
+      // Ещё не залитые части (по возрастанию номера).
       final pending = <int>[
         for (var pn = 1; pn <= totalParts; pn++)
           if (!confirmedParts.contains(pn)) pn,
       ];
-      final partUrls = <int, String>{};
-      if (pending.isNotEmpty) {
-        partUrls.addAll(
-          await _retryChunkedStep(
-            () => apiClient.presignMediaPartUrls(
-              token,
-              sessionMediaId,
-              sessionUploadId,
-              pending,
-            ),
-            cancelToken: cancelToken,
-            label: 'part-urls',
-          ),
-        );
-      }
 
-      // Прогресс считаем по ПОДТВЕРЖДЁННЫМ частям, а не по «в полёте»:
-      // Cronet-транспорт (см. ApiClient._mediaDioClient) буферизует тело
-      // запроса перед отправкой, поэтому onSendProgress там взлетает до
-      // 100% ещё до реальной передачи — учитывать его = показывать ложные
-      // «100%» на много секунд. Часть = 8 МБ, на 288 МБ это 36 шагов —
-      // достаточно плавно.
+      // Прогресс считаем по ПОДТВЕРЖДЁННЫМ частям (не по «в полёте»): тело
+      // каждой части уходит на сервер целиком, честного in-flight прогресса
+      // на этом шаге нет. Части грузятся строго по очереди 1→2→3→…, поэтому
+      // процент растёт ровными шагами (часть = 8 МБ; на 300 МБ ~37 шагов).
       var confirmedBytes = 0;
       for (final pn in confirmedParts) {
         if (pn >= 1 && pn <= totalParts) confirmedBytes += partLen(pn);
@@ -279,87 +259,25 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
 
         await _retryChunkedStep(
           () async {
-            final presignedStartedAt = DateTime.now();
+            // Часть читаем с диска разово (8 МБ) и льём через московский
+            // сервер (PUT /upload-media/{id}/part/{n}) — единственный путь.
+            // Сервер сам кладёт часть в MinIO по FRP-туннелю.
+            final raf = await encTempFile.open();
+            final Uint8List chunk;
             try {
-              // Часть заливаем ПОТОКОМ (диапазон байт temp-файла). Новый
-              // поток на каждую попытку — потому и создаётся ВНУТРИ лямбды
-              // _retryChunkedStep.
-              await apiClient.putToPresignedUrl(
-                partUrls[pn]!,
-                encTempFile.openRead(offset, offset + len),
-                contentLength: len,
-                cancelToken: cancelToken,
-              );
-            } catch (e) {
-              if (cancelToken.isCancelled) rethrow;
-              final presignedMs = DateTime.now()
-                  .difference(presignedStartedAt)
-                  .inMilliseconds;
-              // presigned не прошёл (истёкший URL / relay-VPS / туннель).
-              // Мгновенный провал (единицы-десятки мс) обычно означает обрыв
-              // соединения/DNS ещё до отправки байт; долгий (секунды+) —
-              // таймаут уже во время передачи. Именно это различие и не
-              // хватало раньше, чтобы понять причину похожих ~40-секундных
-              // пауз задним числом по одному только логу.
-              DebugLog.error(
-                'media_upload: part $pn presigned PUT FAILED после '
-                '${presignedMs}мс: error=$e (${e.runtimeType}) — пробую '
-                'relay-fallback через Москву',
-              );
-              // Fallback: заливаем ЭТУ часть через московский сервер
-              // (старый relay-эндпоинт) — MinIO не различает, как часть
-              // долетела. Заодно перезапрашиваем свежий presigned-URL на
-              // случай следующего повтора.
-              try {
-                final fresh = await apiClient.presignMediaPartUrls(
-                  token,
-                  sessionMediaId,
-                  sessionUploadId,
-                  [pn],
-                );
-                if (fresh[pn] != null) partUrls[pn] = fresh[pn]!;
-              } catch (e2) {
-                DebugLog.error(
-                  'media_upload: part $pn обновление presigned-URL перед '
-                  'fallback тоже провалилось: error=$e2 (${e2.runtimeType})',
-                );
-              }
-              // relay-эндпоинт принимает байты целиком — для редкого
-              // fallback-пути читаем часть разово.
-              final raf = await encTempFile.open();
-              final Uint8List chunk;
-              try {
-                await raf.setPosition(offset);
-                chunk = await raf.read(len);
-              } finally {
-                await raf.close();
-              }
-              final relayStartedAt = DateTime.now();
-              try {
-                await apiClient.uploadChunkedPart(
-                  token,
-                  sessionMediaId,
-                  sessionUploadId,
-                  pn,
-                  chunk,
-                  cancelToken: cancelToken,
-                );
-              } catch (e3) {
-                // ИМЕННО эта ошибка (не presigned выше) — самая вероятная
-                // причина многосекундных пауз: и основной, и запасной путь
-                // споткнулись в одном и том же окне. Тип исключения тут
-                // (например SocketException с "Failed host lookup" — DNS,
-                // против TimeoutException — путь в принципе жив, но долго)
-                // и есть ответ на вопрос "что за херня происходит".
-                DebugLog.error(
-                  'media_upload: part $pn relay-fallback через Москву ТОЖЕ '
-                  'ПРОВАЛИЛСЯ после '
-                  '${DateTime.now().difference(relayStartedAt).inMilliseconds}мс: '
-                  'error=$e3 (${e3.runtimeType})',
-                );
-                rethrow;
-              }
+              await raf.setPosition(offset);
+              chunk = await raf.read(len);
+            } finally {
+              await raf.close();
             }
+            await apiClient.uploadChunkedPart(
+              token,
+              sessionMediaId,
+              sessionUploadId,
+              pn,
+              chunk,
+              cancelToken: cancelToken,
+            );
           },
           cancelToken: cancelToken,
           label: 'part $pn',
@@ -368,41 +286,12 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         reportProgress();
       }
 
-      // Пул параллельных частей ВНУТРИ одной загрузки — отдельный файловый
-      // воркер PendingSendRetrier по-прежнему один, модель очередей не
-      // меняется. 6, а не 3: на «толстом длинном» международном канале
-      // (RTT ~150–200 мс) одиночный TCP-поток упирается в окно ~10 Мбит —
-      // больше параллельных потоков = больше суммарной полосы (замер из
-      // Армении: 3 части давали ~30 Мбит при 100 Мбит канала).
-      //
-      // По памяти: на dart:io-транспорте часть реально стримится с диска;
-      // на Cronet-транспорте (native_dio_adapter буферизует тело запроса
-      // целиком) — до partSize (8 МБ) на активную часть, т.е. ~48 МБ пик на
-      // время заливки. Приемлемо; если на слабом устройстве OOM — снизить
-      // до 4. Если канал всё ещё не заполнен после замера — поднять (и
-      // дальше уже HTTP/3 на nginx для QUIC/BBR).
-      const partConcurrency = 6;
-      var nextIdx = 0;
-      Object? firstError;
-      Future<void> poolWorker() async {
-        while (true) {
-          if (firstError != null || cancelToken.isCancelled) return;
-          final myIdx = nextIdx++;
-          if (myIdx >= pending.length) return;
-          try {
-            await uploadOnePart(pending[myIdx]);
-          } catch (e) {
-            firstError ??= e;
-            return;
-          }
-        }
+      // Строго последовательно, одним потоком: части 1→2→3→… через
+      // московский сервер. Отмена пользователя прилетает исключением
+      // изнутри uploadOnePart и пробрасывается наверх.
+      for (final pn in pending) {
+        await uploadOnePart(pn);
       }
-
-      await Future.wait([
-        for (var i = 0; i < partConcurrency && i < pending.length; i++)
-          poolWorker(),
-      ]);
-      if (firstError != null) throw firstError!;
 
       await _retryChunkedStep(
         () => apiClient.completeChunkedUpload(
@@ -435,45 +324,22 @@ Future<Map<String, dynamic>> uploadAndDescribeMedia({
         messageId,
         tr('chat.uploading'),
       );
-      // Шифротекст во временный файл — putToPresignedUrl стримит его с
-      // диска (прогресс дробится по-настоящему, не «0% → сразу 100%»).
+      // Шифротекст во временный файл — заливка стримит его с диска
+      // (честный in-flight прогресс на dart:io-транспорте, не «0% → 100%»).
       final tempDir = await getTemporaryDirectory();
       final encTempFile = File('${tempDir.path}/enc_$messageId.bin');
       await encTempFile.writeAsBytes(encrypted.ciphertext);
       try {
-        // presigned PUT — байты идут НАПРЯМУЮ в MinIO (files.oshino.space,
-        // VPS в Токио → FRP до NAS), мимо московского сервера. Строку в
-        // media_files сервер создаёт на /finalize — после проверки, что
-        // объект нужного размера реально долетел.
-        try {
-          final presigned = await apiClient.presignMediaPut(token);
-          await apiClient.putToPresignedUrl(
-            presigned.url,
-            encTempFile,
-            contentLength: encrypted.ciphertext.length,
-            onProgress: (p) => onProgress?.call(p),
-            cancelToken: cancelToken,
-          );
-          await apiClient.finalizeMediaUpload(
-            token,
-            presigned.mediaId,
-            peerAccountIdForUpload,
-            encrypted.ciphertext.length,
-            fileName,
-          );
-          mediaId = presigned.mediaId;
-        } catch (e) {
-          if (cancelToken.isCancelled) rethrow;
-          // presigned не сработал (relay-VPS/туннель недоступны) — грузим весь
-          // файл через московский сервер (старый relay-эндпоинт).
-          mediaId = await apiClient.uploadEncryptedMediaFileWithProgress(
-            token,
-            encTempFile.path,
-            peerAccountIdForUpload,
-            onProgress: (p) => onProgress?.call(p),
-            cancelToken: cancelToken,
-          );
-        }
+        // Единственный путь: весь файл через московский сервер
+        // (POST /upload-media). Сервер сам кладёт объект в MinIO по
+        // FRP-туннелю.
+        mediaId = await apiClient.uploadEncryptedMediaFileWithProgress(
+          token,
+          encTempFile.path,
+          peerAccountIdForUpload,
+          onProgress: (p) => onProgress?.call(p),
+          cancelToken: cancelToken,
+        );
       } finally {
         try {
           await encTempFile.delete();
