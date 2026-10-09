@@ -126,7 +126,8 @@ fun GallerySheet(onDismiss: () -> Unit, onSend: (List<PickedFile>, caption: Stri
     val context = LocalContext.current
     val colors = LocalAppColors.current
     val scope = rememberCoroutineScope()
-    val sheet = rememberModalBottomSheetState()
+    // шторка сразу открыта полностью — иначе нижняя часть (подпись и "отправить") уходит за край экрана
+    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var access by remember { mutableStateOf(DeviceGallery.access(context)) }
     var items by remember { mutableStateOf<List<GalleryItem>?>(null) }
     var version by remember { mutableIntStateOf(0) }
@@ -171,7 +172,7 @@ fun GallerySheet(onDismiss: () -> Unit, onSend: (List<PickedFile>, caption: Stri
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = colors.background) {
-        Column(Modifier.fillMaxHeight(0.92f)) {
+        Column(Modifier.fillMaxHeight(0.75f)) {
             if (access == GalleryAccess.PARTIAL) {
                 Row(
                     Modifier.fillMaxWidth().background(colors.primary.copy(alpha = 0.15f))

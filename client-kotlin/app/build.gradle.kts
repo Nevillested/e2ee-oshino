@@ -1,9 +1,16 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     kotlin("android")
     kotlin("plugin.compose")
     // пуши (FCM): google-services.json — тот же проект Firebase, что у Flutter-клиента
     id("com.google.gms.google-services")
+}
+
+// Ключ загрузки для Google Play — из локального keystore.properties (в git не попадает)
+val keystoreProperties = Properties().apply {
+    rootProject.file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
 }
 
 android {
@@ -20,8 +27,20 @@ android {
         versionName = providers.gradleProperty("oshinobu.versionName").get()
     }
 
+    signingConfigs {
+        if (keystoreProperties.isNotEmpty()) {
+            create("release") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
