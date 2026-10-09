@@ -90,6 +90,8 @@ type MediaFile struct {
 	ObjectKey           string
 	SizeBytes           int64
 	CreatedAt           pgtype.Timestamptz
+	Storage             string
+	DeliveredAt         pgtype.Timestamptz
 }
 
 type MessageReport struct {

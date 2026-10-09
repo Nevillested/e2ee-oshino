@@ -2,12 +2,14 @@ package api
 
 import (
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"server/internal/db"
 
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/minio/minio-go/v7"
 )
@@ -20,7 +22,7 @@ import (
 // размера прямо в MinIO.
 const maxUploadSizeBytes = 500 * 1024 * 1024 // 500 МБ
 
-func NewUploadMediaHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+func NewUploadMediaHandler(queries *db.Queries, minioClient *minio.Client, staging *MediaStaging) func(http.ResponseWriter, *http.Request) {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 
@@ -65,6 +67,23 @@ func NewUploadMediaHandler(queries *db.Queries, minioClient *minio.Client) func(
 		if ScanUuidErr != nil {
 			http.Error(w, "Ошибка конвертации recipient_account_id", http.StatusBadRequest)
 			return
+		}
+
+		//сначала пробуем принять файл в горячий буфер на диске сервера (см.
+		//media_staging.go) — так отправка работает, даже когда NAS выключен.
+		//Не поместился или запись не удалась — старый путь, сразу в MinIO.
+		if staging.CanAccept(header.Size) {
+			mediaID, ok := saveUploadToStaging(r, queries, staging, file, header.Filename, header.Size, Session.AccountID, recipientID)
+			if ok {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(mediaID))
+				return
+			}
+			//буфер не справился — перематываем файл в начало для MinIO
+			if _, err := file.Seek(0, io.SeekStart); err != nil {
+				http.Error(w, "ошибка загрузки файла", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		//переменная для передаваемых параметров в бд
@@ -125,4 +144,38 @@ func NewUploadMediaHandler(queries *db.Queries, minioClient *minio.Client) func(
 		*/
 	}
 
+}
+
+// saveUploadToStaging кладёт нечанковый файл в буфер и создаёт строку в
+// media_files со storage='local'. false — не вышло (подробности в логе),
+// вызывающий код идёт старым путём в MinIO.
+func saveUploadToStaging(r *http.Request, queries *db.Queries, staging *MediaStaging, file io.Reader, fileName string, size int64, uploader, recipient pgtype.UUID) (string, bool) {
+	mediaID := uuid.NewString()
+	written, err := staging.SaveFile(mediaID, file)
+	if err != nil {
+		log.Printf("media staging: не удалось записать файл в буфер: %v — пробуем MinIO", err)
+		return "", false
+	}
+	if written != size {
+		log.Printf("media staging: записано %d байт вместо %d — пробуем MinIO", written, size)
+		os.Remove(staging.filePath(mediaID))
+		return "", false
+	}
+
+	var mediaUUID pgtype.UUID
+	mediaUUID.Scan(mediaID)
+	var params db.SaveStagedMediaFileParams
+	params.ID = mediaUUID
+	params.UploadedByAccountID = uploader
+	params.RecipientAccountID = recipient
+	params.ObjectKey = fileName
+	params.SizeBytes = size
+	if _, err := queries.SaveStagedMediaFile(r.Context(), params); err != nil {
+		log.Printf("media staging: файл %s в буфере, но ошибка записи в БД: %v — пробуем MinIO", mediaID, err)
+		os.Remove(staging.filePath(mediaID))
+		return "", false
+	}
+
+	log.Printf("Файл принят в буфер на сервере: %s, размер: %d байт", mediaID, size)
+	return mediaID, true
 }

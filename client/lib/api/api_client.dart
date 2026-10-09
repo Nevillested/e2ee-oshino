@@ -420,6 +420,22 @@ class ApiClient {
     }
   }
 
+  /// POST /media/{id}/received — файл скачан и расшифрован. Сервер держит
+  /// свежие файлы у себя на диске, пока их не заберёт получатель, и только
+  /// потом переносит в архив на NAS (см. server/internal/api/media_staging.go).
+  /// Сервер засчитывает только вызов от получателя — для своих же файлов
+  /// (повторное скачивание после очистки кэша) ответит 403, это нормально.
+  /// Ошибки молча глотаются: сервер и без этого засчитает доставку по
+  /// последнему отданному байту.
+  Future<void> confirmMediaReceived(String token, String mediaId) async {
+    try {
+      await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/media/$mediaId/received'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+    } catch (_) {}
+  }
+
   /// HEAD /media/{id} — только полный размер зашифрованного файла в байтах,
   /// без самой закачки (сервер отвечает заголовками, тело не тянет из
   /// MinIO — см. download_media.go). Нужен MediaDownloadManager, когда на

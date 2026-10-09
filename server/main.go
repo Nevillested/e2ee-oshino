@@ -85,10 +85,21 @@ func main() {
 	//у permanently-офлайн устройств очередь иначе растёт бесконечно
 	api.StartPendingMessageCleanup(queries)
 
+	//горячий буфер медиа на диске этого сервера: свежие файлы лежат здесь,
+	//пока их не скачает получатель, потом архиватор переносит их в MinIO на
+	//NAS — так отправка/получение не зависят от того, включён ли NAS
+	//(см. internal/api/media_staging.go). nil — буфер выключен, всё как раньше.
+	var mediaStaging = api.NewMediaStaging()
+	api.StartMediaArchiver(queries, minioClient, mediaStaging)
+
 	/*
 	  mux.HandleFunc - принимает на вход строку и функцию, тем самым сопоставляя моршрут.
 	  То есть если через http пришло что-то вроде /qwsdfg ты мы этому значению сопоставляем функцию, которую нужно вызвать
 	*/
+	// обязательная версия приложения (APP_VERSION_CODE / APP_APK_URL)
+	appVersion := api.LoadAppVersion()
+	log.Printf("обязательная версия приложения: %d (0 — проверка выключена)", appVersion.VersionCode)
+	mux.HandleFunc("GET /app/version", api.NewAppVersionHandler(appVersion))
 	mux.HandleFunc("GET /health", api.NewHealthHandler(queries))
 	mux.HandleFunc("GET /ws", api.NewWebSocketHandler(queries, registry, ackRegistry, pendingCalls))
 	mux.HandleFunc("POST /register", api.NewRegisterHandler(queries, pg_connect))
@@ -100,20 +111,21 @@ func main() {
 	mux.HandleFunc("GET /devices/{device_id}/prekey-count", api.NewGetPrekeyCountHandler(queries))
 	mux.HandleFunc("GET /accounts/{login}/devices", api.NewGetDevicesByLoginHandler(queries))
 	mux.HandleFunc("GET /devices/{device_id}/owner", api.NewGetDeviceOwnerHandler(queries))
-	mux.HandleFunc("POST /upload-media", api.NewUploadMediaHandler(queries, minioClient))
+	mux.HandleFunc("POST /upload-media", api.NewUploadMediaHandler(queries, minioClient, mediaStaging))
 	//докачка больших файлов по кусочкам — см. upload_media_chunked.go
-	mux.HandleFunc("POST /upload-media/init", api.NewInitChunkedUploadHandler(queries, minioClient))
-	mux.HandleFunc("PUT /upload-media/{media_id}/part/{part_number}", api.NewUploadChunkedPartHandler(queries, minioClient))
-	mux.HandleFunc("GET /upload-media/{media_id}/parts", api.NewListChunkedPartsHandler(queries, minioClient))
-	mux.HandleFunc("POST /upload-media/{media_id}/complete", api.NewCompleteChunkedUploadHandler(queries, minioClient))
-	mux.HandleFunc("POST /upload-media/{media_id}/abort", api.NewAbortChunkedUploadHandler(queries, minioClient))
+	mux.HandleFunc("POST /upload-media/init", api.NewInitChunkedUploadHandler(queries, minioClient, mediaStaging))
+	mux.HandleFunc("PUT /upload-media/{media_id}/part/{part_number}", api.NewUploadChunkedPartHandler(queries, minioClient, mediaStaging))
+	mux.HandleFunc("GET /upload-media/{media_id}/parts", api.NewListChunkedPartsHandler(queries, minioClient, mediaStaging))
+	mux.HandleFunc("POST /upload-media/{media_id}/complete", api.NewCompleteChunkedUploadHandler(queries, minioClient, mediaStaging))
+	mux.HandleFunc("POST /upload-media/{media_id}/abort", api.NewAbortChunkedUploadHandler(queries, minioClient, mediaStaging))
 	//presigned-URL: клиент льёт/качает байты напрямую в MinIO мимо этого
 	//сервера — см. internal/api/media_presign.go
 	mux.HandleFunc("POST /upload-media/presign", api.NewPresignPutHandler(queries, minioPresign))
 	mux.HandleFunc("POST /upload-media/{media_id}/finalize", api.NewFinalizeUploadHandler(queries, minioClient))
 	mux.HandleFunc("POST /upload-media/{media_id}/part-urls", api.NewPresignPartsHandler(queries, minioPresign))
 	mux.HandleFunc("GET /media/{id}/url", api.NewPresignGetHandler(queries, minioPresign))
-	mux.HandleFunc("GET /media/{id}", api.NewGetMediaHandler(queries, minioClient))
+	mux.HandleFunc("GET /media/{id}", api.NewGetMediaHandler(queries, minioClient, mediaStaging))
+	mux.HandleFunc("POST /media/{id}/received", api.NewMediaReceivedHandler(queries))
 	mux.HandleFunc("GET /session/check", api.NewSessionCheckHandler(queries))
 	mux.HandleFunc("DELETE /account", api.NewDeleteAccountHandler(queries))
 	mux.HandleFunc("GET /account/me", api.NewAccountMeHandler(queries))
@@ -150,7 +162,7 @@ func main() {
 
 	//сохраняем в переменную и запускаем HTTP-сервер на порту 8080. ListenAndServe - блокирующая функция, которая будет работать до тех пор, пока сервер не будет остановлен или не произойдет ошибка
 	//внутри запускается бесконечный цикл, который как раз через mux проверяет, какие запросы пришли и вызывает в горутине (параллельно) соответствующие функции-обработчики, а сам цикл продолжает работать и ждать новых запросов
-	var server_error = http.ListenAndServe(":8080", mux)
+	var server_error = http.ListenAndServe(":8080", api.RequireAppVersion(appVersion, mux))
 
 	//если сервер не запустился, то выводим сообщение об ошибке и выходим с кодом 1
 	if server_error != nil {

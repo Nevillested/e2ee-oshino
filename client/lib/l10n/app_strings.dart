@@ -608,6 +608,14 @@ class AppStrings {
       AppLocale.ru: 'Абонент не отвечает',
       AppLocale.en: 'No answer',
     },
+    'chat.undecryptable': {
+      AppLocale.ru: 'Не удалось дешифровать сообщение от {name}',
+      AppLocale.en: 'Failed to decrypt a message from {name}',
+    },
+    'chat.undecryptablePreview': {
+      AppLocale.ru: 'Не удалось дешифровать сообщение',
+      AppLocale.en: 'Failed to decrypt a message',
+    },
     'call.securingConnection': {
       AppLocale.ru: 'Устанавливаем защищённое соединение...',
       AppLocale.en: 'Establishing secure connection...',

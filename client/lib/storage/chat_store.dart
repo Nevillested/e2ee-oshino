@@ -73,6 +73,11 @@ class StoredMessage {
   final String? callOutcome; // 'answered' | 'no_answer' | 'missed'
   final int? callDurationSeconds;
 
+  /// Заглушка на месте входящего сообщения, которое окончательно не
+  /// удалось расшифровать (см. MessageRouter._recordUndecryptable) —
+  /// содержимого нет, рендерится отдельным пузырём, как звонок.
+  final bool isUndecryptable;
+
   /// Ответ на другое сообщение — превью снимается в момент отправки (см.
   /// InnerMessage.text/.media), поэтому переживает последующее
   /// редактирование/удаление оригинала.
@@ -121,6 +126,7 @@ class StoredMessage {
     this.callDirection,
     this.callOutcome,
     this.callDurationSeconds,
+    this.isUndecryptable = false,
     this.replyToMessageId,
     this.replyToPreview,
     this.edited = false,
@@ -185,6 +191,7 @@ class StoredMessage {
       callDirection: callDirection,
       callOutcome: callOutcome,
       callDurationSeconds: callDurationSeconds,
+      isUndecryptable: isUndecryptable,
       replyToMessageId: replyToMessageId,
       replyToPreview: replyToPreview,
       edited: edited ?? this.edited,
@@ -224,6 +231,7 @@ class StoredMessage {
     'call_direction': callDirection,
     'call_outcome': callOutcome,
     'call_duration': callDurationSeconds,
+    'undecryptable': isUndecryptable,
     'reply_to_id': replyToMessageId,
     'reply_to_preview': replyToPreview,
     'edited': edited,
@@ -260,6 +268,7 @@ class StoredMessage {
     callDirection: j['call_direction'] as String?,
     callOutcome: j['call_outcome'] as String?,
     callDurationSeconds: j['call_duration'] as int?,
+    isUndecryptable: j['undecryptable'] as bool? ?? false,
     replyToMessageId: j['reply_to_id'] as String?,
     replyToPreview: j['reply_to_preview'] as String?,
     edited: j['edited'] as bool? ?? false,
@@ -341,6 +350,7 @@ class ChatStore {
     if (m.isCallLog) {
       return '$_previewMark' 'call:${m.callOutcome ?? 'no_answer'}';
     }
+    if (m.isUndecryptable) return '$_previewMark' 'undecryptable';
     if (m.isVoice) return '$_previewMark' 'voice';
     if (m.isVideoNote) return '$_previewMark' 'videoNote';
     if (m.isMedia) {
@@ -380,6 +390,8 @@ class ChatStore {
         return '\u{1F3AC} ${tr('media.video')}';
       case 'file':
         return arg.isNotEmpty ? arg : '\u{1F4CE} ${tr('media.file')}';
+      case 'undecryptable':
+        return '\u{1F512} ${tr('chat.undecryptablePreview')}';
       case 'call':
         return switch (arg) {
           'answered' => '\u{1F4DE} ${tr('call.answered')}',
@@ -607,6 +619,33 @@ class ChatStore {
       incrementUnread: incrementUnread,
       isMine: last.isMine,
       isRead: last.status == 'read',
+    );
+  }
+
+  /// Заглушка на месте окончательно нерасшифрованного входящего сообщения
+  /// (см. MessageRouter._recordUndecryptable). [id] стабилен для одного и
+  /// того же конверта — повторные доставки гасятся дубль-гардом addMessage.
+  /// readReceiptSent: true — id наш, локальный, у собеседника такого
+  /// сообщения нет, квитанцию о прочтении за него слать незачем.
+  static Future<void> addUndecryptableNotice(
+    String peerLogin, {
+    required String id,
+    required int timestamp,
+    String? accountId,
+    bool incrementUnread = false,
+  }) {
+    return addMessage(
+      peerLogin,
+      StoredMessage(
+        id,
+        '',
+        false,
+        timestamp,
+        isUndecryptable: true,
+        readReceiptSent: true,
+      ),
+      accountId: accountId,
+      incrementUnread: incrementUnread,
     );
   }
 

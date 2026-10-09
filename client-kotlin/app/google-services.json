@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "655926460308",
+    "project_id": "oshinobu-e2ee",
+    "storage_bucket": "oshinobu-e2ee.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:655926460308:android:bfc66016bc3a30dc2b5981",
+        "android_client_info": {
+          "package_name": "com.oshinobu.oshinobu_client"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAJ-GDGejoj9ittJb0R1LC5xCe0_lHsgvo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

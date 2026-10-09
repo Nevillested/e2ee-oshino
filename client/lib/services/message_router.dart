@@ -156,8 +156,11 @@ class MessageRouter {
             'Router DROP from=$senderDeviceId reason=no-session-and-no-handshake'
             '${gaveUp ? ' (gave up — acking to stop redelivery loop)' : ''}',
           );
-          if (gaveUp && deliveryId != null) {
-            WebSocketService.instance.ackDelivery(deliveryId);
+          if (gaveUp) {
+            if (deliveryId != null) {
+              WebSocketService.instance.ackDelivery(deliveryId);
+            }
+            await _recordUndecryptable(senderDeviceId, envelope);
           }
           return;
         }
@@ -249,10 +252,20 @@ class MessageRouter {
             if (deliveryId != null) {
               WebSocketService.instance.ackDelivery(deliveryId);
             }
+            // Устаревший ключ — это либо повтор уже расшифрованного
+            // (штатно, молчим), либо сообщение, чей ключ пропал вместе со
+            // старой эпохой (настоящая потеря) — различаем по журналу
+            // расшифрованных nonce.
+            await _recordUndecryptable(
+              senderDeviceId,
+              envelope,
+              requireKnownHistory: true,
+            );
             return;
           }
 
-          await _onDecryptFailure(senderDeviceId, deliveryId);
+          final gaveUp = await _onDecryptFailure(senderDeviceId, deliveryId);
+          if (gaveUp) await _recordUndecryptable(senderDeviceId, envelope);
           rethrow;
         }
         DebugLog.log(
@@ -278,7 +291,8 @@ class MessageRouter {
             'Router: fresh X3DH re-decrypt ALSO failed ($e2) from=$senderDeviceId '
             '— routing to decrypt-failure handling to break the redelivery loop',
           );
-          await _onDecryptFailure(senderDeviceId, deliveryId);
+          final gaveUp = await _onDecryptFailure(senderDeviceId, deliveryId);
+          if (gaveUp) await _recordUndecryptable(senderDeviceId, envelope);
           rethrow;
         }
       }
@@ -286,6 +300,7 @@ class MessageRouter {
       await _clearFailureCount(senderDeviceId);
       await _clearNoSessionFirstSeen(senderDeviceId);
       await SessionStore.saveState(senderDeviceId, state);
+      await _rememberDecrypted(senderDeviceId, envelope);
 
       final inner = InnerMessage.decode(rawInner);
       final ownerInfo = await _resolveOwner(senderDeviceId);
@@ -634,7 +649,9 @@ class MessageRouter {
   /// такое состояние само себя не чинит), сбрасываем её у себя и просим
   /// собеседника сделать то же самое, чтобы его следующая отправка сама
   /// подняла свежий X3DH.
-  static Future<void> _onDecryptFailure(
+  /// true — сдались: конкретно эта доставка признана окончательно
+  /// потерянной (порог набран).
+  static Future<bool> _onDecryptFailure(
     String senderDeviceId,
     String? deliveryId,
   ) async {
@@ -645,7 +662,7 @@ class MessageRouter {
     DebugLog.log(
       'Router decrypt-failure-count from=$senderDeviceId count=$count',
     );
-    if (count < _resetFailureThreshold) return;
+    if (count < _resetFailureThreshold) return false;
 
     // Дальше отступать некуда — конкретно ЭТО сообщение зашифровано
     // цепочкой, которую мы уже не расшифруем, даже после сброса сессии
@@ -665,7 +682,7 @@ class MessageRouter {
     if (lastRequestMs != null &&
         now.difference(DateTime.fromMillisecondsSinceEpoch(lastRequestMs)) <
             _resetCooldown) {
-      return;
+      return true;
     }
     await prefs.setInt(lastRequestKey, now.millisecondsSinceEpoch);
 
@@ -676,6 +693,7 @@ class MessageRouter {
       senderDeviceId,
       reason: 'auto ($count decrypt failures)',
     );
+    return true;
   }
 
   /// Стирает локальную сессию Double Ratchet с этим устройством и просит
@@ -717,10 +735,83 @@ class MessageRouter {
   /// websocket_service.dart (см. комментарий там), второй раз это делать
   /// не нужно.
   static Future<void> reportSignalDecryptFailure(String senderDeviceId) =>
-      _onDecryptFailure(senderDeviceId, null);
+      _onDecryptFailure(senderDeviceId, null).then((_) {});
 
   static Future<void> reportSignalDecryptSuccess(String senderDeviceId) =>
       _clearFailureCount(senderDeviceId);
+
+  // Журнал nonce последних успешно расшифрованных конвертов от каждого
+  // отправителя — nonce уникален для каждого сообщения и не меняется при
+  // повторной доставке (в отличие от deliveryId). Нужен, чтобы отличить
+  // повтор уже прочитанного от настоящей потери там, где сам ratchet этого
+  // не умеет (устаревший ключ прошлой эпохи).
+  static const _maxRememberedNonces = 500;
+  static String _decryptedNoncesKey(String deviceId) =>
+      'decrypted_nonces:$deviceId';
+
+  static Future<void> _rememberDecrypted(
+    String senderDeviceId,
+    Map<String, dynamic> envelope,
+  ) async {
+    final nonce = envelope['nonce'] as String?;
+    if (nonce == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    final key = _decryptedNoncesKey(senderDeviceId);
+    final list = prefs.getStringList(key) ?? <String>[];
+    if (list.contains(nonce)) return;
+    list.add(nonce);
+    if (list.length > _maxRememberedNonces) {
+      list.removeRange(0, list.length - _maxRememberedNonces);
+    }
+    await prefs.setStringList(key, list);
+  }
+
+  /// Кладёт в чат заглушку "не удалось дешифровать сообщение" на месте
+  /// окончательно потерянного входящего конверта. id заглушки выводится из
+  /// nonce конверта — повторные доставки того же сообщения не плодят новых
+  /// пузырей (их гасит дубль-гард ChatStore.addMessage), а каждое разное
+  /// потерянное сообщение получает свой.
+  ///
+  /// [requireKnownHistory] — для случая устаревшего ключа: без журнала
+  /// расшифрованных nonce (первый запуск после обновления) повтор от потери
+  /// не отличить, и тогда молчим, как раньше, чтобы не показать ложную
+  /// заглушку на уже прочитанном сообщении.
+  static Future<void> _recordUndecryptable(
+    String senderDeviceId,
+    Map<String, dynamic> envelope, {
+    bool requireKnownHistory = false,
+  }) async {
+    final nonce = envelope['nonce'] as String?;
+    if (nonce == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    final decrypted = prefs.getStringList(_decryptedNoncesKey(senderDeviceId));
+    if (decrypted != null && decrypted.contains(nonce)) {
+      DebugLog.log(
+        'Router undecryptable from=$senderDeviceId is a redelivery of an already '
+        'decrypted message — no notice',
+      );
+      return;
+    }
+    if (requireKnownHistory && decrypted == null) return;
+
+    final ownerInfo = await _resolveOwner(senderDeviceId);
+    if (ownerInfo == null) {
+      DebugLog.log(
+        'Router undecryptable from=$senderDeviceId — owner unresolved, no notice',
+      );
+      return;
+    }
+    DebugLog.log(
+      'Router undecryptable from=$senderDeviceId — adding notice to chat',
+    );
+    await ChatStore.addUndecryptableNotice(
+      ownerInfo.login,
+      id: 'undecryptable_$nonce',
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+      accountId: ownerInfo.accountId,
+      incrementUnread: ActiveChatTracker.currentPeerLogin != ownerInfo.login,
+    );
+  }
 
   /// true, если пора сдаться и подтвердить эту доставку серверу, а не ждать
   /// снова. Первый раз просто запоминает момент — ничего не подтверждает,

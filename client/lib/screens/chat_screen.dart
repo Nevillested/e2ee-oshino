@@ -762,12 +762,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_searchQuery.isEmpty) return const [];
     final q = _searchQuery.toLowerCase();
     return _messages
-        .where((m) => !m.isCallLog && m.text.toLowerCase().contains(q))
+        .where(
+          (m) =>
+              !m.isCallLog &&
+              !m.isUndecryptable &&
+              m.text.toLowerCase().contains(q),
+        )
         .toList();
   }
 
   int get _searchTotalCount => _searchQuery.isEmpty
-      ? _messages.where((m) => !m.isCallLog).length
+      ? _messages.where((m) => !m.isCallLog && !m.isUndecryptable).length
       : _searchMatches.length;
 
   int get _searchCurrentNumber {
@@ -4517,6 +4522,44 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// Заглушка на месте входящего сообщения, которое не удалось
+  /// расшифровать (см. MessageRouter._recordUndecryptable) — тот же
+  /// центрированный пузырь, что и у звонка, без контекстного меню.
+  Widget _buildUndecryptableRow(StoredMessage msg) {
+    final name = _peerDisplayName ?? widget.peerLogin;
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.lock_outline, size: 16, color: AppColors.textMuted),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                tr('chat.undecryptable').replaceAll('{name}', name),
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              formatChatTime(msg.timestamp),
+              style: TextStyle(color: AppColors.textMuted, fontSize: 10),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildStatusIconFor(String status, {bool onColoredBubble = true}) {
     switch (status) {
       case 'failed':
@@ -5360,6 +5403,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return KeyedSubtree(
         key: ValueKey(msg.messageId),
         child: _buildCallLogRow(msg),
+      );
+    }
+    if (msg.isUndecryptable) {
+      return KeyedSubtree(
+        key: ValueKey(msg.messageId),
+        child: _buildUndecryptableRow(msg),
       );
     }
     final key = _messageKeys.putIfAbsent(msg.messageId, () => GlobalKey());

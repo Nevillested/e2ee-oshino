@@ -21,7 +21,7 @@ func (q *Queries) DeleteMediaFile(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getMediaFile = `-- name: GetMediaFile :one
-SELECT id, uploaded_by_account_id, recipient_account_id, object_key, size_bytes, created_at FROM media_files WHERE id = $1
+SELECT id, uploaded_by_account_id, recipient_account_id, object_key, size_bytes, created_at, storage, delivered_at FROM media_files WHERE id = $1
 `
 
 func (q *Queries) GetMediaFile(ctx context.Context, id pgtype.UUID) (MediaFile, error) {
@@ -34,14 +34,71 @@ func (q *Queries) GetMediaFile(ctx context.Context, id pgtype.UUID) (MediaFile, 
 		&i.ObjectKey,
 		&i.SizeBytes,
 		&i.CreatedAt,
+		&i.Storage,
+		&i.DeliveredAt,
 	)
 	return i, err
+}
+
+const listStagedMediaReadyForArchive = `-- name: ListStagedMediaReadyForArchive :many
+SELECT id, uploaded_by_account_id, recipient_account_id, object_key, size_bytes, created_at, storage, delivered_at FROM media_files
+WHERE storage = 'local' AND delivered_at IS NOT NULL
+ORDER BY created_at
+LIMIT 50
+`
+
+// кандидаты на перенос в архив: только то, что получатель уже скачал.
+func (q *Queries) ListStagedMediaReadyForArchive(ctx context.Context) ([]MediaFile, error) {
+	rows, err := q.db.Query(ctx, listStagedMediaReadyForArchive)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaFile
+	for rows.Next() {
+		var i MediaFile
+		if err := rows.Scan(
+			&i.ID,
+			&i.UploadedByAccountID,
+			&i.RecipientAccountID,
+			&i.ObjectKey,
+			&i.SizeBytes,
+			&i.CreatedAt,
+			&i.Storage,
+			&i.DeliveredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markMediaArchived = `-- name: MarkMediaArchived :exec
+UPDATE media_files SET storage = 'archive' WHERE id = $1
+`
+
+func (q *Queries) MarkMediaArchived(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markMediaArchived, id)
+	return err
+}
+
+const markMediaDelivered = `-- name: MarkMediaDelivered :exec
+UPDATE media_files SET delivered_at = now() WHERE id = $1 AND delivered_at IS NULL
+`
+
+func (q *Queries) MarkMediaDelivered(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markMediaDelivered, id)
+	return err
 }
 
 const saveMediaFile = `-- name: SaveMediaFile :one
 INSERT INTO media_files (uploaded_by_account_id, recipient_account_id, object_key, size_bytes)
 VALUES ($1, $2, $3, $4)
-RETURNING id, uploaded_by_account_id, recipient_account_id, object_key, size_bytes, created_at
+RETURNING id, uploaded_by_account_id, recipient_account_id, object_key, size_bytes, created_at, storage, delivered_at
 `
 
 type SaveMediaFileParams struct {
@@ -66,6 +123,8 @@ func (q *Queries) SaveMediaFile(ctx context.Context, arg SaveMediaFileParams) (M
 		&i.ObjectKey,
 		&i.SizeBytes,
 		&i.CreatedAt,
+		&i.Storage,
+		&i.DeliveredAt,
 	)
 	return i, err
 }
@@ -73,7 +132,7 @@ func (q *Queries) SaveMediaFile(ctx context.Context, arg SaveMediaFileParams) (M
 const saveMediaFileWithID = `-- name: SaveMediaFileWithID :one
 INSERT INTO media_files (id, uploaded_by_account_id, recipient_account_id, object_key, size_bytes)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, uploaded_by_account_id, recipient_account_id, object_key, size_bytes, created_at
+RETURNING id, uploaded_by_account_id, recipient_account_id, object_key, size_bytes, created_at, storage, delivered_at
 `
 
 type SaveMediaFileWithIDParams struct {
@@ -104,6 +163,46 @@ func (q *Queries) SaveMediaFileWithID(ctx context.Context, arg SaveMediaFileWith
 		&i.ObjectKey,
 		&i.SizeBytes,
 		&i.CreatedAt,
+		&i.Storage,
+		&i.DeliveredAt,
+	)
+	return i, err
+}
+
+const saveStagedMediaFile = `-- name: SaveStagedMediaFile :one
+INSERT INTO media_files (id, uploaded_by_account_id, recipient_account_id, object_key, size_bytes, storage)
+VALUES ($1, $2, $3, $4, $5, 'local')
+RETURNING id, uploaded_by_account_id, recipient_account_id, object_key, size_bytes, created_at, storage, delivered_at
+`
+
+type SaveStagedMediaFileParams struct {
+	ID                  pgtype.UUID
+	UploadedByAccountID pgtype.UUID
+	RecipientAccountID  pgtype.UUID
+	ObjectKey           string
+	SizeBytes           int64
+}
+
+// файл, принятый в горячий буфер на диске Москвы (media_staging.go) —
+// в MinIO его пока нет, туда его позже перенесёт архиватор.
+func (q *Queries) SaveStagedMediaFile(ctx context.Context, arg SaveStagedMediaFileParams) (MediaFile, error) {
+	row := q.db.QueryRow(ctx, saveStagedMediaFile,
+		arg.ID,
+		arg.UploadedByAccountID,
+		arg.RecipientAccountID,
+		arg.ObjectKey,
+		arg.SizeBytes,
+	)
+	var i MediaFile
+	err := row.Scan(
+		&i.ID,
+		&i.UploadedByAccountID,
+		&i.RecipientAccountID,
+		&i.ObjectKey,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.Storage,
+		&i.DeliveredAt,
 	)
 	return i, err
 }

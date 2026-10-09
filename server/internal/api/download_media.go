@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,13 +11,14 @@ import (
 	"server/internal/db"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/minio/minio-go/v7"
 )
 
-func NewGetMediaHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+func NewGetMediaHandler(queries *db.Queries, minioClient *minio.Client, staging *MediaStaging) func(http.ResponseWriter, *http.Request) {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 
@@ -110,6 +112,31 @@ func NewGetMediaHandler(queries *db.Queries, minioClient *minio.Client) func(htt
 			start, end, isRange = s, e, true
 		}
 
+		contentLen := end - start + 1
+
+		// Файл ещё в горячем буфере на диске сервера (см. media_staging.go) —
+		// отдаём оттуда, NAS не нужен вовсе. Если локальной копии уже нет
+		// (архиватор только что перенёс её в MinIO) — идём в архив ниже.
+		if mediaFile.Storage == "local" {
+			f, openErr := staging.Open(FileId)
+			if openErr == nil {
+				defer f.Close()
+				writeMediaHeaders(w, contentLen, isRange, start, end, totalSize)
+				n, copyErr := io.Copy(w, io.NewSectionReader(f, start, contentLen))
+				// Получатель забрал файл до последнего байта — у обоих он
+				// теперь есть, можно переносить в архив. Начало файла он
+				// мог скачать раньше (докачка по Range), поэтому смотрим
+				// именно на хвост.
+				if copyErr == nil && n == contentLen && end == totalSize-1 && current_acc == AccDST {
+					markMediaDelivered(queries, FileIdUUID)
+				}
+				return
+			}
+			if !errors.Is(openErr, os.ErrNotExist) {
+				log.Printf("media staging: не удалось открыть %s из буфера: %v — пробуем архив", FileId, openErr)
+			}
+		}
+
 		opts := minio.GetObjectOptions{}
 		if isRange {
 			if err := opts.SetRange(start, end); err != nil {
@@ -130,20 +157,67 @@ func NewGetMediaHandler(queries *db.Queries, minioClient *minio.Client) func(htt
 		//заранее закываем соединение с MinIO после того, как функция завершит свою работу
 		defer object.Close()
 
-		contentLen := end - start + 1
-
-		// Accept-Ranges — сигнал клиенту, что докачку этот эндпоинт умеет.
-		w.Header().Set("Accept-Ranges", "bytes")
-		// Шифротекст — сниффить тип по содержимому бессмысленно, ставим явно.
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Length", strconv.FormatInt(contentLen, 10))
-		if isRange {
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, totalSize))
-			w.WriteHeader(http.StatusPartialContent)
-		}
+		writeMediaHeaders(w, contentLen, isRange, start, end, totalSize)
 
 		//отправляем файл (или запрошенный кусок) клиенту
 		io.Copy(w, object)
+	}
+}
+
+func writeMediaHeaders(w http.ResponseWriter, contentLen int64, isRange bool, start, end, totalSize int64) {
+	// Accept-Ranges — сигнал клиенту, что докачку этот эндпоинт умеет.
+	w.Header().Set("Accept-Ranges", "bytes")
+	// Шифротекст — сниффить тип по содержимому бессмысленно, ставим явно.
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.FormatInt(contentLen, 10))
+	if isRange {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, totalSize))
+		w.WriteHeader(http.StatusPartialContent)
+	}
+}
+
+// markMediaDelivered — отдельный контекст: запрос к этому моменту уже
+// отдан целиком, и его контекст может быть отменён в любую секунду.
+func markMediaDelivered(queries *db.Queries, id pgtype.UUID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := queries.MarkMediaDelivered(ctx, id); err != nil {
+		log.Printf("media staging: не удалось отметить доставку %s: %v", id.String(), err)
+	}
+}
+
+// ---- POST /media/{id}/received ----
+// Клиент получателя подтверждает, что скачал И расшифровал файл. Дублирует
+// серверную отметку по последнему байту (см. выше) — точнее её: засчитывает
+// только реально расшифрованный файл. Повторный вызов безвреден.
+func NewMediaReceivedHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, errTok := CheckToken(w, r, queries)
+		if errTok != nil {
+			log.Printf("media received: ошибка токена: %v", errTok)
+			return
+		}
+		var fileUUID pgtype.UUID
+		if err := fileUUID.Scan(r.PathValue("id")); err != nil {
+			http.Error(w, "Ошибка конвертации FileId", http.StatusBadRequest)
+			return
+		}
+		mediaFile, err := queries.GetMediaFile(r.Context(), fileUUID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				http.Error(w, "Такого файла нет", http.StatusNotFound)
+			} else {
+				http.Error(w, "Ошибка поиска файла", http.StatusInternalServerError)
+			}
+			return
+		}
+		// подтверждать может только получатель
+		if session.AccountID != mediaFile.RecipientAccountID {
+			http.Error(w, "Нет прав доступа к файлу", http.StatusForbidden)
+			return
+		}
+		markMediaDelivered(queries, fileUUID)
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

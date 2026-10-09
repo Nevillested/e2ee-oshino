@@ -537,6 +537,9 @@ class MediaDownloadManager {
       }
       rethrow;
     }
+    // Файл расшифрован — теперь он есть у обоих, сервер может убрать его
+    // из своего буфера в архив (см. ApiClient.confirmMediaReceived).
+    unawaited(_api.confirmMediaReceived(token, id));
   }
 
   // ---- прочее ----

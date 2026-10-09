@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 
 	"server/internal/db"
 
@@ -62,7 +63,7 @@ type initChunkedUploadResponse struct {
 	PartSize int64  `json:"part_size"`
 }
 
-func NewInitChunkedUploadHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+func NewInitChunkedUploadHandler(queries *db.Queries, minioClient *minio.Client, staging *MediaStaging) func(http.ResponseWriter, *http.Request) {
 	cu := newChunkedUploadCore(minioClient)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +90,24 @@ func NewInitChunkedUploadHandler(queries *db.Queries, minioClient *minio.Client)
 
 		mediaID := uuid.NewString()
 
+		// Поместится в горячий буфер на диске сервера — части пойдут туда
+		// (см. media_staging.go), иначе — multipart-загрузка в MinIO, как раньше.
+		// Дальше все чанковые эндпоинты различают эти два случая по префиксу
+		// upload_id (isLocalUploadID).
+		if staging.CanAccept(req.SizeBytes) {
+			localUploadID, err := staging.NewChunkedUpload(mediaID)
+			if err == nil {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(initChunkedUploadResponse{
+					MediaID:  mediaID,
+					UploadID: localUploadID,
+					PartSize: chunkedUploadPartSizeBytes,
+				})
+				return
+			}
+			log.Printf("media staging: не удалось завести чанковую загрузку в буфере: %v — пробуем MinIO", err)
+		}
+
 		uploadID, err := cu.core.NewMultipartUpload(r.Context(), os.Getenv("MINIO_BUCKET"), mediaID, minio.PutObjectOptions{})
 		if err != nil {
 			log.Printf("ошибка создания multipart-загрузки в MinIO: %v", err)
@@ -108,7 +127,7 @@ func NewInitChunkedUploadHandler(queries *db.Queries, minioClient *minio.Client)
 
 // ---- PUT /upload-media/{media_id}/part/{part_number}?upload_id=... ----
 
-func NewUploadChunkedPartHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+func NewUploadChunkedPartHandler(queries *db.Queries, minioClient *minio.Client, staging *MediaStaging) func(http.ResponseWriter, *http.Request) {
 	cu := newChunkedUploadCore(minioClient)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +169,16 @@ func NewUploadChunkedPartHandler(queries *db.Queries, minioClient *minio.Client)
 			return
 		}
 
+		if isLocalUploadID(uploadID) {
+			if err := staging.WritePart(mediaID, uploadID, partNumber, data); err != nil {
+				log.Printf("media staging: ошибка записи части %d файла %s: %v", partNumber, mediaID, err)
+				http.Error(w, "ошибка загрузки части файла", http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		_, err = cu.core.PutObjectPart(r.Context(), os.Getenv("MINIO_BUCKET"), mediaID, uploadID, partNumber,
 			bytes.NewReader(data), int64(len(data)), minio.PutObjectPartOptions{})
 		if err != nil {
@@ -169,7 +198,7 @@ type uploadedPartInfo struct {
 	Size       int64 `json:"size"`
 }
 
-func NewListChunkedPartsHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+func NewListChunkedPartsHandler(queries *db.Queries, minioClient *minio.Client, staging *MediaStaging) func(http.ResponseWriter, *http.Request) {
 	cu := newChunkedUploadCore(minioClient)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +212,22 @@ func NewListChunkedPartsHandler(queries *db.Queries, minioClient *minio.Client) 
 		uploadID := r.URL.Query().Get("upload_id")
 		if mediaID == "" || uploadID == "" {
 			http.Error(w, "не хватает media_id или upload_id", http.StatusBadRequest)
+			return
+		}
+
+		if isLocalUploadID(uploadID) {
+			parts, err := staging.ListParts(mediaID, uploadID)
+			if err != nil {
+				log.Printf("media staging: ошибка получения списка частей файла %s: %v", mediaID, err)
+				http.Error(w, "ошибка получения списка частей", http.StatusInternalServerError)
+				return
+			}
+			result := make([]uploadedPartInfo, 0, len(parts))
+			for _, p := range parts {
+				result = append(result, uploadedPartInfo{PartNumber: p.Number, Size: p.Size})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(result)
 			return
 		}
 
@@ -232,7 +277,7 @@ type completeChunkedUploadRequest struct {
 	FileName           string `json:"file_name"`
 }
 
-func NewCompleteChunkedUploadHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+func NewCompleteChunkedUploadHandler(queries *db.Queries, minioClient *minio.Client, staging *MediaStaging) func(http.ResponseWriter, *http.Request) {
 	cu := newChunkedUploadCore(minioClient)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -264,6 +309,11 @@ func NewCompleteChunkedUploadHandler(queries *db.Queries, minioClient *minio.Cli
 		var mediaUUID pgtype.UUID
 		if err := mediaUUID.Scan(mediaID); err != nil {
 			http.Error(w, "некорректный media_id", http.StatusBadRequest)
+			return
+		}
+
+		if isLocalUploadID(uploadID) {
+			completeStagedChunkedUpload(w, r, queries, staging, mediaID, uploadID, mediaUUID, Session.AccountID, recipientID, req.FileName)
 			return
 		}
 
@@ -322,7 +372,7 @@ func NewCompleteChunkedUploadHandler(queries *db.Queries, minioClient *minio.Cli
 
 // ---- POST /upload-media/{media_id}/abort?upload_id=... ----
 
-func NewAbortChunkedUploadHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+func NewAbortChunkedUploadHandler(queries *db.Queries, minioClient *minio.Client, staging *MediaStaging) func(http.ResponseWriter, *http.Request) {
 	cu := newChunkedUploadCore(minioClient)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -339,6 +389,14 @@ func NewAbortChunkedUploadHandler(queries *db.Queries, minioClient *minio.Client
 			return
 		}
 
+		if isLocalUploadID(uploadID) {
+			if err := staging.AbortChunkedUpload(mediaID, uploadID); err != nil {
+				log.Printf("media staging: ошибка отмены чанковой загрузки %s: %v", mediaID, err)
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		if err := cu.core.AbortMultipartUpload(r.Context(), os.Getenv("MINIO_BUCKET"), mediaID, uploadID); err != nil {
 			log.Printf("ошибка отмены multipart-загрузки файла %s: %v", mediaID, err)
 			// не считаем это фатальной ошибкой для клиента — если аплоада уже
@@ -348,4 +406,68 @@ func NewAbortChunkedUploadHandler(queries *db.Queries, minioClient *minio.Client
 
 		w.WriteHeader(http.StatusOK)
 	}
+}
+
+func isLocalUploadID(uploadID string) bool {
+	return strings.HasPrefix(uploadID, localUploadIDPrefix)
+}
+
+// completeStagedChunkedUpload — /complete для загрузки в буфер. Строка в БД
+// создаётся ДО склейки (размер известен из списка частей): если склейка
+// упадёт, строка удаляется, а клиент по списку частей перезальёт
+// недостающие и вызовет /complete снова.
+func completeStagedChunkedUpload(w http.ResponseWriter, r *http.Request, queries *db.Queries, staging *MediaStaging,
+	mediaID, uploadID string, mediaUUID, uploader, recipient pgtype.UUID, fileName string) {
+
+	parts, err := staging.ListParts(mediaID, uploadID)
+	if err != nil {
+		log.Printf("media staging: ошибка получения списка частей файла %s перед завершением: %v", mediaID, err)
+		http.Error(w, "ошибка получения списка частей", http.StatusInternalServerError)
+		return
+	}
+	if len(parts) == 0 {
+		http.Error(w, "нет ни одной загруженной части", http.StatusBadRequest)
+		return
+	}
+	var totalSize int64
+	for i, p := range parts {
+		if p.Number != i+1 {
+			http.Error(w, "загружены не все части файла", http.StatusBadRequest)
+			return
+		}
+		totalSize += p.Size
+	}
+
+	if fileName == "" {
+		fileName = mediaID
+	}
+	var params db.SaveStagedMediaFileParams
+	params.ID = mediaUUID
+	params.UploadedByAccountID = uploader
+	params.RecipientAccountID = recipient
+	params.ObjectKey = fileName
+	params.SizeBytes = totalSize
+	if _, err := queries.SaveStagedMediaFile(r.Context(), params); err != nil {
+		log.Printf("media staging: ошибка записи в БД для %s: %v", mediaID, err)
+		http.Error(w, "ошибка сохранения информации о файле", http.StatusInternalServerError)
+		return
+	}
+
+	assembled, partCount, err := staging.CompleteChunkedUpload(mediaID, uploadID)
+	if err == nil && assembled != totalSize {
+		err = errors.New("размер собранного файла не совпал со списком частей")
+		os.Remove(staging.filePath(mediaID))
+	}
+	if err != nil {
+		log.Printf("media staging: ошибка склейки файла %s: %v", mediaID, err)
+		if delErr := queries.DeleteMediaFile(r.Context(), mediaUUID); delErr != nil {
+			log.Printf("media staging: и строку %s удалить не удалось: %v", mediaID, delErr)
+		}
+		http.Error(w, "ошибка завершения загрузки", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Файл принят в буфер по частям: %s, размер: %d байт, частей: %d", mediaID, totalSize, partCount)
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(mediaID))
 }
