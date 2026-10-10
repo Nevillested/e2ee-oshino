@@ -5,8 +5,14 @@ import android.net.Uri
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
@@ -34,7 +40,6 @@ import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.dialog
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
@@ -120,6 +125,7 @@ private fun NavHostController.backToLogin() = navigate(Routes.LOGIN) { popUpTo(R
  * экрана звонка ([Routes.CALL_LAUNCH]); [autoAccept] — звонок уже принят
  * кнопкой в уведомлении, экран входящего не нужен.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean = false, autoAccept: Boolean = false) {
     val nav = rememberNavController()
@@ -151,27 +157,50 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
     var forwardDraft by remember { mutableStateOf<List<String>>(emptyList()) }
     val str = listOf(navArgument("login") { type = NavType.StringType }, navArgument("url") { type = NavType.StringType })
     val dispatcher = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
-    val swipeBack = remember(dispatcher) { SwipeBackController(dispatcher) }
-    val entry by nav.currentBackStackEntryAsState()
     // со звонка свайпом не уходят — только кнопками экрана
-    swipeBack.enabled = nav.previousBackStackEntry != null && entry?.destination?.route !in Routes.CALL_ROUTES
-    CompositionLocalProvider(LocalSwipeBack provides swipeBack) {
+    val swipeBack = remember(dispatcher, nav) {
+        SwipeBackController(dispatcher) {
+            nav.previousBackStackEntry != null && nav.currentBackStackEntry?.destination?.route !in Routes.CALL_ROUTES
+        }
+    }
+    // слой общих элементов: аватар перелетает между шапкой чата и профилем
+    SharedTransitionLayout {
+    CompositionLocalProvider(LocalSwipeBack provides swipeBack, LocalSharedTransitionScope provides this) {
     // как во Flutter: новый экран выезжает справа поверх неподвижного,
     // при возврате уезжает вправо (за пальцем — при свайпе назад);
-    // экраны звонка — сразу, без анимации
+    // профиль собеседника — проявляется с увеличением (Material "shared axis
+    // scaled", как HeroZoomPageRoute во Flutter); экраны звонка — сразу
     NavHost(
         nav,
         startDestination = if (launchedForCall) Routes.CALL_LAUNCH else Routes.SPLASH,
         modifier = Modifier.swipeBack(swipeBack),
         enterTransition = {
-            if (targetState.destination.route in Routes.CALL_ROUTES) EnterTransition.None
-            else slideInHorizontally(tween(450, easing = EaseInOut)) { it }
+            when (targetState.destination.route) {
+                in Routes.CALL_ROUTES -> EnterTransition.None
+                Routes.PEER_PROFILE -> fadeIn(tween(PROFILE_OPEN_MS)) + scaleIn(tween(PROFILE_OPEN_MS), initialScale = 0.8f)
+                else -> slideInHorizontally(tween(450, easing = EaseInOut)) { it }
+            }
         },
-        exitTransition = { ExitTransition.KeepUntilTransitionsFinished },
-        popEnterTransition = { EnterTransition.None },
+        exitTransition = {
+            if (targetState.destination.route == Routes.PEER_PROFILE) {
+                fadeOut(tween(PROFILE_OPEN_MS)) + scaleOut(tween(PROFILE_OPEN_MS), targetScale = 1.1f)
+            } else {
+                ExitTransition.KeepUntilTransitionsFinished
+            }
+        },
+        popEnterTransition = {
+            if (initialState.destination.route == Routes.PEER_PROFILE) {
+                fadeIn(tween(PROFILE_CLOSE_MS)) + scaleIn(tween(PROFILE_CLOSE_MS), initialScale = 1.1f)
+            } else {
+                EnterTransition.None
+            }
+        },
         popExitTransition = {
-            if (initialState.destination.route in Routes.CALL_ROUTES) ExitTransition.None
-            else slideOutHorizontally(tween(340, easing = EaseInOut)) { it }
+            when (initialState.destination.route) {
+                in Routes.CALL_ROUTES -> ExitTransition.None
+                Routes.PEER_PROFILE -> fadeOut(tween(PROFILE_CLOSE_MS)) + scaleOut(tween(PROFILE_CLOSE_MS), targetScale = 0.8f)
+                else -> slideOutHorizontally(tween(340, easing = EaseInOut)) { it }
+            }
         },
     ) {
         composable(Routes.CALL_LAUNCH) {
@@ -260,6 +289,7 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
             val args = e.arguments!!
             val target = ChatTarget(args.getString("login")!!, args.getString("accountId")!!, args.getString("deviceId")!!)
             val forwarded = remember { if (args.getBoolean("forward")) forwardDraft.also { forwardDraft = emptyList() } else emptyList() }
+            CompositionLocalProvider(LocalNavAnimatedScope provides this) {
             ChatScreen(
                 target = target,
                 forwardedTexts = forwarded,
@@ -281,6 +311,7 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
                 },
                 onOpenCall = openCall,
             )
+            }
         }
         composable(Routes.FORWARD) {
             ForwardScreen(
@@ -295,7 +326,9 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
             MediaViewerScreen(e.arguments!!.getString("login")!!, e.arguments!!.getString("messageId")!!, onBack = { nav.popBackStack() })
         }
         composable(Routes.PEER_PROFILE) { e ->
-            PeerProfileScreen(e.arguments!!.getString("accountId")!!, e.arguments!!.getString("login")!!, onBack = { nav.popBackStack() })
+            CompositionLocalProvider(LocalNavAnimatedScope provides this) {
+                PeerProfileScreen(e.arguments!!.getString("accountId")!!, e.arguments!!.getString("login")!!, onBack = { nav.popBackStack() })
+            }
         }
         dialog(Routes.TRANSFERS) { TransfersPanel() }
         composable(Routes.CALL) { CallScreen(onClose = { leaveCall(Routes.CALL) }) }
@@ -307,7 +340,12 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
         }
     }
     }
+    }
 }
+
+/** Профиль собеседника: открытие и закрытие (как у HeroZoomPageRoute во Flutter-клиенте). */
+private const val PROFILE_OPEN_MS = 350
+private const val PROFILE_CLOSE_MS = 300
 
 /**
  * Решение при запуске: нет сессии/устройства → приветствие; сервер говорит,

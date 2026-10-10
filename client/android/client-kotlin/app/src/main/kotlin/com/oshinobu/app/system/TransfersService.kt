@@ -9,7 +9,6 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
 import com.oshinobu.app.MainActivity
 import com.oshinobu.app.R
 import com.oshinobu.app.app
@@ -29,6 +28,7 @@ class TransfersService : Service() {
         private const val CHANNEL_ID = "media_downloads"
         private const val NOTIFICATION_ID = 47110
         private const val EXTRA_TEXT = "text"
+        private val gate = ForegroundGate(TransfersService::class.java)
 
         /** Включать/выключать сервис по состоянию очередей ядра. */
         fun follow(context: Context, core: OshinobuCore) {
@@ -42,12 +42,11 @@ class TransfersService : Service() {
                         else -> null
                     }
                 }.distinctUntilChanged().collect { text ->
-                    val intent = Intent(context, TransfersService::class.java)
                     if (text == null) {
-                        context.stopService(intent)
+                        gate.stop(context)
                     } else {
-                        runCatching { ContextCompat.startForegroundService(context, intent.putExtra(EXTRA_TEXT, context.app.localized().getString(text))) }
-                            .onFailure { core.logger.log("TransfersService start failed: $it") }
+                        val intent = Intent(context, TransfersService::class.java).putExtra(EXTRA_TEXT, context.app.localized().getString(text))
+                        if (!gate.start(context, intent)) core.logger.log("TransfersService start not allowed")
                     }
                 }
             }
@@ -74,8 +73,19 @@ class TransfersService : Service() {
             }
         } catch (_: Exception) {
             stopSelf()
+            return START_NOT_STICKY
+        }
+        // передача уже закончилась, пока служба поднималась — уведомление показано (так требует Android), уходим
+        if (gate.onForeground()) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
         }
         return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        gate.onDestroy()
+        super.onDestroy()
     }
 
     private fun ensureChannel(strings: Context) {

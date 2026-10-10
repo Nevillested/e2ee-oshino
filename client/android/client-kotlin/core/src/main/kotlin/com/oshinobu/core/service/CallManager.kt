@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -179,7 +180,14 @@ class CallManager(
     /** Вежливая сторона уступает при встречных offer — это принимающая звонок. */
     private val polite: Boolean get() = !isOutgoing
 
-    private suspend fun <T> onCallThread(block: suspend () -> T): T = withContext(dispatcher) { block() }
+    /**
+     * Действие со звонком — на потоке звонка и в его собственной области:
+     * доводится до конца, даже если отменили того, кто его вызвал. Экран
+     * входящего запускает "ответить" и тут же уходит на экран разговора —
+     * вместе с экраном отменялась и половина приёма звонка, и тот навсегда
+     * застывал на "устанавливаем защищённое соединение".
+     */
+    private suspend fun <T> onCallThread(block: suspend () -> T): T = scope.async(dispatcher) { block() }.await()
 
     fun start() {
         if (started) return

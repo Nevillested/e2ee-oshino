@@ -24,10 +24,10 @@ import android.os.VibratorManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
-import androidx.core.content.ContextCompat
 import com.oshinobu.app.MainActivity
 import com.oshinobu.app.R
 import com.oshinobu.app.app
+import com.oshinobu.app.system.ForegroundGate
 import com.oshinobu.core.service.CallState
 import kotlinx.coroutines.launch
 
@@ -66,17 +66,16 @@ class CallRingService : Service() {
         const val EXTRA_CALL_ID = "oshinobu.CALL_ID"
         const val EXTRA_CALLER_DEVICE_ID = "oshinobu.CALLER_DEVICE_ID"
 
+        private val gate = ForegroundGate(CallRingService::class.java)
+
         fun start(context: Context, callId: String?, callerDeviceId: String?) {
             val intent = Intent(context, CallRingService::class.java)
                 .putExtra(EXTRA_CALL_ID, callId)
                 .putExtra(EXTRA_CALLER_DEVICE_ID, callerDeviceId)
-            runCatching { ContextCompat.startForegroundService(context, intent) }
-                .onFailure { context.app.core.logger.log("CallRingService start failed: $it") }
+            if (!gate.start(context, intent)) context.app.core.logger.log("CallRingService start not allowed")
         }
 
-        fun stop(context: Context) {
-            context.stopService(Intent(context, CallRingService::class.java))
-        }
+        fun stop(context: Context) = gate.stop(context)
     }
 
     private var player: MediaPlayer? = null
@@ -93,13 +92,14 @@ class CallRingService : Service() {
         val ringing = callId != null
         if (ringing && incomingId != null && incomingId != callId) {
             // второй звонок поверх звонящего — сразу "занято"
-            startForeground()
+            if (!enterForeground()) return START_NOT_STICKY
             declineOnServer(this, incomingId, busy = true)
             return START_NOT_STICKY
         }
         incomingId?.let { callId = it }
         intent?.getStringExtra(EXTRA_CALLER_DEVICE_ID)?.let { callerDeviceId = it }
-        startForeground()
+        // звонок уже отменили/приняли, пока служба поднималась — показала уведомление (так требует Android) и ушла
+        if (!enterForeground()) return START_NOT_STICKY
         if (!ringing) {
             showIncomingScreen()
             startAlerting()
@@ -112,6 +112,7 @@ class CallRingService : Service() {
     }
 
     override fun onDestroy() {
+        gate.onDestroy()
         stopHandler.removeCallbacksAndMessages(null)
         player?.release()
         player = null
@@ -133,6 +134,15 @@ class CallRingService : Service() {
                     .putExtra(CallIntents.EXTRA_SHOW_OVER_LOCKSCREEN, true),
             )
         }.onFailure { app.core.logger.log("CallRingService incoming screen failed: $it") }
+    }
+
+    /** На передний план; false — остановку уже попросили, служба уходит. */
+    private fun enterForeground(): Boolean {
+        startForeground()
+        if (!gate.onForeground()) return true
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        return false
     }
 
     private fun startForeground() {
@@ -235,14 +245,19 @@ class OngoingCallService : Service() {
         private const val NOTIFICATION_ID = 900
         private const val EXTRA_PEER_NAME = "oshinobu.PEER_NAME"
 
+        private val gate = ForegroundGate(OngoingCallService::class.java)
+
         fun start(context: Context, peerName: String?) {
-            runCatching { ContextCompat.startForegroundService(context, Intent(context, OngoingCallService::class.java).putExtra(EXTRA_PEER_NAME, peerName)) }
-                .onFailure { context.app.core.logger.log("OngoingCallService start failed: $it") }
+            val intent = Intent(context, OngoingCallService::class.java).putExtra(EXTRA_PEER_NAME, peerName)
+            if (!gate.start(context, intent)) context.app.core.logger.log("OngoingCallService start not allowed")
         }
 
-        fun stop(context: Context) {
-            context.stopService(Intent(context, OngoingCallService::class.java))
-        }
+        fun stop(context: Context) = gate.stop(context)
+    }
+
+    override fun onDestroy() {
+        gate.onDestroy()
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -272,7 +287,13 @@ class OngoingCallService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
-            app.core.logger.log("OngoingCallService startForeground failed: $e")
+            app.core.logger.error("OngoingCallService startForeground failed: $e")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        // разговор уже закончился, пока служба поднималась — уведомление показано (так требует Android), уходим
+        if (gate.onForeground()) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
         return START_NOT_STICKY

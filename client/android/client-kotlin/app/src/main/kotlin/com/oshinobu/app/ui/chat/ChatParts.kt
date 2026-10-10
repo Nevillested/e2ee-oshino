@@ -84,6 +84,7 @@ import androidx.core.content.ContextCompat
 import com.oshinobu.app.R
 import com.oshinobu.app.media.FileActions
 import com.oshinobu.app.ui.PeerAvatar
+import com.oshinobu.app.ui.sharedPeerAvatar
 import com.oshinobu.app.ui.theme.CardShape
 import com.oshinobu.app.ui.theme.LocalAppColors
 import com.oshinobu.app.ui.translate
@@ -287,7 +288,7 @@ fun ChatHeader(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (!vm.peerDeleted) {
-                        PeerAvatar(vm.peer.accountId, 32.dp)
+                        PeerAvatar(vm.peer.accountId, 32.dp, Modifier.sharedPeerAvatar(vm.peer.accountId))
                         Spacer(Modifier.width(8.dp))
                     }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {

@@ -19,13 +19,20 @@ import kotlin.math.abs
  * ним (та же анимация, что у краевого жеста Android). Отпустили дальше
  * середины или быстрым броском вправо — экран закрывается, иначе возвращается.
  */
-class SwipeBackController(private val dispatcher: OnBackPressedDispatcher) {
-    /** Есть куда возвращаться и экран не запретил свайп. */
-    var enabled = false
+class SwipeBackController(
+    private val dispatcher: OnBackPressedDispatcher,
+    /**
+     * Можно ли сейчас свайпнуть назад (есть куда возвращаться, экран не
+     * запрещает). Спрашивается в момент касания: флаг, выставляемый при
+     * перерисовке, не успевал за сменой экрана — свайп не срабатывал вовсе.
+     */
+    private val canSwipe: () -> Boolean,
+) {
+    val enabled: Boolean get() = canSwipe()
     private var active = false
 
     fun start(): Boolean {
-        if (!enabled || active) return false
+        if (active || !canSwipe()) return false
         active = true
         dispatcher.dispatchOnBackStarted(BackEventCompat(0f, 0f, 0f, BackEventCompat.EDGE_LEFT))
         return true

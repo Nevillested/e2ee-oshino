@@ -1,6 +1,5 @@
 package com.oshinobu.app.ui.chat
 
-import com.oshinobu.app.ui.AppLoadingIndicator
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,9 +35,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.oshinobu.app.R
 import com.oshinobu.app.app
+import com.oshinobu.app.ui.AppLoadingIndicator
 import com.oshinobu.app.ui.PeerAvatar
 import com.oshinobu.app.ui.PhotoViewerDialog
 import com.oshinobu.app.ui.home.ProfileRow
+import com.oshinobu.app.ui.sharedPeerAvatar
 import com.oshinobu.app.ui.theme.LocalAppColors
 import com.oshinobu.core.service.PeerProfile
 import kotlinx.coroutines.flow.filter
@@ -60,7 +61,7 @@ fun PeerProfileScreen(accountId: String, login: String, onBack: () -> Unit) {
         }
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                PeerAvatar(accountId, 128.dp, Modifier.clip(CircleShape).clickable { if (core.avatars.peek(accountId) != null) viewing = true })
+                PeerAvatar(accountId, 128.dp, Modifier.sharedPeerAvatar(accountId).clip(CircleShape).clickable { if (core.avatars.peek(accountId) != null) viewing = true })
             }
             Spacer(Modifier.height(24.dp))
             val loaded = profile

@@ -9,6 +9,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -58,6 +59,22 @@ class CallManagerTest {
             val bobLog = bob.chats.getMessages("alice").single { it.isCallLog }
             assertEquals("incoming", bobLog.callDirection)
             assertEquals("answered", bobLog.callOutcome)
+        }
+    }
+
+    @Test
+    fun acceptSurvivesCancelledCaller() = runBlocking {
+        TestNetwork().use { net ->
+            val alice = net.device("alice")
+            val bob = net.device("bob")
+            alice.calls.startCall(bob.callPeer())
+            net.eventually("bob rings") { bob.calls.state.value == CallState.INCOMING_RINGING }
+            // экран входящего: "ответить" и сразу уход на экран разговора — его корутина отменяется
+            val screen = net.scope.launch { bob.calls.acceptCall() }
+            screen.cancel()
+            net.eventually("both connected") {
+                alice.calls.state.value == CallState.CONNECTED && bob.calls.state.value == CallState.CONNECTED
+            }
         }
     }
 
