@@ -1,6 +1,9 @@
 # WebRTC: классы и методы вызываются из нативной библиотеки по именам
 -keep class org.webrtc.** { *; }
 -dontwarn org.webrtc.**
+# JNI-мост WebRTC: JNI_OnLoad ищет эти классы по именам, без них — нативный краш при первом звонке
+-keep class org.jni_zero.** { *; }
+-dontwarn org.jni_zero.**
 
 # BouncyCastle (X25519/Ed25519 в ядре)
 -keep class org.bouncycastle.** { *; }

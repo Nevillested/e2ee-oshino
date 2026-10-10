@@ -81,7 +81,7 @@ type CallSignalPayload struct {
 // Сколько ждать, прежде чем считать недозвонившийся вызов неотвеченным —
 // как обычный телефонный дозвон: пуш должен успеть разбудить получателя,
 // а сам получатель — успеть увидеть входящий вызов и среагировать.
-const callRingTTL = 45 * time.Second
+const callRingTTL = 2 * time.Minute
 
 func generateDeliveryID() string {
 	buf := make([]byte, 16)

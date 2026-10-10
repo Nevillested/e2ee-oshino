@@ -1,5 +1,6 @@
 package com.oshinobu.app.ui.chat
 
+import com.oshinobu.app.ui.AppLoadingIndicator
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -23,7 +24,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -112,7 +112,7 @@ fun CameraCaptureDialog(onClose: () -> Unit, onSend: (PickedFile, caption: Strin
                     Box(
                         Modifier.size(72.dp).clip(CircleShape).border(4.dp, Color.White, CircleShape).clickable { capture() },
                         contentAlignment = Alignment.Center,
-                    ) { if (capturing) CircularProgressIndicator(color = Color.White) }
+                    ) { if (capturing) AppLoadingIndicator(size = 32.dp, color = Color.White) }
                     RoundIcon(Icons.Filled.Cameraswitch) {
                         controller.cameraSelector =
                             if (controller.cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA

@@ -14,7 +14,7 @@ android {
     namespace = "com.it_nomads.fluttersecurestorage"
     compileSdk = 36
     defaultConfig {
-        minSdk = 23
+        minSdk = 24
     }
     buildFeatures {
         buildConfig = true

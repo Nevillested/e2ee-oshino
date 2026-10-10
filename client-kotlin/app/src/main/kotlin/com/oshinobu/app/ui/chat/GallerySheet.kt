@@ -1,5 +1,6 @@
 package com.oshinobu.app.ui.chat
 
+import com.oshinobu.app.ui.AppLoadingIndicator
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -58,7 +59,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.outlined.EmojiEmotions
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -190,7 +190,7 @@ fun GallerySheet(onDismiss: () -> Unit, onSend: (List<PickedFile>, caption: Stri
             Box(Modifier.weight(1f)) {
                 val list = items
                 if (list == null) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = colors.primary) }
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppLoadingIndicator(size = 32.dp, color = colors.primary) }
                 } else {
                     LazyVerticalGrid(
                         GridCells.Fixed(3), Modifier.fillMaxSize(),
@@ -259,9 +259,9 @@ private fun CameraTile(live: Boolean, onClick: () -> Unit) {
     val colors = LocalAppColors.current
     val owner = LocalLifecycleOwner.current
     val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-    Box(Modifier.aspectRatio(1f).border(0.5.dp, Color.Black.copy(alpha = 0.26f)).background(colors.surface).clickable(onClick = onClick)) {
+    Box(Modifier.aspectRatio(1f).border(0.5.dp, Color.Black.copy(alpha = 0.26f)).background(colors.surface)) {
         if (live && granted) {
-            val controller = remember { LifecycleCameraController(context) }
+            val controller = remember { LifecycleCameraController(context).apply { isTapToFocusEnabled = false; isPinchToZoomEnabled = false } }
             DisposableEffect(owner) {
                 controller.bindToLifecycle(owner)
                 onDispose { controller.unbind() }
@@ -272,6 +272,8 @@ private fun CameraTile(live: Boolean, onClick: () -> Unit) {
             )
         }
         Icon(Icons.Filled.CameraAlt, null, tint = Color.White, modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp))
+        // превью камеры само забирает касания (фокусировка тапом) — тап по плитке ловим поверх него
+        Box(Modifier.matchParentSize().clickable(onClick = onClick))
     }
 }
 
@@ -353,7 +355,7 @@ private fun PreviewPage(item: GalleryItem, current: Boolean) {
         }
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
-                ?: CircularProgressIndicator(color = Color.White)
+                ?: AppLoadingIndicator(size = 32.dp, color = Color.White)
         }
         return
     }
@@ -451,7 +453,7 @@ fun CaptionBar(sending: Boolean, onSend: (String) -> Unit) {
                 )
             }
             if (sending) {
-                CircularProgressIndicator(Modifier.padding(10.dp).size(24.dp), color = colors.primary, strokeWidth = 2.dp)
+                AppLoadingIndicator(Modifier.padding(10.dp), size = 24.dp, color = colors.primary)
             } else {
                 IconButton(onClick = { onSend(text.trim()) }) { Icon(Icons.AutoMirrored.Filled.Send, null, tint = colors.primary) }
             }

@@ -1,5 +1,6 @@
 package com.oshinobu.app.ui.chat
 
+import com.oshinobu.app.ui.AppLoadingIndicator
 import android.graphics.Bitmap
 import android.os.Build
 import androidx.compose.animation.core.LinearEasing
@@ -133,7 +134,7 @@ fun MediaStatusOverlay(statusText: String, percent: Double?, onCancel: (() -> Un
                         trackColor = Color.White.copy(alpha = 0.25f),
                     )
                 } else {
-                    CircularProgressIndicator(Modifier.size(36.dp), color = Color.White, strokeWidth = 3.dp)
+                    AppLoadingIndicator(size = 36.dp, color = Color.White)
                 }
                 if (onCancel != null) {
                     Icon(Icons.Filled.Close, null, tint = Color.White, modifier = Modifier.size(18.dp).clickable(onClick = onCancel))
@@ -358,7 +359,7 @@ private fun FileAttachment(
             contentAlignment = Alignment.Center,
         ) {
             if (download != null) {
-                CircularProgressIndicator(Modifier.size(22.dp), color = colors.textMuted, strokeWidth = 2.dp)
+                AppLoadingIndicator(size = 22.dp, color = colors.textMuted)
             } else {
                 Icon(icon, null, tint = if (failed) Color(0xFFFF5252) else colors.textMuted, modifier = Modifier.size(32.dp))
             }
@@ -390,7 +391,7 @@ private fun FileAttachment(
     ) {
         Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
             if (download != null) {
-                CircularProgressIndicator(Modifier.size(20.dp), color = textColor, strokeWidth = 2.dp)
+                AppLoadingIndicator(size = 20.dp, color = textColor)
             } else {
                 Icon(
                     if (needsDownload && !failed) Icons.Filled.Download else icon, null,

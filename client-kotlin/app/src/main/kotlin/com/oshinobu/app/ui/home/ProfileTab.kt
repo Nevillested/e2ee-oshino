@@ -1,5 +1,6 @@
 package com.oshinobu.app.ui.home
 
+import com.oshinobu.app.ui.AppLoadingIndicator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
@@ -32,7 +33,6 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -142,7 +142,7 @@ fun ProfileTab() {
                     Modifier.size(diameter).clickable(enabled = !uploading) { if (avatar == null) pick() else avatarSheet = true },
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (uploading) CircularProgressIndicator(color = colors.primary) else AvatarImage(avatar, diameter)
+                    if (uploading) AppLoadingIndicator(size = 32.dp, color = colors.primary) else AvatarImage(avatar, diameter)
                 }
             }
             Spacer(Modifier.height(24.dp))

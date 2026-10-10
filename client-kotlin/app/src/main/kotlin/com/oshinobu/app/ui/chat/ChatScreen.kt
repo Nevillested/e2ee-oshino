@@ -429,7 +429,6 @@ fun ChatScreen(
                                         inputFocus.requestFocus()
                                     },
                                     onSwipeEnd = { swipeReplyId = null; swipeReplyDx = 0f },
-                                    onSwipeBack = ::handleBack,
                                 ),
                             ) {
                                 MessageBubble(
@@ -635,14 +634,14 @@ class RowGestures(
     val onSwipeReply: (dx: Float) -> Unit,
     val onSwipeReplyFire: () -> Unit,
     val onSwipeEnd: () -> Unit,
-    val onSwipeBack: () -> Unit,
 )
 
 private enum class Phase { UP, LONG, HSWIPE, CANCEL }
 
 /**
- * Чем окажется касание: отпустили (тап), горизонтальный свайп, вертикальный
+ * Чем окажется касание: отпустили (тап), свайп влево (ответ), вертикальный
  * скролл ленты или чужое касание (ссылка/кнопка внутри пузыря) — отмена.
+ * Свайп вправо — тоже отмена: его забирает общий свайп назад ([swipeBack]).
  * Долгий тап — это истечение таймаута вокруг этой функции.
  */
 private suspend fun AwaitPointerEventScope.classify(down: PointerInputChange, slop: Float, swipeStart: Array<Offset>): Phase {
@@ -652,6 +651,8 @@ private suspend fun AwaitPointerEventScope.classify(down: PointerInputChange, sl
         if (ch.isConsumed) return Phase.CANCEL
         val d = ch.position - down.position
         if (abs(d.x) > slop && abs(d.x) > abs(d.y) * 1.5f) {
+            if (d.x > 0) return Phase.CANCEL
+            ch.consume()
             swipeStart[0] = ch.position
             return Phase.HSWIPE
         }
@@ -768,7 +769,6 @@ private fun MessageRow(
                                 }
                             }
                             g.onSwipeEnd()
-                            if (dx > 80.dp.toPx()) g.onSwipeBack()
                         }
                     }
                 }

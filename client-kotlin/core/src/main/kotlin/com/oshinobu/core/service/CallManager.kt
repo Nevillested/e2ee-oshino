@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -113,6 +114,8 @@ class CallManager(
     private val log: Logger = NoopLogger,
     private val now: () -> Long = System::currentTimeMillis,
     private val endReasonDelayMs: Long = 1_800,
+    /** Сколько звонить без ответа — столько же, сколько callRingTTL на сервере и звонок по пушу. */
+    private val ringTimeoutMs: Long = 120_000,
 ) {
     private companion object {
         /** Эти сигналы принимаются только от собеседника текущего звонка. */
@@ -165,6 +168,7 @@ class CallManager(
     private var accepting = false
     private var autoAcceptPending = false
     private var started = false
+    private var ringTimeout: Job? = null
 
     /** Вежливая сторона уступает при встречных offer — это принимающая звонок. */
     private val polite: Boolean get() = !isOutgoing
@@ -215,6 +219,7 @@ class CallManager(
             val offer = session.createOffer()
             _status.value = "call.ringing"
             send("call_offer", buildJsonObject { put("sdp", offer) })
+            armRingTimeout()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -520,12 +525,41 @@ class CallManager(
         remoteDescriptionSet = false
         pendingCandidates.clear()
         setState(CallState.INCOMING_RINGING)
+        armRingTimeout()
         if (autoAcceptPending) {
             autoAcceptPending = false
             autoAcceptAndOpen()
         } else {
             _incoming.tryEmit(IncomingCall(callId.orEmpty(), CallPeer(sender)))
             scope.launch(dispatcher) { resolvePeer() }
+        }
+    }
+
+    /**
+     * Дозвон не вечный. Сервер сам отвечает call_unavailable, только если
+     * offer не дошёл; если дошёл, а собеседник молчит (или его приложение
+     * упало), без этого исходящий гудел бы, а входящий звонил бы бесконечно.
+     * Исходящий: отмена у собеседника, "не отвечает" и пропущенный ему.
+     * Входящий: ждём чуть дольше звонящего — обычно раньше придёт его отмена.
+     */
+    private fun armRingTimeout() {
+        ringTimeout?.cancel()
+        val callId = currentCallId
+        val ringing = _state.value
+        val timeout = if (ringing == CallState.OUTGOING_RINGING) ringTimeoutMs else ringTimeoutMs + 5_000
+        ringTimeout = scope.launch(dispatcher) {
+            delay(timeout)
+            if (_state.value != ringing || currentCallId != callId) return@launch
+            log.log("CallManager ring timeout state=$ringing")
+            ringTimeout = null
+            if (ringing == CallState.OUTGOING_RINGING) {
+                send("call_cancel", JsonObject(emptyMap()))
+                _status.value = "call.noAnswer"
+                delay(endReasonDelayMs)
+                resetLocal(peerWasUnavailable = true)
+            } else {
+                resetLocal()
+            }
         }
     }
 
@@ -546,6 +580,8 @@ class CallManager(
 
     private suspend fun resetLocal(peerWasUnavailable: Boolean = false) {
         if (_state.value == CallState.IDLE && rtc == null) return
+        ringTimeout?.cancel() // сам таймер перед сбросом уже обнулил ссылку на себя
+        ringTimeout = null
         logCall(peerWasUnavailable)
         rtc?.close()
         rtc = null

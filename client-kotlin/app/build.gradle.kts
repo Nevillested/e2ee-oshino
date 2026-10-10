@@ -21,7 +21,7 @@ android {
         // тот же applicationId, что у Flutter-сборки: ставится поверх неё и
         // работает с её данными (см. :flutter-compat)
         applicationId = "com.oshinobu.oshinobu_client"
-        minSdk = 23
+        minSdk = 24
         targetSdk = 36
         versionCode = providers.gradleProperty("oshinobu.versionCode").get().toInt()
         versionName = providers.gradleProperty("oshinobu.versionName").get()

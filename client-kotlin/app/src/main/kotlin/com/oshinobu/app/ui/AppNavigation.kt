@@ -2,18 +2,28 @@ package com.oshinobu.app.ui
 
 import android.Manifest
 import android.net.Uri
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.EaseInOut
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.dialog
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
@@ -104,7 +114,24 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>) {
     // что пересылаем: живёт от выбора "Переслать" до открытия чата-получателя
     var forwardDraft by remember { mutableStateOf<List<String>>(emptyList()) }
     val str = listOf(navArgument("login") { type = NavType.StringType }, navArgument("url") { type = NavType.StringType })
-    NavHost(nav, startDestination = Routes.SPLASH) {
+    val dispatcher = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
+    val swipeBack = remember(dispatcher) { SwipeBackController(dispatcher) }
+    val entry by nav.currentBackStackEntryAsState()
+    // со звонка свайпом не уходят — только кнопками экрана
+    swipeBack.enabled = nav.previousBackStackEntry != null &&
+        entry?.destination?.route !in setOf(Routes.CALL, Routes.INCOMING_CALL)
+    CompositionLocalProvider(LocalSwipeBack provides swipeBack) {
+    // как во Flutter: новый экран выезжает справа поверх неподвижного,
+    // при возврате уезжает вправо (за пальцем — при свайпе назад)
+    NavHost(
+        nav,
+        startDestination = Routes.SPLASH,
+        modifier = Modifier.swipeBack(swipeBack),
+        enterTransition = { slideInHorizontally(tween(450, easing = EaseInOut)) { it } },
+        exitTransition = { ExitTransition.KeepUntilTransitionsFinished },
+        popEnterTransition = { EnterTransition.None },
+        popExitTransition = { slideOutHorizontally(tween(340, easing = EaseInOut)) { it } },
+    ) {
         composable(Routes.SPLASH) {
             SplashScreen(
                 onSignedOut = { nav.startOver(Routes.WELCOME) },
@@ -227,6 +254,7 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>) {
                 onClose = { nav.popBackStack(Routes.INCOMING_CALL, inclusive = true) },
             )
         }
+    }
     }
 }
 

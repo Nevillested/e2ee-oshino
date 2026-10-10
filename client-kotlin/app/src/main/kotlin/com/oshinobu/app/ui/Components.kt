@@ -1,5 +1,15 @@
 package com.oshinobu.app.ui
 
+import kotlin.math.sin
+import kotlin.math.PI
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.LinearEasing
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -27,7 +37,6 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -156,7 +165,7 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
         contentPadding = PaddingValues(horizontal = 16.dp),
     ) {
         if (loading) {
-            CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
+            AppLoadingIndicator(size = 22.dp, color = Color.White)
         } else {
             Text(text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         }
@@ -193,7 +202,7 @@ fun MutedText(text: String, fontSize: Int = 14) {
 @Composable
 fun FullScreenLoading() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(color = LocalAppColors.current.primary)
+        AppLoadingIndicator(size = 32.dp, color = LocalAppColors.current.primary)
     }
 }
 
@@ -249,6 +258,29 @@ fun rememberWithPermission(permission: String): (action: () -> Unit) -> Unit {
         } else {
             pending = action
             launcher.launch(permission)
+        }
+    }
+}
+
+/**
+ * Индикатор загрузки — три точки, пульсирующие волной (как AppLoadingIndicator
+ * во Flutter-клиенте): масштаб 0.55–1 и прозрачность 0.35–1, период 1.1 с.
+ */
+@Composable
+fun AppLoadingIndicator(modifier: Modifier = Modifier, size: Dp = 24.dp, color: Color = LocalAppColors.current.primary) {
+    val t by rememberInfiniteTransition(label = "loading").animateFloat(
+        0f, 1f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "t",
+    )
+    Canvas(modifier.size(size)) {
+        val dot = this.size.width / 4.2f
+        val step = (this.size.width - dot) / 2
+        for (i in 0..2) {
+            val wave = 0.5f + 0.5f * sin(2 * PI.toFloat() * (t - i * 0.22f))
+            drawCircle(
+                color.copy(alpha = color.alpha * (0.35f + 0.65f * wave)),
+                radius = dot / 2 * (0.55f + 0.45f * wave),
+                center = Offset(dot / 2 + i * step, this.size.height / 2),
+            )
         }
     }
 }

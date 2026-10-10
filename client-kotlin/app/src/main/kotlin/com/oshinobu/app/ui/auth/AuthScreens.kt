@@ -1,5 +1,6 @@
 package com.oshinobu.app.ui.auth
 
+import com.oshinobu.app.ui.AppLoadingIndicator
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -18,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -403,7 +403,7 @@ fun ResetTotpScreen(login: String, code: String, onBack: () -> Unit, onVerified:
         Gap(48)
         if (error == null) {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = LocalAppColors.current.primary)
+                AppLoadingIndicator(size = 32.dp, color = LocalAppColors.current.primary)
             }
         } else {
             Text(error!!, color = ErrorRed, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())

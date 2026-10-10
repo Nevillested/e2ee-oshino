@@ -1,5 +1,6 @@
 package com.oshinobu.app.ui.home
 
+import com.oshinobu.app.ui.AppLoadingIndicator
 import android.Manifest
 import android.app.NotificationManager
 import android.content.Intent
@@ -56,7 +57,6 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -423,7 +423,7 @@ private fun SearchResults(query: String, onOpenChat: (ChatTarget) -> Unit, onOpe
     ) {
         when (found) {
             null -> Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(Modifier.size(24.dp), color = colors.primary, strokeWidth = 2.dp)
+                AppLoadingIndicator(size = 24.dp, color = colors.primary)
             }
             is SearchResult.NotFound -> Text(found.message, color = colors.textMuted, modifier = Modifier.padding(16.dp))
             is SearchResult.Self -> {

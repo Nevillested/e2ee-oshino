@@ -1,5 +1,6 @@
 package com.oshinobu.app.ui.chat
 
+import com.oshinobu.app.ui.AppLoadingIndicator
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -200,7 +201,7 @@ private fun MediaPage(
                 if (percent != null) {
                     CircularProgressIndicator(progress = { (percent / 100).toFloat() }, color = Color.White, trackColor = Color.White.copy(alpha = 0.2f))
                 } else {
-                    CircularProgressIndicator(color = Color.White)
+                    AppLoadingIndicator(size = 32.dp, color = Color.White)
                 }
             }
             PageFile.Failed -> Icon(Icons.Filled.BrokenImage, null, tint = Color.White.copy(alpha = 0.54f), modifier = Modifier.size(64.dp))

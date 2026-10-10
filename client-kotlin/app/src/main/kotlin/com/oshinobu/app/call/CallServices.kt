@@ -57,7 +57,7 @@ class CallRingService : Service() {
     companion object {
         private const val CHANNEL_ID = "call_ring_service"
         private const val NOTIFICATION_ID = 777
-        private const val RING_TIMEOUT_MS = 45_000L
+        private const val RING_TIMEOUT_MS = 120_000L
         const val EXTRA_CALL_ID = "oshinobu.CALL_ID"
         const val EXTRA_CALLER_DEVICE_ID = "oshinobu.CALLER_DEVICE_ID"
 

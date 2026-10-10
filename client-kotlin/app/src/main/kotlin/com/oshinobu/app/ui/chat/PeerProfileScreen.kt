@@ -1,5 +1,6 @@
 package com.oshinobu.app.ui.chat
 
+import com.oshinobu.app.ui.AppLoadingIndicator
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -19,7 +20,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Badge
 import androidx.compose.material.icons.outlined.Cake
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
@@ -60,7 +60,7 @@ fun PeerProfileScreen(accountId: String, login: String, onBack: () -> Unit) {
             Spacer(Modifier.height(24.dp))
             val loaded = profile
             if (loaded == null) {
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = colors.primary) }
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { AppLoadingIndicator(size = 32.dp, color = colors.primary) }
             } else {
                 val p = loaded.getOrNull()
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
