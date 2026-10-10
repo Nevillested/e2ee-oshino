@@ -20,6 +20,12 @@ class ChatActions(
     private val messenger: PeerMessenger,
     private val router: MessageRouter,
     private val cleanup: MessageCleanup,
+    /**
+     * Сам заблокировал/разблокировал — сверить блокировки с сервером: событие
+     * block_status_changed сервер шлёт только другой стороне, а скрытое/открытое
+     * блокировкой (фото, профиль) надо перезапросить и у себя.
+     */
+    private val onBlockChanged: suspend () -> Unit = {},
 ) {
     /** Мьют локально сразу; сервер (глушит пуши) — по возможности, без отката. */
     suspend fun setMuted(chat: ChatSummary, muted: Boolean) {
@@ -45,6 +51,7 @@ class ChatActions(
             val accountId = chat.lastKnownAccountId ?: throw ApiException("error.blockFailed")
             val token = session.token ?: throw ApiException("error.blockFailed")
             if (blocked) api.blockContact(token, accountId) else api.unblockContact(token, accountId)
+            onBlockChanged()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

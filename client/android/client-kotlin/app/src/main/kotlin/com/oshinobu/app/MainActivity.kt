@@ -69,6 +69,16 @@ class MainActivity : AppCompatActivity(), CallWindow {
         reportPresence()
     }
 
+    /**
+     * Окно стало активным или перестало им быть — в том числе когда сняли
+     * блокировку поверх уже открытого приложения (после звонка): системного
+     * "разблокировали" (ACTION_USER_PRESENT) в этом случае может и не быть.
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        reportPresence()
+    }
+
     override fun onStop() {
         super.onStop()
         visible = false
@@ -92,6 +102,12 @@ class MainActivity : AppCompatActivity(), CallWindow {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // открыли ради звонка — сразу его экран, без заставки и списка чатов (смотреть до handleCallIntent: тот снимает флаги)
+        val launchedForCall = savedInstanceState == null && (
+            intent.getBooleanExtra(CallIntents.EXTRA_SHOW_OVER_LOCKSCREEN, false) ||
+                intent.hasExtra(CallIntents.EXTRA_AUTO_ACCEPT) || intent.hasExtra(CallIntents.EXTRA_OPEN_CALL_SCREEN)
+            )
+        val autoAccept = intent.getBooleanExtra(CallIntents.EXTRA_AUTO_ACCEPT, false)
         handleCallIntent(intent)
         setContent {
             val dark by app.darkTheme.collectAsState()
@@ -99,7 +115,7 @@ class MainActivity : AppCompatActivity(), CallWindow {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * textScale.toFloat())) {
                 OshinobuTheme(dark = dark) {
-                    if (inPip) PipCallView() else UpdateGate { AppLockGate { AppNavigation(callScreenRequests) } }
+                    if (inPip) PipCallView() else UpdateGate { AppLockGate { AppNavigation(callScreenRequests, launchedForCall, autoAccept) } }
                 }
             }
         }
@@ -187,6 +203,7 @@ class MainActivity : AppCompatActivity(), CallWindow {
                 object : KeyguardManager.KeyguardDismissCallback() {
                     override fun onDismissSucceeded() {
                         setShowOverLockscreen(false)
+                        reportPresence()
                         cont.resume(true)
                     }
                     override fun onDismissCancelled() = cont.resume(false)

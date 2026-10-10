@@ -9,6 +9,14 @@ import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -17,8 +25,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -27,6 +38,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.dialog
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.oshinobu.app.R
 import com.oshinobu.app.app
 import com.oshinobu.app.ui.auth.LoginScreen
 import com.oshinobu.app.ui.auth.RecoveryChooseScreen
@@ -47,11 +59,15 @@ import com.oshinobu.app.ui.chat.MediaViewerScreen
 import com.oshinobu.app.ui.chat.PeerProfileScreen
 import com.oshinobu.app.ui.home.ChatTarget
 import com.oshinobu.app.ui.home.HomeScreen
+import com.oshinobu.app.ui.theme.LocalAppColors
+import com.oshinobu.core.OshinobuCore
 import com.oshinobu.core.service.CallPeer
 import com.oshinobu.core.service.CallState
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Маршруты приложения. Аргументы — в пути, строки кодируются [Uri.encode]. */
 object Routes {
@@ -74,6 +90,12 @@ object Routes {
     const val CALL = "call"
     const val INCOMING_CALL = "incoming-call"
 
+    /** Приложение открыли ради звонка — сразу его экран, без заставки и списка чатов. */
+    const val CALL_LAUNCH = "call-launch"
+
+    /** Экраны звонка: появляются сразу, без выезда, и свайпом назад не закрываются. */
+    val CALL_ROUTES = setOf(CALL, INCOMING_CALL, CALL_LAUNCH)
+
     /** [forward] — открыть чат с пересылаемыми сообщениями (буфер пересылки — в [AppNavigation]). */
     fun chat(t: ChatTarget, forward: Boolean = false) =
         "chat/${Uri.encode(t.login)}?accountId=${Uri.encode(t.accountId)}&deviceId=${Uri.encode(t.deviceId)}&forward=$forward"
@@ -92,22 +114,36 @@ private fun NavHostController.startOver(route: String) = navigate(route) { popUp
 /** Вернуться к экрану входа, убрав из стека всё, что было после приветствия. */
 private fun NavHostController.backToLogin() = navigate(Routes.LOGIN) { popUpTo(Routes.WELCOME) }
 
+/**
+ * [launchedForCall] — приложение открыто ради звонка (входящий поверх
+ * блокировки, "ответить" в уведомлении, "идёт разговор"): стартуем сразу с
+ * экрана звонка ([Routes.CALL_LAUNCH]); [autoAccept] — звонок уже принят
+ * кнопкой в уведомлении, экран входящего не нужен.
+ */
 @Composable
-fun AppNavigation(callScreenRequests: SharedFlow<Unit>) {
+fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean = false, autoAccept: Boolean = false) {
     val nav = rememberNavController()
     val core = LocalContext.current.app.core
     val scope = rememberCoroutineScope()
     fun current() = nav.currentBackStackEntry?.destination?.route
     // звонки: входящий — экран входящего; принятый из уведомления / раскрытый из окошка — экран звонка
+    // (пока приложение поднимается ради звонка, на нужный экран ведёт сам CALL_LAUNCH)
     LaunchedEffect(Unit) {
-        core.calls.incomingCalls.collect { if (current() != Routes.INCOMING_CALL) nav.navigate(Routes.INCOMING_CALL) }
+        core.calls.incomingCalls.collect {
+            if (current() != Routes.INCOMING_CALL && current() != Routes.CALL_LAUNCH) nav.navigate(Routes.INCOMING_CALL)
+        }
     }
     LaunchedEffect(Unit) {
         merge(core.calls.openCallScreen, callScreenRequests).collect {
-            if (core.calls.state.value != CallState.IDLE && current() != Routes.CALL) {
+            if (core.calls.state.value != CallState.IDLE && current() != Routes.CALL && current() != Routes.CALL_LAUNCH) {
                 nav.navigate(Routes.CALL) { popUpTo(Routes.INCOMING_CALL) { inclusive = true } }
             }
         }
+    }
+
+    /** Закрыть экран звонка; открыли приложение ради звонка — под ним ничего нет, дальше обычный запуск. */
+    fun leaveCall(route: String) {
+        if (nav.previousBackStackEntry == null) nav.startOver(Routes.SPLASH) else nav.popBackStack(route, inclusive = true)
     }
     val openCall = { if (current() != Routes.CALL) nav.navigate(Routes.CALL) }
     val withMic = rememberWithPermission(Manifest.permission.RECORD_AUDIO)
@@ -118,20 +154,35 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>) {
     val swipeBack = remember(dispatcher) { SwipeBackController(dispatcher) }
     val entry by nav.currentBackStackEntryAsState()
     // со звонка свайпом не уходят — только кнопками экрана
-    swipeBack.enabled = nav.previousBackStackEntry != null &&
-        entry?.destination?.route !in setOf(Routes.CALL, Routes.INCOMING_CALL)
+    swipeBack.enabled = nav.previousBackStackEntry != null && entry?.destination?.route !in Routes.CALL_ROUTES
     CompositionLocalProvider(LocalSwipeBack provides swipeBack) {
     // как во Flutter: новый экран выезжает справа поверх неподвижного,
-    // при возврате уезжает вправо (за пальцем — при свайпе назад)
+    // при возврате уезжает вправо (за пальцем — при свайпе назад);
+    // экраны звонка — сразу, без анимации
     NavHost(
         nav,
-        startDestination = Routes.SPLASH,
+        startDestination = if (launchedForCall) Routes.CALL_LAUNCH else Routes.SPLASH,
         modifier = Modifier.swipeBack(swipeBack),
-        enterTransition = { slideInHorizontally(tween(450, easing = EaseInOut)) { it } },
+        enterTransition = {
+            if (targetState.destination.route in Routes.CALL_ROUTES) EnterTransition.None
+            else slideInHorizontally(tween(450, easing = EaseInOut)) { it }
+        },
         exitTransition = { ExitTransition.KeepUntilTransitionsFinished },
         popEnterTransition = { EnterTransition.None },
-        popExitTransition = { slideOutHorizontally(tween(340, easing = EaseInOut)) { it } },
+        popExitTransition = {
+            if (initialState.destination.route in Routes.CALL_ROUTES) ExitTransition.None
+            else slideOutHorizontally(tween(340, easing = EaseInOut)) { it }
+        },
     ) {
+        composable(Routes.CALL_LAUNCH) {
+            CallLaunchScreen(
+                autoAccept = autoAccept,
+                onIncoming = { nav.navigate(Routes.INCOMING_CALL) { popUpTo(Routes.CALL_LAUNCH) { inclusive = true } } },
+                onInCall = { nav.navigate(Routes.CALL) { popUpTo(Routes.CALL_LAUNCH) { inclusive = true } } },
+                onNoCall = { nav.startOver(Routes.SPLASH) },
+                onSignedOut = { nav.startOver(Routes.WELCOME) },
+            )
+        }
         composable(Routes.SPLASH) {
             SplashScreen(
                 onSignedOut = { nav.startOver(Routes.WELCOME) },
@@ -247,11 +298,11 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>) {
             PeerProfileScreen(e.arguments!!.getString("accountId")!!, e.arguments!!.getString("login")!!, onBack = { nav.popBackStack() })
         }
         dialog(Routes.TRANSFERS) { TransfersPanel() }
-        composable(Routes.CALL) { CallScreen(onClose = { nav.popBackStack(Routes.CALL, inclusive = true) }) }
+        composable(Routes.CALL) { CallScreen(onClose = { leaveCall(Routes.CALL) }) }
         composable(Routes.INCOMING_CALL) {
             IncomingCallScreen(
                 onAccepted = { nav.navigate(Routes.CALL) { popUpTo(Routes.INCOMING_CALL) { inclusive = true } } },
-                onClose = { nav.popBackStack(Routes.INCOMING_CALL, inclusive = true) },
+                onClose = { leaveCall(Routes.INCOMING_CALL) },
             )
         }
     }
@@ -266,19 +317,53 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>) {
 @Composable
 private fun SplashScreen(onSignedOut: () -> Unit, onSignedIn: () -> Unit) {
     val core = LocalContext.current.app.core
-    LaunchedEffect(Unit) {
-        val token = core.session.token
-        if (token == null || core.keys.deviceId() == null) {
-            onSignedOut()
-            return@LaunchedEffect
-        }
-        if (core.api.checkSession(token) == false) {
-            core.signOutLocally()
-            onSignedOut()
-            return@LaunchedEffect
-        }
-        core.startSession()
-        onSignedIn()
-    }
+    LaunchedEffect(Unit) { if (resumeSession(core)) onSignedIn() else onSignedOut() }
     FullScreenLoading()
 }
+
+/** Поднять сохранённую сессию; false — входа нет (или сервер его больше не признаёт — всё стёрто). */
+private suspend fun resumeSession(core: OshinobuCore): Boolean {
+    val token = core.session.token
+    if (token == null || core.keys.deviceId() == null) return false
+    if (core.api.checkSession(token) == false) {
+        core.signOutLocally()
+        return false
+    }
+    core.startSession()
+    return true
+}
+
+/**
+ * Приложение открыто ради звонка: пока поднимается сессия и приходит сам
+ * звонок (offer — по WebSocket после подключения), — экран "входящий
+ * звонок", затем сразу нужный экран звонка. Звонка так и не дождались
+ * (отменили, пока поднимались) — обычный запуск.
+ */
+@Composable
+private fun CallLaunchScreen(autoAccept: Boolean, onIncoming: () -> Unit, onInCall: () -> Unit, onNoCall: () -> Unit, onSignedOut: () -> Unit) {
+    val core = LocalContext.current.app.core
+    val colors = LocalAppColors.current
+    LaunchedEffect(Unit) {
+        if (!resumeSession(core)) {
+            onSignedOut()
+            return@LaunchedEffect
+        }
+        when (withTimeoutOrNull(CALL_LAUNCH_WAIT_MS) { core.calls.state.first { it != CallState.IDLE } }) {
+            null -> onNoCall()
+            CallState.INCOMING_RINGING -> if (autoAccept) onInCall() else onIncoming()
+            else -> onInCall()
+        }
+    }
+    Column(
+        Modifier.fillMaxSize().background(colors.background).systemBarsPadding(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(stringResource(R.string.call_incoming), color = colors.textMuted)
+        Spacer(Modifier.height(16.dp))
+        AppLoadingIndicator(size = 32.dp, color = colors.primary)
+    }
+}
+
+/** Сколько ждать звонок, открыв приложение ради него (подключение + доставка offer). */
+private const val CALL_LAUNCH_WAIT_MS = 20_000L

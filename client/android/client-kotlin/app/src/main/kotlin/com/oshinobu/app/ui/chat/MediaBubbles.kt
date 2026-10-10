@@ -1,6 +1,5 @@
 package com.oshinobu.app.ui.chat
 
-import com.oshinobu.app.ui.AppLoadingIndicator
 import android.graphics.Bitmap
 import android.os.Build
 import androidx.compose.animation.core.LinearEasing
@@ -79,6 +78,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.oshinobu.app.R
 import com.oshinobu.app.media.MediaDecoding
+import com.oshinobu.app.ui.AppLoadingIndicator
+import com.oshinobu.app.ui.theme.CardShape
 import com.oshinobu.app.ui.theme.LocalAppColors
 import com.oshinobu.app.ui.translate
 import com.oshinobu.core.format.formatFileSize
@@ -312,7 +313,7 @@ private fun SaveFileMenu(tint: Color, badge: Boolean, onSave: () -> Unit) {
                 .padding(if (badge) 3.dp else 6.dp)
                 .size(if (badge) 14.dp else 18.dp),
         )
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, shape = CardShape) {
             DropdownMenuItem(text = { Text(stringResource(R.string.chat_saveToDevice)) }, onClick = {
                 open = false
                 onSave()

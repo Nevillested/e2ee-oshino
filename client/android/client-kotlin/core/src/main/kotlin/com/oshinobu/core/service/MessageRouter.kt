@@ -372,14 +372,20 @@ class MessageRouter(
 
     // ---------------- владелец устройства ----------------
 
-    /** device_id → (account_id, login): память → диск (PeerAccountStore + список чатов) → сеть. */
-    suspend fun resolveOwner(deviceId: String): DeviceOwnerRef? {
+    /** device_id → (account_id, login) без сети: память → диск (PeerAccountStore + список чатов). */
+    suspend fun knownOwner(deviceId: String): DeviceOwnerRef? {
         ownerCache[deviceId]?.let { return it }
         peerAccounts.get(deviceId)?.let { accountId ->
             chats.getKnownPeers().firstOrNull { it.lastKnownAccountId == accountId }?.let {
                 return DeviceOwnerRef(accountId, it.peerLogin).also { ref -> ownerCache[deviceId] = ref }
             }
         }
+        return null
+    }
+
+    /** device_id → (account_id, login): без сети ([knownOwner]) → сеть. */
+    suspend fun resolveOwner(deviceId: String): DeviceOwnerRef? {
+        knownOwner(deviceId)?.let { return it }
         val token = session.token ?: return null
         val info = api.getDeviceOwnerInfo(token, deviceId) ?: return null
         peerAccounts.save(deviceId, info.accountId)

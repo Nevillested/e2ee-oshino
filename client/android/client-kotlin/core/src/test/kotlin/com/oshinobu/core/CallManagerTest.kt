@@ -62,6 +62,20 @@ class CallManagerTest {
     }
 
     @Test
+    fun callerFromKnownChatIsNamedImmediately() = runBlocking {
+        TestNetwork().use { net ->
+            val alice = net.device("alice")
+            val bob = net.device("bob")
+            alice.sendText(bob, "привет")
+            net.eventually("bob got alice's message") { bob.chats.getMessages("alice").isNotEmpty() }
+            val incoming = net.scope.async(start = CoroutineStart.UNDISPATCHED) { bob.calls.incomingCalls.first() }
+            alice.calls.startCall(bob.callPeer())
+            // экран входящего строится по этому событию — имя должно быть в нём, а не прийти потом с сервера
+            assertEquals("alice", incoming.await().peer.login)
+        }
+    }
+
+    @Test
     fun declinedCallShowsReasonThenEnds() = runBlocking {
         TestNetwork().use { net ->
             val alice = net.device("alice")

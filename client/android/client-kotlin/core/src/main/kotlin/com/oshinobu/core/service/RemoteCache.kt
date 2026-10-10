@@ -63,6 +63,17 @@ class RemoteCache<T : Any>(
         return refresh(key, notify = false).getOrElse { lock.withLock { entries[key]?.value } }
     }
 
+    /**
+     * Копию с диска — в память, без сети: чтобы первый же кадр (экран
+     * входящего звонка) показал её сразу, а не через мгновение. Копия
+     * считается устаревшей — следующий [get] всё равно сходит за свежей.
+     */
+    suspend fun warm(key: String) {
+        if (lock.withLock { entries[key] != null }) return
+        val fromDisk = readDisk(key) ?: return
+        lock.withLock { if (entries[key] == null) entries[key] = Entry(fromDisk, 0) }
+    }
+
     /** Значение на сервере изменилось — следующий [get] пойдёт в сеть. */
     suspend fun invalidate(key: String) {
         lock.withLock {

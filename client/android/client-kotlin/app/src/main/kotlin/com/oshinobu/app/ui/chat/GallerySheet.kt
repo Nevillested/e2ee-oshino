@@ -113,6 +113,7 @@ import com.oshinobu.app.media.GalleryAccess
 import com.oshinobu.app.media.GalleryItem
 import com.oshinobu.app.media.MediaDecoding
 import com.oshinobu.app.ui.AppLoadingIndicator
+import com.oshinobu.app.ui.theme.CardShape
 import com.oshinobu.app.ui.theme.LocalAppColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -253,7 +254,7 @@ private fun SelectionBar(count: Int, spoiler: Boolean, onToggleSpoiler: () -> Un
         Spacer(Modifier.weight(1f))
         Box {
             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, null, tint = colors.textPrimary) }
-            DropdownMenu(menu, { menu = false }) {
+            DropdownMenu(menu, { menu = false }, shape = CardShape) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.media_hideWithSpoiler)) },
                     leadingIcon = { Icon(if (spoiler) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank, null) },

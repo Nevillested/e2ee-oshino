@@ -84,6 +84,7 @@ import androidx.core.content.ContextCompat
 import com.oshinobu.app.R
 import com.oshinobu.app.media.FileActions
 import com.oshinobu.app.ui.PeerAvatar
+import com.oshinobu.app.ui.theme.CardShape
 import com.oshinobu.app.ui.theme.LocalAppColors
 import com.oshinobu.app.ui.translate
 import com.oshinobu.core.format.formatChatTime
@@ -309,7 +310,7 @@ fun ChatHeader(
                 PillIcon(Icons.Outlined.Call, enabled = onCall != null) { onCall?.invoke() }
                 Box {
                     PillIcon(Icons.Filled.MoreVert) { menuOpen = true }
-                    DropdownMenu(menuOpen, { menuOpen = false }) {
+                    DropdownMenu(menuOpen, { menuOpen = false }, shape = CardShape) {
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.chat_searchAction), color = colors.textPrimary) },
                             leadingIcon = { Icon(Icons.Filled.Search, null, tint = colors.textMuted) },

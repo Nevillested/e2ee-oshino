@@ -120,6 +120,8 @@ class CallManager(
     private val ringTimeoutMs: Long = 120_000,
     /** Сколько ждать один шаг установки соединения (WebRTC), прежде чем считать, что он завис. */
     private val stepTimeoutMs: Long = 20_000,
+    /** Подготовить к показу то, что о звонящем уже есть на устройстве (фото, профиль — с диска в память). */
+    private val warmPeer: suspend (CallPeer) -> Unit = {},
 ) {
     private companion object {
         /** Эти сигналы принимаются только от собеседника текущего звонка. */
@@ -551,7 +553,10 @@ class CallManager(
             return
         }
         currentCallId = callId
-        _peer.value = CallPeer(sender)
+        // кто звонит — из своих чатов, сразу: экран входящего не должен мигать "Unknown" и пустым фото
+        val caller = knownPeer(sender)
+        runCatchingLogged("warmPeer") { warmPeer(caller) }
+        _peer.value = caller
         pendingOfferSdp = sdp
         startedAt = now()
         _connectedAt.value = null
@@ -564,7 +569,7 @@ class CallManager(
             autoAcceptPending = false
             autoAcceptAndOpen()
         } else {
-            _incoming.tryEmit(IncomingCall(callId.orEmpty(), CallPeer(sender)))
+            _incoming.tryEmit(IncomingCall(callId.orEmpty(), caller))
             scope.launch(dispatcher) { resolvePeer() }
         }
     }
@@ -595,6 +600,17 @@ class CallManager(
                 resetLocal()
             }
         }
+    }
+
+    /**
+     * Собеседник по устройству — то, что уже известно на устройстве, без сети
+     * (переписка с ним, открытый чат); неизвестен — только device_id, имя
+     * подтянет [resolvePeer].
+     */
+    private suspend fun knownPeer(deviceId: String): CallPeer {
+        router.knownOwner(deviceId)?.let { return CallPeer(deviceId, it.login, it.accountId) }
+        val chat = chats.getKnownPeers().firstOrNull { it.lastKnownDeviceId == deviceId } ?: return CallPeer(deviceId)
+        return CallPeer(deviceId, chat.peerLogin, chat.lastKnownAccountId)
     }
 
     /** Логин/аккаунт собеседника входящего звонка — по его device_id. */

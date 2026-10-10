@@ -109,9 +109,20 @@ class OshinobuCore(
     val myAccount = MyAccount(api, session, dirs, logger)
     val crashes = CrashStore(dirs)
     val crashReporter = CrashReporter(logger, crashes, api, session, prefs, scope)
-    val chatActions = ChatActions(api, session, chats, messenger, router, cleanup)
+    val chatActions = ChatActions(api, session, chats, messenger, router, cleanup) {
+        session.token?.let { syncBlockedContacts(it) }
+    }
     val chatService = ChatService(chats, messenger, router, cleanup, pendingSends, pendingSender, logger)
-    val calls = CallManager(ws, messenger, router, api, session, chats, rtcEngine, scope, logger)
+    val calls = CallManager(
+        ws, messenger, router, api, session, chats, rtcEngine, scope, logger,
+        warmPeer = { peer ->
+            val accountId = peer.accountId
+            if (accountId != null) {
+                avatars.warm(accountId)
+                peer.login?.let { peerProfiles.warm(accountId, it) }
+            }
+        },
+    )
 
     init {
         crashReporter.install()

@@ -41,13 +41,18 @@ import com.oshinobu.app.ui.PhotoViewerDialog
 import com.oshinobu.app.ui.home.ProfileRow
 import com.oshinobu.app.ui.theme.LocalAppColors
 import com.oshinobu.core.service.PeerProfile
+import kotlinx.coroutines.flow.filter
 
 /** Профиль собеседника: аватар (тап — на весь экран), логин, имя, о себе, день рождения. */
 @Composable
 fun PeerProfileScreen(accountId: String, login: String, onBack: () -> Unit) {
     val core = LocalContext.current.app.core
     val colors = LocalAppColors.current
-    val profile by produceState<Result<PeerProfile?>?>(null, accountId) { value = runCatching { core.peerProfiles.get(accountId, login) } }
+    // профиль обновляется и пока экран открыт (изменил о себе, сняли блокировку)
+    val profile by produceState<Result<PeerProfile?>?>(null, accountId) {
+        value = runCatching { core.peerProfiles.get(accountId, login) }
+        core.peerProfiles.changes.filter { it == accountId }.collect { value = runCatching { core.peerProfiles.get(accountId, login) } }
+    }
     var viewing by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().background(colors.background).statusBarsPadding()) {
         IconButton(onClick = onBack, modifier = Modifier.padding(4.dp)) {

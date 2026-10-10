@@ -1,6 +1,5 @@
 package com.oshinobu.app.ui.chat
 
-import com.oshinobu.app.ui.AppLoadingIndicator
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -73,6 +72,8 @@ import com.oshinobu.app.R
 import com.oshinobu.app.app
 import com.oshinobu.app.media.FileActions
 import com.oshinobu.app.media.MediaDecoding
+import com.oshinobu.app.ui.AppLoadingIndicator
+import com.oshinobu.app.ui.theme.CardShape
 import com.oshinobu.core.storage.StoredMessage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -157,7 +158,7 @@ private fun ViewerTopBar(msg: StoredMessage, resolver: MediaResolver, onBack: ()
         Spacer(Modifier.weight(1f))
         Box {
             IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, null, tint = Color.White) }
-            DropdownMenu(menuOpen, { menuOpen = false }) {
+            DropdownMenu(menuOpen, { menuOpen = false }, shape = CardShape) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.mediaViewer_saveToGallery)) },
                     leadingIcon = { Icon(Icons.Filled.Download, null) },

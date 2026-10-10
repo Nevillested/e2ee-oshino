@@ -593,7 +593,13 @@ private fun ChatRow(chat: ChatSummary, onOpen: () -> Unit) {
 @Composable
 private fun ChatMenu(chat: ChatSummary, expanded: Boolean, onDismiss: () -> Unit, onSelect: (ChatMenuAction) -> Unit) {
     val colors = LocalAppColors.current
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, offset = DpOffset(72.dp, 0.dp), containerColor = colors.surface) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        offset = DpOffset(72.dp, 0.dp),
+        shape = CardShape,
+        containerColor = colors.surface,
+    ) {
         @Composable
         fun item(text: Int, action: ChatMenuAction, danger: Boolean = false) = DropdownMenuItem(
             text = { Text(stringResource(text), color = if (danger) ErrorRed else colors.textPrimary) },

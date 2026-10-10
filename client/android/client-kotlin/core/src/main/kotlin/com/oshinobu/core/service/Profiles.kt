@@ -86,6 +86,12 @@ class PeerProfiles(api: ApiClient, session: Session, dirs: AppDirs, scope: Corou
 
     /** Сервер прислал profile_updated. */
     suspend fun invalidate(accountId: String) = cache.invalidate(accountId)
+
+    /** Дисковую копию — в память без сети (см. [RemoteCache.warm]). */
+    suspend fun warm(accountId: String, login: String) {
+        logins[accountId] = login
+        cache.warm(accountId)
+    }
 }
 
 /** Аватары собеседников по account_id (копия — temp/avatar_cache_<id>). */
@@ -109,6 +115,9 @@ class Avatars(api: ApiClient, session: Session, dirs: AppDirs, scope: CoroutineS
 
     /** Сервер прислал avatar_changed / profile_updated. */
     suspend fun invalidate(accountId: String) = cache.invalidate(accountId)
+
+    /** Дисковую копию — в память без сети (см. [RemoteCache.warm]). */
+    suspend fun warm(accountId: String) = cache.warm(accountId)
 }
 
 /**
