@@ -139,4 +139,18 @@ class CallManagerTest {
             }
         }
     }
+
+    @Test
+    fun offerNotSentEndsCallWithoutHistory() = runBlocking {
+        TestNetwork().use { net ->
+            val alice = net.device("alice")
+            val bob = net.device("bob")
+            alice.transport.statusFlow.value = ConnectionStatus.RECONNECTING
+            val call = async { alice.calls.startCall(bob.callPeer()) }
+            net.eventually("no connection shown") { alice.calls.status.value == "call.noConnection" }
+            call.await()
+            assertEquals(CallState.IDLE, alice.calls.state.value)
+            assertTrue(alice.chats.getMessages("bob").none { it.isCallLog })
+        }
+    }
 }

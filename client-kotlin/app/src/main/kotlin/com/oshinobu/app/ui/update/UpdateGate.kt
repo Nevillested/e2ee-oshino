@@ -147,11 +147,7 @@ private fun UpdateScreen(info: AppVersionInfo) {
     }
 
     fun updateFromApk() = scope.launch {
-        val url = info.apkUrl
-        if (url == null) {
-            error = context.getString(R.string.update_failed)
-            return@launch
-        }
+        val url = info.apkUrl ?: return@launch
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
             error = context.getString(R.string.update_allowInstall)
             context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
@@ -187,7 +183,8 @@ private fun UpdateScreen(info: AppVersionInfo) {
                 LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth(), color = colors.primary)
             } else {
                 PrimaryButton(stringResource(R.string.update_button), onClick = {
-                    if (context.installedFromPlay()) updateFromPlay() else updateFromApk()
+                    // APK не выложен — обновляться всё равно есть откуда: из Play
+                    if (context.installedFromPlay() || info.apkUrl == null) updateFromPlay() else updateFromApk()
                 })
             }
             ErrorLine(error)

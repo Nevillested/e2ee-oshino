@@ -7,7 +7,6 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -24,12 +23,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,7 +35,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -50,8 +45,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -62,15 +55,12 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -190,7 +180,6 @@ fun ChatScreen(
     var deleteIds by remember { mutableStateOf<List<String>?>(null) }
     var reportTarget by remember { mutableStateOf<StoredMessage?>(null) }
     var confirmReset by remember { mutableStateOf(false) }
-    var emojiMode by remember { mutableStateOf(false) }
     var searchAsList by remember { mutableStateOf(false) }
     var searchIndex by remember { mutableIntStateOf(0) }
     var revealedSpoilers by remember { mutableStateOf(setOf<String>()) }
@@ -205,43 +194,8 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val groups = remember(vm.messages) { groupMessages(vm.messages).asReversed() }
     val latestGroups by rememberUpdatedState(groups)
-    val keyboard = LocalSoftwareKeyboardController.current
-    val focusManager = LocalFocusManager.current
-    val inputFocus = remember { FocusRequester() }
-
-    // высота клавиатуры: панель эмодзи занимает ровно её место
-    val imeInsets = WindowInsets.ime
-    var keyboardHeightPx by remember { mutableIntStateOf(with(density) { app.core.settings.keyboardHeight().dp.roundToPx() }) }
-    LaunchedEffect(Unit) {
-        snapshotFlow { imeInsets.getBottom(density) }.debounce(250).collect { h ->
-            if (h > with(density) { 120.dp.roundToPx() } && abs(h - keyboardHeightPx) > 1) {
-                keyboardHeightPx = h
-                app.core.settings.setKeyboardHeight(with(density) { h.toDp().value.toDouble() })
-            }
-        }
-    }
-    // Переход эмодзи ↔ клавиатура не двигает поле ввода: панель занимает
-    // "высота клавиатуры минус уже поднявшаяся часть клавиатуры"; при
-    // возврате к клавиатуре резерв держится, пока она не поднимется.
-    var awaitingKeyboard by remember { mutableStateOf(false) }
-    LaunchedEffect(awaitingKeyboard) {
-        if (!awaitingKeyboard) return@LaunchedEffect
-        // ждём, пока клавиатура поднимется (аппаратная клавиатура не поднимется — тогда по таймауту)
-        withTimeoutOrNull(1_500) { snapshotFlow { imeInsets.getBottom(density) }.first { it >= keyboardHeightPx - 4 } }
-        awaitingKeyboard = false
-    }
-    // Зона под полем ввода — не меньше клавиатуры, а с панелью эмодзи — не
-    // меньше её высоты (= высоте клавиатуры). Переключение клавиатура ↔ эмодзи
-    // зону не меняет; из покоя панель выезжает за 220 мс.
-    val emojiReserve = remember { Animatable(0f) }
-    val emojiTarget = if (emojiMode || awaitingKeyboard) keyboardHeightPx.toFloat() else 0f
-    LaunchedEffect(emojiTarget) {
-        if (imeInsets.getBottom(density) > 0) emojiReserve.snapTo(emojiTarget) else emojiReserve.animateTo(emojiTarget, tween(220))
-    }
-    // Панель эмодзи строится заранее, пока открыта клавиатура (лежит под ней, её не видно):
-    // иначе первая отрисовка сетки съедает кадры, и клавиатура "исчезает" без анимации.
-    val keyboardUp by remember { derivedStateOf { imeInsets.getBottom(density) > 0 } }
-    val emojiShown by remember { derivedStateOf { emojiReserve.value > 0f || keyboardUp } }
+    val emojiKeyboard = rememberEmojiKeyboardState()
+    val inputFocus = emojiKeyboard.focusRequester
 
     LaunchedEffect(Unit) {
         vm.notices.collect { n ->
@@ -313,11 +267,11 @@ fun ChatScreen(
             menu != null -> menu = null
             vm.selectionMode -> vm.clearSelection()
             vm.searchQuery != null -> vm.closeSearch()
-            emojiMode -> emojiMode = false
+            emojiKeyboard.emojiMode -> emojiKeyboard.closeEmoji()
             else -> onBack()
         }
     }
-    BackHandler(enabled = vm.selectionMode || vm.searchQuery != null || emojiMode, onBack = ::handleBack)
+    BackHandler(enabled = vm.selectionMode || vm.searchQuery != null || emojiKeyboard.emojiMode, onBack = ::handleBack)
 
     fun openMenu(group: List<StoredMessage>, anchor: Offset) {
         val rep = group.rep()
@@ -529,38 +483,15 @@ fun ChatScreen(
                         vm.blockingMe -> stringResource(R.string.chat_blockingMe)
                         else -> null
                     },
-                    emojiMode = emojiMode,
+                    emojiMode = emojiKeyboard.emojiMode,
                     focusRequester = inputFocus,
-                    onToggleEmoji = {
-                        if (emojiMode) {
-                            awaitingKeyboard = true
-                            emojiMode = false
-                            inputFocus.requestFocus()
-                            keyboard?.show()
-                        } else {
-                            // снимаем фокус: тап по полю снова сфокусирует его и вернёт клавиатуру
-                            focusManager.clearFocus()
-                            emojiMode = true
-                        }
-                    },
-                    onTextTapped = {
-                        if (emojiMode) {
-                            awaitingKeyboard = true
-                            emojiMode = false
-                        }
-                    },
+                    onToggleEmoji = emojiKeyboard::toggle,
+                    onTextTapped = emojiKeyboard::onFieldFocused,
                     onSendMedia = { files, caption, spoiler -> vm.sendMedia(files.toOutgoing(asFiles = false, spoiler), caption, thumbnailer) },
                     onSendFiles = { files -> vm.sendFiles(files.toOutgoing(asFiles = true), thumbnailer) },
                 )
             }
-            KeyboardArea(emojiReserve, keyboardHeightPx) {
-                if (emojiShown) {
-                    // построена заранее, но видна только в режиме эмодзи
-                    Box(Modifier.graphicsLayer { alpha = if (emojiReserve.value > 0f) 1f else 0f }) {
-                        EmojiPanel(height = with(density) { keyboardHeightPx.toDp() }, onEmoji = vm::insertEmoji)
-                    }
-                }
-            }
+            EmojiKeyboardArea(emojiKeyboard, onEmoji = vm::insertEmoji)
         }
 
         // ---------------- запись ----------------
@@ -792,22 +723,3 @@ private fun MessageRow(
     }
 }
 
-/**
- * Место под полем ввода: высота считается на этапе раскладки — в том же
- * кадре, что и анимация клавиатуры, поэтому поле ввода движется ровно с
- * ней, без отставания на кадр. Высота = max(клавиатура, панель эмодзи,
- * отступ навигации + 5dp). Панель эмодзи лежит сверху зоны: клавиатура при
- * переключении просто наезжает на неё или уезжает с неё.
- */
-@Composable
-private fun KeyboardArea(emojiReserve: Animatable<Float, *>, keyboardHeightPx: Int, content: @Composable () -> Unit) {
-    val ime = WindowInsets.ime
-    val nav = WindowInsets.navigationBars
-    Box(
-        Modifier.fillMaxWidth().clipToBounds().layout { measurable, constraints ->
-            val h = maxOf(ime.getBottom(this), emojiReserve.value.toInt(), nav.getBottom(this) + 5.dp.roundToPx())
-            val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = keyboardHeightPx.coerceAtLeast(h)))
-            layout(constraints.maxWidth, h) { placeable.place(0, 0) }
-        },
-    ) { content() }
-}

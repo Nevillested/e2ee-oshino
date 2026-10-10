@@ -74,6 +74,7 @@
     <string name="call_incoming">Входящий звонок</string>
     <string name="call_missed">Пропущенный звонок</string>
     <string name="call_noAnswer">Абонент не отвечает</string>
+    <string name="call_noConnection">Нет соединения с сервером</string>
     <string name="call_otherParty">собеседником</string>
     <string name="call_outputBluetooth">Bluetooth</string>
     <string name="call_outputDevices">Устройства вывода</string>
@@ -363,6 +364,10 @@
     <string name="call_ongoingWith">Идёт разговор с %1$s</string>
     <string name="call_endAction">Завершить звонок</string>
     <string name="call_minimize">Свернуть</string>
+    <string name="call_overlayTitle">Звонки на весь экран</string>
+    <string name="call_overlayBody">Чтобы входящий звонок открывался на весь экран, даже когда вы пользуетесь телефоном, разрешите Oshinobu показ поверх других приложений.</string>
+    <string name="call_overlayAllow">Разрешить</string>
+    <string name="call_overlayLater">Не сейчас</string>
     <string name="update_title">Нужно обновить приложение</string>
     <string name="update_body">Эта версия Oshinobu больше не поддерживается. Обновите приложение, чтобы продолжить.</string>
     <string name="update_button">Обновить</string>

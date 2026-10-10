@@ -212,13 +212,29 @@ class CallManager(
         setState(CallState.OUTGOING_RINGING)
         try {
             _status.value = "call.securingConnection"
+            // собеседник мог переустановить приложение, пока у нас открыт чат: звоним на его
+            // нынешнее устройство — старое не в сети, и пуш туда уже не придёт
+            peer.login?.let { login ->
+                val current = messenger.resolvePeerDeviceId(login, peer.deviceId)
+                if (current != peer.deviceId) {
+                    log.log("CallManager startCall: peer device changed ${peer.deviceId} -> $current")
+                    _peer.value = peer.copy(deviceId = current)
+                }
+            }
             val session = createSession()
             _status.value = "call.enablingMic"
             session.startAudio(_micEnabled.value)
             _status.value = "call.buildingOffer"
             val offer = session.createOffer()
+            if (!send("call_offer", buildJsonObject { put("sdp", offer) })) {
+                // сервер offer не получил — собеседнику не позвонит никто, гудеть незачем;
+                // в историю такой звонок не пишем: он никуда не ушёл
+                log.log("CallManager startCall: offer not sent — no connection")
+                startedAt = null
+                endWithReason("call.noConnection")
+                return@onCallThread
+            }
             _status.value = "call.ringing"
-            send("call_offer", buildJsonObject { put("sdp", offer) })
             armRingTimeout()
         } catch (e: CancellationException) {
             throw e
@@ -419,21 +435,22 @@ class CallManager(
 
     // ---------------- сигналы ----------------
 
-    private suspend fun send(type: String, payload: JsonObject) {
-        val to = _peer.value?.deviceId ?: return
-        sendTo(to, type, payload, currentCallId)
+    /** false — сигнал не ушёл на сервер (нет соединения или не зашифровался). */
+    private suspend fun send(type: String, payload: JsonObject): Boolean {
+        val to = _peer.value?.deviceId ?: return false
+        return sendTo(to, type, payload, currentCallId)
     }
 
-    private suspend fun sendTo(toDeviceId: String, type: String, payload: JsonObject, callId: String?) {
+    private suspend fun sendTo(toDeviceId: String, type: String, payload: JsonObject, callId: String?): Boolean {
         val envelope = try {
             messenger.sealCallSignal(toDeviceId, JsonObject(payload + ("type" to JsonPrimitive(type))))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             log.error("CallManager encrypt-FAILED type=$type to=$toDeviceId: $e — dropped")
-            return
+            return false
         }
-        signaling.sendCallSignal(toDeviceId, type, JsonObject(envelope + ("call_id" to JsonPrimitive(callId))))
+        return signaling.sendCallSignal(toDeviceId, type, JsonObject(envelope + ("call_id" to JsonPrimitive(callId))))
     }
 
     private suspend fun handleSignal(envelope: JsonObject) {

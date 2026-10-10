@@ -1,6 +1,5 @@
 package com.oshinobu.app.ui.chat
 
-import com.oshinobu.app.ui.AppLoadingIndicator
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -29,11 +28,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -85,6 +86,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
@@ -92,8 +95,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -107,6 +112,7 @@ import com.oshinobu.app.media.DeviceGallery
 import com.oshinobu.app.media.GalleryAccess
 import com.oshinobu.app.media.GalleryItem
 import com.oshinobu.app.media.MediaDecoding
+import com.oshinobu.app.ui.AppLoadingIndicator
 import com.oshinobu.app.ui.theme.LocalAppColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -171,7 +177,14 @@ fun GallerySheet(onDismiss: () -> Unit, onSend: (List<PickedFile>, caption: Stri
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = colors.background) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheet,
+        containerColor = colors.background,
+        // клавиатуру и панель эмодзи под подписью раскладывает сама подпись (как поле сообщения в чате);
+        // шторка по умолчанию поднимала бы всё содержимое над клавиатурой
+        contentWindowInsets = { WindowInsets(0) },
+    ) {
         Column(Modifier.fillMaxHeight(0.75f)) {
             if (access == GalleryAccess.PARTIAL) {
                 Row(
@@ -194,7 +207,9 @@ fun GallerySheet(onDismiss: () -> Unit, onSend: (List<PickedFile>, caption: Stri
                 } else {
                     LazyVerticalGrid(
                         GridCells.Fixed(3), Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = if (selected.isNotEmpty()) 72.dp else 0.dp),
+                        contentPadding = PaddingValues(
+                            bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + if (selected.isNotEmpty()) 72.dp else 0.dp,
+                        ),
                     ) {
                         item(key = "camera") {
                             CameraTile(live = !cameraOpen) {
@@ -428,40 +443,45 @@ private fun formatClock(ms: Long): String {
     return if (h > 0) "$h:$mm:$ss" else "$mm:$ss"
 }
 
-/** Подпись к выбранному: эмодзи/клавиатура, поле, "отправить". Эмодзи — панелью на месте клавиатуры. */
+/**
+ * Подпись к выбранному: эмодзи/клавиатура, поле, "отправить". Эмодзи и
+ * клавиатура меняются местами так же, как у поля сообщения в чате.
+ */
 @Composable
 fun CaptionBar(sending: Boolean, onSend: (String) -> Unit) {
     val colors = LocalAppColors.current
-    val context = LocalContext.current
-    var text by remember { mutableStateOf("") }
-    var emoji by remember { mutableStateOf(false) }
-    BackHandler(enabled = emoji) { emoji = false }
-    Column(Modifier.fillMaxWidth().imePadding()) {
+    var text by remember { mutableStateOf(TextFieldValue("")) }
+    val emojiKeyboard = rememberEmojiKeyboardState()
+    BackHandler(enabled = emojiKeyboard.emojiMode, onBack = emojiKeyboard::closeEmoji)
+    Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp).background(colors.surface, RoundedCornerShape(24.dp)).padding(horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = { emoji = !emoji }) {
-                Icon(if (emoji) Icons.Filled.Keyboard else Icons.Outlined.EmojiEmotions, null, tint = colors.textMuted)
+            IconButton(onClick = emojiKeyboard::toggle) {
+                Icon(if (emojiKeyboard.emojiMode) Icons.Filled.Keyboard else Icons.Outlined.EmojiEmotions, null, tint = colors.textMuted)
             }
             Box(Modifier.weight(1f).padding(vertical = 12.dp)) {
-                if (text.isEmpty()) Text(stringResource(R.string.chat_captionHint), color = colors.textMuted)
+                if (text.text.isEmpty()) Text(stringResource(R.string.chat_captionHint), color = colors.textMuted)
                 BasicTextField(
                     text, { text = it }, maxLines = 4,
                     textStyle = TextStyle(color = colors.textPrimary, fontSize = 16.sp),
-                    cursorBrush = SolidColor(colors.primary), modifier = Modifier.fillMaxWidth(),
+                    cursorBrush = SolidColor(colors.primary),
+                    modifier = Modifier.fillMaxWidth().focusRequester(emojiKeyboard.focusRequester)
+                        .onFocusChanged { if (it.isFocused) emojiKeyboard.onFieldFocused() },
                 )
             }
             if (sending) {
                 AppLoadingIndicator(Modifier.padding(10.dp), size = 24.dp, color = colors.primary)
             } else {
-                IconButton(onClick = { onSend(text.trim()) }) { Icon(Icons.AutoMirrored.Filled.Send, null, tint = colors.primary) }
+                IconButton(onClick = { onSend(text.text.trim()) }) { Icon(Icons.AutoMirrored.Filled.Send, null, tint = colors.primary) }
             }
         }
-        if (emoji) {
-            EmojiPanel(context.app.core.settings.keyboardHeight().dp) { text += it }
-        } else {
-            Spacer(Modifier.navigationBarsPadding())
+        // эмодзи — в позицию курсора (как в поле сообщения), а не в конец
+        EmojiKeyboardArea(emojiKeyboard) { emoji ->
+            val start = minOf(text.selection.start, text.selection.end)
+            val end = maxOf(text.selection.start, text.selection.end)
+            text = TextFieldValue(text.text.replaceRange(start, end, emoji), TextRange(start + emoji.length))
         }
     }
 }

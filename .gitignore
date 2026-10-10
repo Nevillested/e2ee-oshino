@@ -7,3 +7,6 @@ server/frps-config/frps.toml
 
 # локальные настройки Claude Code
 .claude/
+
+# APK для установок не из Play (раздаёт сервер, см. APP_APK_DIR)
+/apk/

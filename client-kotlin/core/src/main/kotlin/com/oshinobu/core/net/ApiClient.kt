@@ -173,7 +173,9 @@ class ApiClient(
     private fun parseAppVersion(body: String): AppVersionInfo? {
         val o = obj(body)
         val code = (o["version_code"] as? JsonPrimitive)?.intOrNull ?: return null
-        return AppVersionInfo(code, o.str("apk_url")?.takeIf { it.isNotBlank() })
+        // сервер раздаёт APK сам — адрес относительный (/app/apk), дополняем адресом сервера
+        val apk = o.str("apk_url")?.takeIf { it.isNotBlank() }?.let { config.baseUrl.toHttpUrl().resolve(it)?.toString() }
+        return AppVersionInfo(code, apk)
     }
 
     /** Какая версия приложения нужна серверу; null — нет связи или сервер о версиях не знает. */

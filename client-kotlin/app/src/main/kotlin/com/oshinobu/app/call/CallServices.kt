@@ -21,6 +21,7 @@ import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.content.ContextCompat
@@ -50,8 +51,12 @@ private fun Context.callIcon() = R.drawable.ic_notification
  * Входящий звонок "как у звонилки": рингтон по кругу (или вибрация — по
  * режиму звонка телефона), полноэкранное уведомление поверх блокировки с
  * кнопками "ответить"/"отклонить". Поднимается и пушем при закрытом
- * приложении, и при звонке в открытом. Никто не ответил за 45 с — сам
+ * приложении, и при звонке в открытом. Никто не ответил за 2 мин — сам
  * останавливается (столько же сервер держит отложенный звонок).
+ *
+ * На разблокированном телефоне Android показывает полноэкранное уведомление
+ * лишь плашкой; с разрешением "поверх других приложений" экран входящего
+ * открываем сами (как Telegram).
  */
 class CallRingService : Service() {
     companion object {
@@ -96,6 +101,7 @@ class CallRingService : Service() {
         intent?.getStringExtra(EXTRA_CALLER_DEVICE_ID)?.let { callerDeviceId = it }
         startForeground()
         if (!ringing) {
+            showIncomingScreen()
             startAlerting()
             wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "oshinobu:call_ring")
                 .apply { acquire(RING_TIMEOUT_MS + 5_000) }
@@ -115,6 +121,18 @@ class CallRingService : Service() {
         wakeLock = null
         callId = null
         super.onDestroy()
+    }
+
+    /** Приложение не на экране, а показывать поверх других разрешено — открываем экран входящего сразу. */
+    private fun showIncomingScreen() {
+        if (app.routerHost.isAppInForeground || !Settings.canDrawOverlays(this)) return
+        runCatching {
+            startActivity(
+                Intent(this, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    .putExtra(CallIntents.EXTRA_SHOW_OVER_LOCKSCREEN, true),
+            )
+        }.onFailure { app.core.logger.log("CallRingService incoming screen failed: $it") }
     }
 
     private fun startForeground() {

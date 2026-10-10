@@ -74,6 +74,7 @@
     <string name="call_incoming">Incoming call</string>
     <string name="call_missed">Missed call</string>
     <string name="call_noAnswer">No answer</string>
+    <string name="call_noConnection">No connection to the server</string>
     <string name="call_otherParty">the other party</string>
     <string name="call_outputBluetooth">Bluetooth</string>
     <string name="call_outputDevices">Output Devices</string>
@@ -363,6 +364,10 @@
     <string name="call_ongoingWith">Call in progress with %1$s</string>
     <string name="call_endAction">End call</string>
     <string name="call_minimize">Minimize</string>
+    <string name="call_overlayTitle">Full-screen incoming calls</string>
+    <string name="call_overlayBody">To show incoming calls on the whole screen even while you use the phone, allow Oshinobu to display over other apps.</string>
+    <string name="call_overlayAllow">Allow</string>
+    <string name="call_overlayLater">Not now</string>
     <string name="update_title">Update required</string>
     <string name="update_body">This version of Oshinobu is no longer supported. Update to keep using the app.</string>
     <string name="update_button">Update</string>

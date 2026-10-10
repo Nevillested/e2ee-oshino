@@ -1,6 +1,5 @@
 package com.oshinobu.app.ui.home
 
-import com.oshinobu.app.ui.AppLoadingIndicator
 import android.Manifest
 import android.app.NotificationManager
 import android.content.Intent
@@ -31,18 +30,23 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.filled.Block
@@ -79,8 +83,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -91,10 +97,13 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
@@ -107,6 +116,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.oshinobu.app.R
 import com.oshinobu.app.app
+import com.oshinobu.app.ui.AppLoadingIndicator
 import com.oshinobu.app.ui.AvatarImage
 import com.oshinobu.app.ui.ErrorRed
 import com.oshinobu.app.ui.PeerAvatar
@@ -123,6 +133,8 @@ import com.oshinobu.core.storage.ChatStore
 import com.oshinobu.core.storage.ChatSummary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.dropWhile
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -147,11 +159,20 @@ fun HomeScreen(
     var previousTab by remember { mutableStateOf(Tab.CHATS) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
+    // клавиатуру убираем сразу, а не когда поле уедет в конце анимации
+    fun closeSearch() {
+        keyboard?.hide()
+        focusManager.clearFocus()
+        searchOpen = false
+        searchQuery = ""
+    }
 
     fun selectTab(t: Tab) {
         if (t == tab) return
-        searchOpen = false
-        searchQuery = ""
+        closeSearch()
         previousTab = tab
         tab = t
     }
@@ -166,7 +187,7 @@ fun HomeScreen(
     ForegroundStateReporter()
 
     BackHandler(enabled = searchOpen || tab != Tab.CHATS) {
-        if (searchOpen) searchOpen = false else selectTab(Tab.CHATS)
+        if (searchOpen) closeSearch() else selectTab(Tab.CHATS)
     }
 
     Scaffold(
@@ -184,13 +205,16 @@ fun HomeScreen(
                                         (fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.End))
                                 },
                                 label = "homeTitle",
-                            ) { open -> if (open) SearchField(searchQuery) { searchQuery = it } else ConnectionStatusText() }
+                            ) { open ->
+                                if (open) SearchField(searchQuery, onChange = { searchQuery = it }, onKeyboardClosed = ::closeSearch)
+                                else ConnectionStatusText()
+                            }
                         },
                         actions = {
                             IconButton(onClick = onOpenTransfers) {
                                 Icon(Icons.Filled.SwapVert, contentDescription = stringResource(R.string.transfers_title))
                             }
-                            IconButton(onClick = { searchOpen = !searchOpen; searchQuery = "" }) {
+                            IconButton(onClick = { if (searchOpen) closeSearch() else searchOpen = true }) {
                                 Icon(if (searchOpen) Icons.Filled.Close else Icons.Filled.Search, contentDescription = null)
                             }
                         },
@@ -242,7 +266,7 @@ fun HomeScreen(
                 SearchResults(
                     query = searchQuery,
                     onOpenChat = {
-                        searchOpen = false
+                        closeSearch()
                         onOpenChat(it)
                     },
                     // свой логин → вкладка своего профиля (чата «Заметки» больше нет)
@@ -354,16 +378,28 @@ private sealed interface SearchResult {
     data class NotFound(val message: String) : SearchResult
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SearchField(query: String, onChange: (String) -> Unit) {
+private fun SearchField(query: String, onChange: (String) -> Unit, onKeyboardClosed: () -> Unit) {
     val colors = LocalAppColors.current
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
+    // системный "назад" при открытой клавиатуре достаётся самой клавиатуре, до
+    // приложения он не доходит — поэтому клавиатура закрылась = поиск закрыть,
+    // как крестиком (Enter на клавиатуре — "поиск", он её не закрывает)
+    val imeVisible = rememberUpdatedState(WindowInsets.isImeVisible)
+    val onClosed by rememberUpdatedState(onKeyboardClosed)
+    LaunchedEffect(Unit) {
+        snapshotFlow { imeVisible.value }.dropWhile { !it }.first { !it }
+        onClosed()
+    }
     TextField(
         value = query,
         onValueChange = onChange,
         placeholder = { Text(stringResource(R.string.newChat_loginHint), color = colors.textMuted) },
         singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = {}),
         modifier = Modifier.fillMaxWidth().focusRequester(focus),
         colors = TextFieldDefaults.colors(
             focusedContainerColor = Color.Transparent,
@@ -630,23 +666,61 @@ fun DeleteChatDialog(peerName: String, delete: Boolean, onDismiss: () -> Unit, o
 
 /**
  * Разрешения, без которых не будет уведомлений и звонков: уведомления
- * (Android 13+) и полноэкранный входящий звонок поверх блокировки
- * (Android 14+ — только переключателем в настройках, туда и отправляем).
+ * (Android 13+), полноэкранный входящий звонок поверх блокировки
+ * (Android 14+ — только переключателем в настройках, туда и отправляем) и
+ * один раз — "поверх других приложений": без него на разблокированном
+ * телефоне звонок из закрытого приложения приходит лишь плашкой.
  */
 @Composable
 private fun RequestNotificationPermissions() {
     val context = LocalContext.current
+    val colors = LocalAppColors.current
+    val settings = context.app.core.settings
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    var askOverlay by remember { mutableStateOf(false) }
+
+    fun requestFullScreenIntent() {
+        if (Build.VERSION.SDK_INT >= 34 && !context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()) {
+            runCatching {
+                context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:${context.packageName}")))
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        if (Build.VERSION.SDK_INT >= 34 && !context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()) {
-            runCatching {
-                context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:${context.packageName}")))
+        // не открываем двое настроек разом: сначала диалог, полноэкранные уведомления — после него
+        if (!Settings.canDrawOverlays(context) && !settings.overlayPermissionAsked()) askOverlay = true else requestFullScreenIntent()
+    }
+
+    if (askOverlay) {
+        fun answered(allow: Boolean) {
+            settings.setOverlayPermissionAsked()
+            askOverlay = false
+            if (allow) {
+                runCatching {
+                    context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")))
+                }
+            } else {
+                requestFullScreenIntent()
             }
         }
+        AlertDialog(
+            onDismissRequest = { answered(false) },
+            containerColor = colors.surface,
+            shape = CardShape,
+            title = { Text(stringResource(R.string.call_overlayTitle), color = colors.textPrimary) },
+            text = { Text(stringResource(R.string.call_overlayBody), color = colors.textMuted) },
+            confirmButton = {
+                TextButton(onClick = { answered(true) }) { Text(stringResource(R.string.call_overlayAllow), color = colors.primary) }
+            },
+            dismissButton = {
+                TextButton(onClick = { answered(false) }) { Text(stringResource(R.string.call_overlayLater), color = colors.textMuted) }
+            },
+        )
     }
 }

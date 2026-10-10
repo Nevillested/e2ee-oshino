@@ -93,7 +93,7 @@ func runMenu(ctx context.Context, queries *db.Queries, reader *bufio.Reader) {
 		fmt.Println("6) Удалить пригласительный код")
 		fmt.Println("7) Показать жалобы на сообщения")
 		fmt.Println("8) Показать отзывы (обратная связь)")
-		fmt.Println("9) Выход")
+		fmt.Println("0) Выход")
 		fmt.Print("Выбор: ")
 
 		// Ошибка чтения (например, stdin неожиданно закрылся — EOF) не
@@ -121,7 +121,7 @@ func runMenu(ctx context.Context, queries *db.Queries, reader *bufio.Reader) {
 			runListReports(ctx, queries, reader)
 		case "8":
 			runListFeedback(ctx, queries, reader)
-		case "9":
+		case "0":
 			fmt.Println("Пока.")
 			return
 		default:

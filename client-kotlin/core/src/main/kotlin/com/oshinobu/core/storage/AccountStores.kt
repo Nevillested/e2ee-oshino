@@ -479,6 +479,10 @@ class UiSettings(private val secure: SecureStore, private val prefs: Prefs) {
 
     fun keyboardHeight(fallback: Double = 280.0): Double = prefs.getDouble("keyboard_height_v1") ?: fallback
     fun setKeyboardHeight(height: Double) = prefs.setDouble("keyboard_height_v1", height)
+
+    /** Спрашивали ли разрешение "поверх других приложений" (входящий звонок на весь экран) — спрашиваем один раз. */
+    fun overlayPermissionAsked(): Boolean = prefs.getBool("overlay_permission_asked") ?: false
+    fun setOverlayPermissionAsked() = prefs.setBool("overlay_permission_asked", true)
 }
 
 /** Кэш своего профиля на диске (my_profile_store.dart — documents/my_profile_cache.json). */

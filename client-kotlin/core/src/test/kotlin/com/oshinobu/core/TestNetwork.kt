@@ -213,9 +213,12 @@ class TestNetwork : AutoCloseable {
         override val callSignals = callSignalsFlow
 
         /** Как сервер: Ciphertext → JSON + "type" (см. WebSocketClient). */
+        // как настоящий клиент: false — только если не на связи сам отправитель; получатель
+        // не в сети — сигнал "ушёл" (дальше это забота сервера: очередь, пуш, call_unavailable)
         override suspend fun sendCallSignal(toDeviceId: String, type: String, payload: JsonObject): Boolean {
-            val to = relay.clients[toDeviceId]?.takeIf { it.isConnected } ?: return false
-            return to.callSignalsFlow.tryEmit(JsonObject(payload + ("type" to JsonPrimitive(type))))
+            if (!isConnected) return false
+            relay.clients[toDeviceId]?.takeIf { it.isConnected }?.callSignalsFlow?.tryEmit(JsonObject(payload + ("type" to JsonPrimitive(type))))
+            return true
         }
 
         val statusFlow = MutableStateFlow(ConnectionStatus.CONNECTED)

@@ -93,6 +93,15 @@ fun Context.translate(key: String): String {
         "call.answered" -> R.string.call_answered
         "call.missed" -> R.string.call_missed
         "call.noAnswer" -> R.string.call_noAnswer
+        "call.noConnection" -> R.string.call_noConnection
+        "call.securingConnection" -> R.string.call_securingConnection
+        "call.enablingMic" -> R.string.call_enablingMic
+        "call.buildingOffer" -> R.string.call_buildingOffer
+        "call.buildingAnswer" -> R.string.call_buildingAnswer
+        "call.ringing" -> R.string.call_ringing
+        "call.connecting" -> R.string.call_connecting
+        "call.declined" -> R.string.call_declined
+        "call.busy" -> R.string.call_busy
         "presence.typing" -> R.string.presence_typing
         "presence.online" -> R.string.presence_online
         "presence.justNow" -> R.string.presence_justNow
