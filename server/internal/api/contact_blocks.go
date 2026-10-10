@@ -89,6 +89,7 @@ func NewBlockContactHandler(queries *db.Queries, registry *ConnectionRegistry) f
 			return
 		}
 
+		dropPresenceBetween(r.Context(), queries, registry, Session.AccountID, PeerID)
 		notifyBlockStatusChanged(r.Context(), queries, registry, PeerID)
 
 		w.WriteHeader(http.StatusOK)

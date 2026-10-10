@@ -3,6 +3,7 @@ package com.oshinobu.core
 import com.oshinobu.core.net.ApiClient
 import com.oshinobu.core.net.ApiConfig
 import com.oshinobu.core.service.CrashReporter
+import com.oshinobu.core.service.CrashStore
 import com.oshinobu.core.service.FileLogger
 import com.oshinobu.core.service.RemoteCache
 import com.oshinobu.core.storage.AppDirs
@@ -103,7 +104,7 @@ class CachesTest {
 
             val prefs = InMemoryPrefs()
             val api = ApiClient(ApiConfig(server.url("/").toString().trimEnd('/')))
-            CrashReporter(logger, api, Session(prefs).apply { token = "t" }, prefs, scope, now = { clock }).install()
+            CrashReporter(logger, CrashStore(dirs), api, Session(prefs).apply { token = "t" }, prefs, scope, now = { clock }).install()
             server.enqueue(MockResponse())
             logger.error("сбой расшифровки")
             val first = server.takeRequest(5, TimeUnit.SECONDS)!!
@@ -115,6 +116,37 @@ class CachesTest {
             clock += 60_000
             delay(300)
             assertEquals(1, server.requestCount, "второй отчёт раньше 30 минут не уходит")
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `падение уходит всегда, лежит до подтверждения сервером`() = runBlocking {
+        val server = MockWebServer().apply { start() }
+        try {
+            val dirs = AppDirs(dir, dir, dir)
+            val logger = FileLogger(dirs, scope)
+            val crashes = CrashStore(dirs)
+            val prefs = InMemoryPrefs()
+            // ограничение "раз в 30 минут" для обычных ошибок падение не останавливает
+            prefs.setLong("crash_reporter_last_sent_at_ms", clock)
+            val api = ApiClient(ApiConfig(server.url("/").toString().trimEnd('/')))
+            val reporter = CrashReporter(logger, crashes, api, Session(prefs).apply { token = "t" }, prefs, scope, now = { clock })
+            logger.log("шаг перед падением")
+            crashes.record("java.lang.IllegalStateException: boom")
+
+            server.enqueue(MockResponse().setResponseCode(500))
+            reporter.sendPendingCrash()
+            val failed = server.takeRequest(5, TimeUnit.SECONDS)!!.body.readUtf8()
+            assertTrue("boom" in failed && "шаг перед падением" in failed, "падение и журнал перед ним — одним отчётом")
+            delay(200)
+            assertTrue(crashes.pending() != null, "сервер не принял — отчёт остаётся")
+
+            server.enqueue(MockResponse())
+            reporter.sendPendingCrash()
+            server.takeRequest(5, TimeUnit.SECONDS)!!
+            withTimeout(5_000) { while (crashes.pending() != null) delay(10) }
         } finally {
             server.shutdown()
         }

@@ -9,6 +9,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import com.oshinobu.app.call.CallController
 import com.oshinobu.app.call.WebRtcEngine
+import com.oshinobu.app.system.CrashDiagnostics
 import com.oshinobu.app.system.PushService
 import com.oshinobu.app.system.TransfersService
 import com.oshinobu.app.ui.update.installedVersionCode
@@ -17,6 +18,7 @@ import com.oshinobu.compat.FlutterSecureStoreAdapter
 import com.oshinobu.compat.flutterAppDirs
 import com.oshinobu.core.OshinobuCore
 import com.oshinobu.core.net.ApiConfig
+import com.oshinobu.core.service.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -45,7 +47,14 @@ class OshinobuApp : Application() {
     override fun onCreate() {
         super.onCreate()
         routerHost = AndroidRouterHost(this)
-        rtc = WebRtcEngine(this)
+        // журнал ядра ещё не создан — WebRTC пишет в него, когда дойдёт до дела
+        rtc = WebRtcEngine(
+            this,
+            object : Logger {
+                override fun log(message: String) = core.logger.log(message)
+                override fun error(message: String) = core.logger.error(message)
+            },
+        )
         core = OshinobuCore(
             secure = FlutterSecureStoreAdapter(this),
             prefs = FlutterPrefsAdapter(this),
@@ -54,7 +63,7 @@ class OshinobuApp : Application() {
             rtcEngine = rtc,
             config = ApiConfig(appVersionCode = installedVersionCode()),
         )
-        installCrashLogging()
+        CrashDiagnostics.install(this)
         applyLocale(core.settings.locale())
         textScale.value = core.settings.textScale()
         core.scope.launch { darkTheme.value = core.settings.theme() != "light" }
@@ -94,15 +103,6 @@ class OshinobuApp : Application() {
     /** Язык из настроек приложения (как во Flutter: свой, не системный; по умолчанию en). */
     fun applyLocale(tag: String) {
         AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(tag))
-    }
-
-    private fun installCrashLogging() {
-        val previous = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
-            val frames = error.stackTrace.take(4).joinToString(" | ")
-            core.logger.error("Uncaught on ${thread.name}: $error @ $frames")
-            previous?.uncaughtException(thread, error)
-        }
     }
 
     /** Сеть появилась/пропала — WebSocket переподключается сразу, а не по таймеру. */

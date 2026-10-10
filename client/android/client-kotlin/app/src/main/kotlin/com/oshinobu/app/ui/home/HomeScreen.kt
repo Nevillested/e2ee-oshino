@@ -76,7 +76,6 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -109,11 +108,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.oshinobu.app.R
 import com.oshinobu.app.app
 import com.oshinobu.app.ui.AppLoadingIndicator
@@ -184,7 +179,6 @@ fun HomeScreen(
             onSignedOut()
         }
     }
-    ForegroundStateReporter()
 
     BackHandler(enabled = searchOpen || tab != Tab.CHATS) {
         if (searchOpen) closeSearch() else selectTab(Tab.CHATS)
@@ -282,27 +276,6 @@ fun HomeScreen(
 @Composable
 private fun barColors() = LocalAppColors.current.let {
     TopAppBarDefaults.topAppBarColors(containerColor = it.background, titleContentColor = it.textPrimary, actionIconContentColor = it.textPrimary)
-}
-
-/** Сервер показывает "в сети" только пока приложение на экране; на экране — убираем уведомления. */
-@Composable
-private fun ForegroundStateReporter() {
-    val app = LocalContext.current.app
-    val owner = LocalLifecycleOwner.current
-    DisposableEffect(owner) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_RESUME -> {
-                    app.core.ws.sendForegroundState(true)
-                    NotificationManagerCompat.from(app).cancelAll()
-                }
-                Lifecycle.Event.ON_PAUSE -> app.core.ws.sendForegroundState(false)
-                else -> Unit
-            }
-        }
-        owner.lifecycle.addObserver(observer)
-        onDispose { owner.lifecycle.removeObserver(observer) }
-    }
 }
 
 @Composable

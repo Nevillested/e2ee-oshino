@@ -8,6 +8,12 @@ plugins {
     id("com.google.gms.google-services")
 }
 
+// Версия — из app-version.properties в корне репозитория: по тому же файлу сервер
+// решает, какую версию клиента обслуживать
+val appVersion = Properties().apply {
+    rootProject.file("../../../app-version.properties").inputStream().use { load(it) }
+}
+
 // Ключ загрузки для Google Play — из локального keystore.properties (в git не попадает)
 val keystoreProperties = Properties().apply {
     rootProject.file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
@@ -23,8 +29,8 @@ android {
         applicationId = "com.oshinobu.oshinobu_client"
         minSdk = 24
         targetSdk = 36
-        versionCode = providers.gradleProperty("oshinobu.versionCode").get().toInt()
-        versionName = providers.gradleProperty("oshinobu.versionName").get()
+        versionCode = appVersion.getProperty("versionCode").toInt()
+        versionName = appVersion.getProperty("versionName")
     }
 
     signingConfigs {

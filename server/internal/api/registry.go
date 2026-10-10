@@ -38,6 +38,18 @@ type ConnectionRegistry struct {
 	// сам разослать статус всем контактам не может — только тем, кто
 	// прямо сейчас явно попросил.
 	presenceSubs map[string]map[string]bool
+	// onLeftScreen — соединение, приложение которого было на экране, ушло
+	// (обрыв, зомби): время "был(а) в сети" и рассылка "не в сети" (см.
+	// SetLeftScreenHook). Вызывается вне мьютекса.
+	onLeftScreen func(deviceID string)
+}
+
+// SetLeftScreenHook — что делать, когда пропало соединение устройства, чьё
+// приложение было на экране (см. PresenceLeftScreenHook в websocket.go).
+func (reg *ConnectionRegistry) SetLeftScreenHook(hook func(deviceID string)) {
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	reg.onLeftScreen = hook
 }
 
 // метод для type ConnectionRegistry, который добавляет запись в словарь/мапу/список присутствующих
@@ -52,12 +64,10 @@ type ConnectionRegistry struct {
 // это время реестр может считать устройство "офлайн" сразу после того,
 // как старое соединение уже отвалилось, но до того, как это стало
 // заметно самому серверу.
-// foreground по умолчанию true — новое соединение почти всегда означает
-// "пользователь только что открыл приложение" (см. connEntry — клиент
-// устанавливает WS именно при построении главного экрана, а не тихо в
-// фоне), и клиент почти сразу следом пришлёт явный "presence_foreground"
-// со своим реальным состоянием — так подписчики не видят ложное "офлайн"
-// на тот короткий промежуток до первого явного сигнала.
+// foreground по умолчанию false: соединение открывается и без пользователя
+// (пуш разбудил приложение, фоновая доставка) — "в сети" только после
+// явного "presence_foreground" от клиента, который шлёт его сразу после
+// подключения, если приложение действительно на экране.
 func (reg *ConnectionRegistry) Add(deviceID string, conn *websocket.Conn) {
 
 	//блокируем
@@ -69,7 +79,7 @@ func (reg *ConnectionRegistry) Add(deviceID string, conn *websocket.Conn) {
 	old, hadOld := reg.conns[deviceID]
 
 	//добавлеяем запись вида: "deviceID": "ID_вебсокет_подключения"
-	reg.conns[deviceID] = &connEntry{conn: conn, foreground: true}
+	reg.conns[deviceID] = &connEntry{conn: conn}
 
 	reg.mu.Unlock()
 
@@ -256,13 +266,19 @@ func (reg *ConnectionRegistry) PresenceSubscribers(targetID string) []string {
 // деле уже переподключилось по-новой, и слать "офлайн" не нужно.
 func (reg *ConnectionRegistry) RemoveIfCurrent(deviceID string, conn *websocket.Conn) bool {
 	reg.mu.Lock()
-	defer reg.mu.Unlock()
-
-	if entry, ok := reg.conns[deviceID]; ok && entry.conn == conn {
+	entry, ok := reg.conns[deviceID]
+	removed := ok && entry.conn == conn
+	if removed {
 		delete(reg.conns, deviceID)
-		return true
 	}
-	return false
+	hook := reg.onLeftScreen
+	reg.mu.Unlock()
+
+	// приложение было на экране, а соединения больше нет — человек "ушёл"
+	if removed && entry.foreground && hook != nil {
+		hook(deviceID)
+	}
+	return removed
 }
 
 // Broadcast — шлёт сырые байты ВСЕМ сейчас подключённым устройствам, без

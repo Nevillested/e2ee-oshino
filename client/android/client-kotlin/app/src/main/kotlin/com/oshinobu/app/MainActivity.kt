@@ -4,8 +4,10 @@ import android.Manifest
 import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
@@ -22,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.oshinobu.app.call.CallIntents
@@ -50,6 +53,41 @@ class MainActivity : AppCompatActivity(), CallWindow {
 
     /** Приложение открыли из лаунчера, пока оно было в окошке PiP, — экран звонка не навязываем. */
     private var launcherReopen = false
+
+    /** Окно приложения на экране (между onStart и onStop). */
+    private var visible = false
+
+    /** Разблокировали телефон, пока приложение на экране (например, поверх блокировки шёл звонок). */
+    private val unlockReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) = reportPresence()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        visible = true
+        ContextCompat.registerReceiver(this, unlockReceiver, IntentFilter(Intent.ACTION_USER_PRESENT), ContextCompat.RECEIVER_NOT_EXPORTED)
+        reportPresence()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        visible = false
+        runCatching { unregisterReceiver(unlockReceiver) }
+        reportPresence()
+    }
+
+    /**
+     * "В сети" — только пока человек видит приложение: окно на экране (любой
+     * экран приложения) и телефон разблокирован. Экран звонка, который
+     * включился поверх блокировки, пуш, фоновая работа — не "видел". Ушло с
+     * экрана — сервер с этого момента считает "был(а) в сети".
+     */
+    private fun reportPresence() {
+        val seen = visible && !getSystemService(KeyguardManager::class.java).isKeyguardLocked
+        app.core.ws.sendForegroundState(seen)
+        // человек смотрит в приложение — уведомления о новых сообщениях уже ни к чему
+        if (seen) NotificationManagerCompat.from(this).cancelAll()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()

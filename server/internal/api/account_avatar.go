@@ -158,6 +158,9 @@ func avatarVisibleTo(ctx context.Context, queries *db.Queries, ownerID, viewerID
 	if ownerID == viewerID {
 		return true
 	}
+	if blockedBetween(ctx, queries, ownerID, viewerID) {
+		return false
+	}
 	owner, err := queries.GetAccountByID(ctx, ownerID)
 	if err != nil {
 		return false

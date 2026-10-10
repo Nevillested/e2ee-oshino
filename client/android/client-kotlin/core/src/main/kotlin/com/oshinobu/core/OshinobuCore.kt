@@ -2,6 +2,7 @@ package com.oshinobu.core
 
 import com.oshinobu.core.net.ApiClient
 import com.oshinobu.core.net.ApiConfig
+import com.oshinobu.core.net.ConnectionStatus
 import com.oshinobu.core.net.WebSocketClient
 import com.oshinobu.core.service.AckRegistry
 import com.oshinobu.core.service.Avatars
@@ -9,6 +10,7 @@ import com.oshinobu.core.service.CallManager
 import com.oshinobu.core.service.ChatActions
 import com.oshinobu.core.service.ChatService
 import com.oshinobu.core.service.CrashReporter
+import com.oshinobu.core.service.CrashStore
 import com.oshinobu.core.service.DeviceSetup
 import com.oshinobu.core.service.FileLogger
 import com.oshinobu.core.service.KeyedMutex
@@ -105,13 +107,16 @@ class OshinobuCore(
     val peerProfiles = PeerProfiles(api, session, dirs, scope, logger)
     val avatars = Avatars(api, session, dirs, scope, logger)
     val myAccount = MyAccount(api, session, dirs, logger)
-    val crashReporter = CrashReporter(logger, api, session, prefs, scope)
+    val crashes = CrashStore(dirs)
+    val crashReporter = CrashReporter(logger, crashes, api, session, prefs, scope)
     val chatActions = ChatActions(api, session, chats, messenger, router, cleanup)
     val chatService = ChatService(chats, messenger, router, cleanup, pendingSends, pendingSender, logger)
     val calls = CallManager(ws, messenger, router, api, session, chats, rtcEngine, scope, logger)
 
     init {
         crashReporter.install()
+        // падение, записанное в прошлый раз, — при каждом подключении к серверу, пока не дойдёт
+        scope.launch { ws.status.collect { if (it == ConnectionStatus.CONNECTED) crashReporter.sendPendingCrash() } }
     }
 
     /**
@@ -163,6 +168,7 @@ class OshinobuCore(
         scope.launch { ws.blockStatusEvents.collect { syncBlockedContacts(token) } }
         scope.launch {
             ws.profileChanges.collect { change ->
+                logger.log("Profile changed account=${change.accountId} field=${change.field} — refreshing")
                 if (change.field == "avatar") avatars.invalidate(change.accountId) else peerProfiles.invalidate(change.accountId)
             }
         }
@@ -170,9 +176,24 @@ class OshinobuCore(
 
     private suspend fun syncMutedChats(token: String) = chats.syncMutedFromServer(api.getMutedChats(token).toSet())
 
+    /** Кто с кем в блокировке на прошлой синхронизации (null — ещё не синхронизировались). */
+    @Volatile
+    private var lastBlocked: Set<String>? = null
+
     private suspend fun syncBlockedContacts(token: String) {
         val blocked = api.getBlockedContacts(token) ?: return
         chats.syncBlockedFromServer(blocked.blockedByMe.toSet(), blocked.blockingMe.toSet())
+        // блокировка скрывает фото и профиль (и снятие её — открывает): у кого она
+        // поменялась — перезапросить, иначе видно закэшированное
+        val now = (blocked.blockedByMe + blocked.blockingMe).toSet()
+        val previous = lastBlocked
+        lastBlocked = now
+        if (previous != null) {
+            for (accountId in (now - previous) + (previous - now)) {
+                avatars.invalidate(accountId)
+                peerProfiles.invalidate(accountId)
+            }
+        }
     }
 
     /** "Выйти": отозвать пуш-токен этого устройства и стереть всё локальное. */

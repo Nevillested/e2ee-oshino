@@ -1,21 +1,25 @@
 package api
 
 import (
+	"bufio"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // AppVersion — единственная допустимая версия клиента. Приложение с любой
 // другой версией (старше или новее) сервер не обслуживает: ответ 426 с этой
 // же информацией, клиент показывает экран "обновите приложение".
 //
-// Задаётся переменными окружения:
+// Номер берётся из app-version.properties в корне репозитория (versionCode) —
+// того же файла, по которому собирается Android-клиент: поднял версию, закоммитил,
+// deploy.sh — и сервер требует новую, без правки .env. Нет файла или номера —
+// проверка выключена. Остальное — переменными окружения:
 //
-//	APP_VERSION_CODE — номер сборки (versionCode); не задан или 0 — проверка выключена;
 //	APP_APK_DIR      — папка, где лежит oshinobu.apk той же версии: сервер сам
 //	                   раздаёт его по GET /app/apk тем, кто ставил не из Google Play;
 //	APP_APK_URL      — APK лежит где-то ещё: полный адрес вместо /app/apk.
@@ -36,9 +40,41 @@ const ApkPath = "/app/apk"
 // AppVersionHeader — заголовок, в котором клиент сообщает свой versionCode.
 const AppVersionHeader = "X-App-Version"
 
-func LoadAppVersion() AppVersion {
-	code, _ := strconv.Atoi(os.Getenv("APP_VERSION_CODE"))
-	return AppVersion{VersionCode: code, ApkURL: os.Getenv("APP_APK_URL"), ApkDir: os.Getenv("APP_APK_DIR")}
+// AppVersionFile — общий с клиентом файл версии, относительно рабочей папки
+// сервера (server/, см. WorkingDirectory в systemd-юните).
+const AppVersionFile = "../app-version.properties"
+
+func LoadAppVersion(versionFile string) AppVersion {
+	if os.Getenv("APP_VERSION_CODE") != "" {
+		log.Printf("app version: APP_VERSION_CODE в .env больше не используется — версия берётся из %s; строку можно удалить", versionFile)
+	}
+	return AppVersion{VersionCode: readVersionCode(versionFile), ApkURL: os.Getenv("APP_APK_URL"), ApkDir: os.Getenv("APP_APK_DIR")}
+}
+
+// readVersionCode — versionCode из файла вида key=value (# — комментарии);
+// не прочитался — 0 (проверка выключена), с записью в лог.
+func readVersionCode(path string) int {
+	f, err := os.Open(path)
+	if err != nil {
+		log.Printf("app version: %v — проверка версии выключена", err)
+		return 0
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(strings.TrimSpace(scanner.Text()), "=")
+		if !ok || strings.TrimSpace(key) != "versionCode" {
+			continue
+		}
+		code, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			log.Printf("app version: versionCode в %s не число (%q) — проверка версии выключена", path, value)
+			return 0
+		}
+		return code
+	}
+	log.Printf("app version: в %s нет versionCode — проверка версии выключена", path)
+	return 0
 }
 
 // apkFile — путь к APK в APP_APK_DIR, если он там лежит.

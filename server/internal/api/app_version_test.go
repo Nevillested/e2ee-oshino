@@ -93,3 +93,34 @@ func TestAppApk(t *testing.T) {
 		t.Errorf("явный адрес потерян: %q", got.ApkURL)
 	}
 }
+
+func TestReadVersionCode(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	cases := []struct {
+		name, body string
+		want       int
+	}{
+		{"ok", "# комментарий\nversionCode = 47\nversionName=1.0.0\n", 47},
+		{"no-code", "versionName=1.0.0\n", 0},
+		{"garbage", "versionCode=abc\n", 0},
+	}
+	for _, c := range cases {
+		if got := readVersionCode(write(c.name, c.body)); got != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, got, c.want)
+		}
+	}
+	if got := readVersionCode(filepath.Join(dir, "missing")); got != 0 {
+		t.Errorf("нет файла: got %d", got)
+	}
+	// настоящий файл репозитория читается с того же относительного пути, что и на сервере
+	if got := readVersionCode(filepath.Join("..", "..", AppVersionFile)); got <= 0 {
+		t.Errorf("app-version.properties в корне репозитория: versionCode = %d", got)
+	}
+}

@@ -96,8 +96,9 @@ func main() {
 	  mux.HandleFunc - принимает на вход строку и функцию, тем самым сопоставляя моршрут.
 	  То есть если через http пришло что-то вроде /qwsdfg ты мы этому значению сопоставляем функцию, которую нужно вызвать
 	*/
-	// обязательная версия приложения (APP_VERSION_CODE) и APK для установленных не из Play (APP_APK_DIR / APP_APK_URL)
-	appVersion := api.LoadAppVersion()
+	// обязательная версия приложения (app-version.properties в корне репозитория) и APK для установленных не из Play (APP_APK_DIR / APP_APK_URL)
+	appVersion := api.LoadAppVersion(api.AppVersionFile)
+	registry.SetLeftScreenHook(api.PresenceLeftScreenHook(queries, registry))
 	log.Printf("обязательная версия приложения: %d (0 — проверка выключена)", appVersion.VersionCode)
 	mux.HandleFunc("GET /app/version", api.NewAppVersionHandler(appVersion))
 	mux.HandleFunc("GET "+api.ApkPath, api.NewAppApkHandler(appVersion))

@@ -13,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -116,6 +118,8 @@ class CallManager(
     private val endReasonDelayMs: Long = 1_800,
     /** Сколько звонить без ответа — столько же, сколько callRingTTL на сервере и звонок по пушу. */
     private val ringTimeoutMs: Long = 120_000,
+    /** Сколько ждать один шаг установки соединения (WebRTC), прежде чем считать, что он завис. */
+    private val stepTimeoutMs: Long = 20_000,
 ) {
     private companion object {
         /** Эти сигналы принимаются только от собеседника текущего звонка. */
@@ -222,10 +226,8 @@ class CallManager(
                 }
             }
             val session = createSession()
-            _status.value = "call.enablingMic"
-            session.startAudio(_micEnabled.value)
-            _status.value = "call.buildingOffer"
-            val offer = session.createOffer()
+            step("call.enablingMic") { session.startAudio(_micEnabled.value) }
+            val offer = step("call.buildingOffer") { session.createOffer() }
             if (!send("call_offer", buildJsonObject { put("sdp", offer) })) {
                 // сервер offer не получил — собеседнику не позвонит никто, гудеть незачем;
                 // в историю такой звонок не пишем: он никуда не ушёл
@@ -257,13 +259,11 @@ class CallManager(
             resetMediaFlags()
             _status.value = "call.securingConnection"
             val session = createSession()
-            session.setRemoteDescription("offer", offer)
+            step("call.securingConnection") { session.setRemoteDescription("offer", offer) }
             remoteDescriptionSet = true
             flushPendingCandidates(session)
-            _status.value = "call.enablingMic"
-            session.startAudio(_micEnabled.value)
-            _status.value = "call.buildingAnswer"
-            val answer = session.createAnswer()
+            step("call.enablingMic") { session.startAudio(_micEnabled.value) }
+            val answer = step("call.buildingAnswer") { session.createAnswer() }
             send("call_answer", buildJsonObject { put("sdp", answer) })
             _status.value = "call.connecting"
             setState(CallState.CONNECTED)
@@ -359,6 +359,21 @@ class CallManager(
         return listOf(stun, IceServer(urls, creds.optString("username"), creds.optString("password")))
     }
 
+    /**
+     * Шаг установки соединения: этап — на экран и в журнал. WebRTC не ответил
+     * за [stepTimeoutMs] — ошибка (звонок завершается, журнал уходит в
+     * диагностику), а не вечное "формируем ответ".
+     */
+    private suspend fun <T> step(status: String, block: suspend () -> T): T {
+        _status.value = status
+        log.log("CallManager step $status")
+        return try {
+            withTimeout(stepTimeoutMs) { block() }
+        } catch (e: TimeoutCancellationException) {
+            throw IllegalStateException("WebRTC step $status timed out after ${stepTimeoutMs}ms")
+        }
+    }
+
     private suspend fun createSession(): RtcSession {
         val events = object : RtcEvents {
             override fun onIceCandidate(candidate: String, sdpMid: String?, sdpMLineIndex: Int) {
@@ -395,7 +410,9 @@ class CallManager(
                 scope.launch(dispatcher) { if (_state.value == CallState.CONNECTED) renegotiate() }
             }
         }
-        val session = engine.createSession(iceServers(), events)
+        val servers = iceServers()
+        log.log("CallManager createSession ice=${servers.size}")
+        val session = engine.createSession(servers, events)
         rtc = session
         return session
     }

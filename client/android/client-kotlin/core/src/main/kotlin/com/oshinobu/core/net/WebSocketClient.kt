@@ -102,7 +102,8 @@ class WebSocketClient(
     private var hadNetwork = true
     private var reconnectJob: Job? = null
     private var readyTimeoutJob: Job? = null
-    private var lastKnownForeground = true
+    /** Видит ли человек приложение (сообщает Activity); пока не сообщила — нет: процесс мог поднять пуш. */
+    private var lastKnownForeground = false
 
     /**
      * Реально готов к отправке. Объект сокета появляется сразу при открытии, а
@@ -265,15 +266,20 @@ class WebSocketClient(
         when {
             type == "ack" -> deliveryId?.let { _acks.tryEmit(it) }
             type == "presence" || type == "typing" -> _presence.tryEmit(outer)
-            type == "block_status_changed" -> _blockStatus.tryEmit(Unit)
+            type == "block_status_changed" -> {
+                log("WS recv block_status_changed")
+                _blockStatus.tryEmit(Unit)
+            }
             type == "profile_updated" -> {
                 val accountId = outer.str("AccountId")
                 val field = outer.str("Field")
+                log("WS recv profile_updated account=$accountId field=$field")
                 if (accountId != null && field != null) _profileChanges.tryEmit(ProfileChange(accountId, field))
             }
             type != null && type.startsWith("call_") -> {
                 // сигналы звонка подтверждаем сразу — их обработка не идемпотентна
                 deliveryId?.let { send(ackFrame(it)) }
+                log("WS recv $type")
                 val payload = outer.str("Ciphertext")?.let { Json.parseToJsonElement(it).jsonObject } ?: JsonObject(emptyMap())
                 _callSignals.tryEmit(JsonObject(payload + ("type" to JsonPrimitive(type))))
             }
@@ -319,9 +325,10 @@ class WebSocketClient(
             put("Ciphertext", payload.toString())
             put("Type", type)
         }
-        if (isConnected) return send(frame)
+        if (isConnected) return send(frame).also { log("WS send $type to=$toDeviceId ok=$it") }
+        log("WS send $type: not connected, waiting up to ${callSignalWaitMs}ms")
         val ready = withTimeoutOrNull(callSignalWaitMs) { status.first { it == ConnectionStatus.CONNECTED } } != null
-        if (ready && isConnected) return send(frame)
+        if (ready && isConnected) return send(frame).also { log("WS send $type to=$toDeviceId ok=$it (after reconnect)") }
         log("WS sendCallSignal type=$type DROPPED — no connection within ${callSignalWaitMs}ms")
         return false
     }

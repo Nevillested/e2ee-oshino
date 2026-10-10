@@ -297,12 +297,17 @@ func NewGetAccountProfileHandler(queries *db.Queries) func(http.ResponseWriter, 
 			Resp.DisplayName = Account.DisplayName.String
 		}
 
+		// заблокирован в любую сторону — скрыто всё, независимо от уровней приватности
+		blocked := !isSelf && blockedBetween(r.Context(), queries, Account.ID, Session.AccountID)
 		fieldVisible := func(visibility int16) bool {
-			if isSelf || visibility == 1 {
+			if isSelf {
 				return true
 			}
-			if visibility == 0 {
+			if blocked || visibility == 0 {
 				return false
+			}
+			if visibility == 1 {
+				return true
 			}
 			// visibility == 2: только контакты.
 			isContact, ContactErr := queries.IsContact(r.Context(), db.IsContactParams{
@@ -379,7 +384,12 @@ func notifyContactsProfileField(ctx context.Context, queries *db.Queries, regist
 		return
 	}
 
+	sent, queued := 0, 0
 	for _, contactID := range contactIDs {
+		// заблокированному (в любую сторону) не сообщаем даже сам факт изменения
+		if blockedBetween(ctx, queries, accountID, contactID) {
+			continue
+		}
 		devices, err := queries.GetDevicesByAccount(ctx, contactID)
 		if err != nil {
 			continue
@@ -390,6 +400,8 @@ func notifyContactsProfileField(ctx context.Context, queries *db.Queries, regist
 				if writeErr := conn.Write(ctx, websocket.MessageText, msgBytes); writeErr != nil {
 					log.Printf("notifyContactsProfileField: ошибка отправки устройству, ставим в очередь: %v", writeErr)
 					online = false
+				} else {
+					sent++
 				}
 			}
 			if !online {
@@ -398,8 +410,11 @@ func notifyContactsProfileField(ctx context.Context, queries *db.Queries, regist
 					Ciphertext: string(msgBytes),
 				}); saveErr != nil {
 					log.Printf("notifyContactsProfileField: не удалось поставить сигнал в очередь: %v", saveErr)
+				} else {
+					queued++
 				}
 			}
 		}
 	}
+	log.Printf("profile_updated %s от %s: контактов %d, отправлено живьём %d, в очередь %d", field, accountID.String(), len(contactIDs), sent, queued)
 }

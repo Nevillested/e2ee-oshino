@@ -186,6 +186,26 @@ func isBlockedEitherWay(ctx context.Context, queries *db.Queries, toDeviceUUID p
 	return blocked
 }
 
+// PresenceLeftScreenHook — для ConnectionRegistry.SetLeftScreenHook: пропало
+// соединение устройства, приложение которого было на экране.
+func PresenceLeftScreenHook(queries *db.Queries, registry *ConnectionRegistry) func(deviceID string) {
+	return func(deviceID string) { markLeftScreen(context.Background(), queries, registry, deviceID) }
+}
+
+// markLeftScreen — человек перестал видеть приложение (ушёл с экрана,
+// заблокировал телефон, пропала связь при открытом приложении): с этого
+// момента идёт "был(а) в сети". Фоновые подключения (пуш, доставка) время
+// не трогают — оно про то, когда человек последний раз смотрел на экран.
+func markLeftScreen(ctx context.Context, queries *db.Queries, registry *ConnectionRegistry, deviceID string) {
+	var deviceUUID pgtype.UUID
+	if err := deviceUUID.Scan(deviceID); err == nil {
+		if err := queries.UpdateDeviceLastSeen(ctx, deviceUUID); err != nil {
+			log.Printf("ошибка обновления last_seen: %v", err)
+		}
+	}
+	notifyPresenceSubscribers(ctx, registry, deviceID, false, time.Now().UnixMilli())
+}
+
 // notifyPresenceSubscribers — рассылает живое обновление статуса
 // deviceID всем, кто сейчас на него подписан (и сам при этом в сети —
 // если подписчик не в сети, ему просто нечего писать, он всё равно не
@@ -474,11 +494,10 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 			DeviceID, r.RemoteAddr, r.Header.Get("X-Forwarded-For"),
 		)
 
+		// "В сети" подписчикам — не здесь: подключение ещё не значит, что
+		// человек смотрит на экран (мог разбудить пуш); клиент сразу следом
+		// пришлёт presence_foreground, если приложение действительно открыто.
 		registry.Add(DeviceID, ws_object)
-		// Мы подключились — сообщаем "онлайн" всем, кто в этот момент уже
-		// подписан на наш статус (например, у него открыт чат с нами и он
-		// был запущен раньше нас).
-		notifyPresenceSubscribers(r.Context(), registry, DeviceID, true, 0)
 		// Собственная (не зависящая от клиентского pingInterval) проверка
 		// живости — см. startHeartbeat. Останавливается сама, когда этот
 		// обработчик вернётся (r.Context() отменяется вместе с ним).
@@ -499,16 +518,9 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 				"ws disconnect: device=%s heldFor=%s",
 				DeviceID, time.Since(connectedAt),
 			)
+			// "был(а) в сети" и "не в сети" — уже в RemoveIfCurrent (только если
+			// приложение было на экране: фоновое соединение тут ни при чём)
 			registry.UnsubscribeAllFor(DeviceID)
-
-			bgCtx := context.Background()
-			var deviceUUID pgtype.UUID
-			if err := deviceUUID.Scan(DeviceID); err == nil {
-				if err := queries.UpdateDeviceLastSeen(bgCtx, deviceUUID); err != nil {
-					log.Printf("ошибка обновления last_seen: %v", err)
-				}
-			}
-			notifyPresenceSubscribers(bgCtx, registry, DeviceID, false, time.Now().UnixMilli())
 		}()
 
 		var ToDeviceIDUUID pgtype.UUID
@@ -612,11 +624,16 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 				// Отвечаем СРАЗУ текущим статусом (а не ждём следующего
 				// изменения) — иначе открывший чат экран мгновение
 				// показывал бы "нет данных" вместо реального статуса.
-				online := registry.SubscribePresence(DeviceID, NewWSMsgFrom.ToDeviceId)
+				// Заблокирован в любую сторону — статус не раскрываем и не
+				// подписываем: ответ "не в сети, время неизвестно".
+				var targetUUID pgtype.UUID
+				targetOK := targetUUID.Scan(NewWSMsgFrom.ToDeviceId) == nil
+				hidden := !targetOK || isBlockedEitherWay(r.Context(), queries, targetUUID, DeviceID)
+				online := false
 				var lastSeenMs int64
-				if !online {
-					var targetUUID pgtype.UUID
-					if err := targetUUID.Scan(NewWSMsgFrom.ToDeviceId); err == nil {
+				if !hidden {
+					online = registry.SubscribePresence(DeviceID, NewWSMsgFrom.ToDeviceId)
+					if !online {
 						if lastSeen, err := queries.GetDeviceLastSeen(r.Context(), targetUUID); err == nil && lastSeen.Valid {
 							lastSeenMs = lastSeen.Time.UnixMilli()
 						}
@@ -655,17 +672,11 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 					DeviceID, NewWSMsgFrom.Foreground, online, changed,
 				)
 				if changed {
-					var lastSeenMs int64
-					if !online {
-						lastSeenMs = time.Now().UnixMilli()
-						var deviceUUID pgtype.UUID
-						if err := deviceUUID.Scan(DeviceID); err == nil {
-							if err := queries.UpdateDeviceLastSeen(r.Context(), deviceUUID); err != nil {
-								log.Printf("ошибка обновления last_seen при уходе с переднего плана: %v", err)
-							}
-						}
+					if online {
+						notifyPresenceSubscribers(r.Context(), registry, DeviceID, true, 0)
+					} else {
+						markLeftScreen(r.Context(), queries, registry, DeviceID)
 					}
-					notifyPresenceSubscribers(r.Context(), registry, DeviceID, online, lastSeenMs)
 				}
 				continue
 			}
@@ -673,6 +684,10 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 			if MessageType == "typing" {
 				// Чистый relay без очереди и подтверждения — офлайн-получателю
 				// это уже неактуально к моменту, когда он подключится.
+				var typingTo pgtype.UUID
+				if typingTo.Scan(NewWSMsgFrom.ToDeviceId) != nil || isBlockedEitherWay(r.Context(), queries, typingTo, DeviceID) {
+					continue
+				}
 				if conn, ok := registry.Get(NewWSMsgFrom.ToDeviceId); ok {
 					typingMsg := WSMsgTypingRelay{Type: "typing", FromDeviceId: DeviceID}
 					if msgBytes, err := json.Marshal(typingMsg); err == nil {
