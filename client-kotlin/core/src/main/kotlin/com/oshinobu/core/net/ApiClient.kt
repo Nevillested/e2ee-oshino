@@ -305,8 +305,18 @@ class ApiClient(
     }
 
     /** true — сессия жива, false — сервер её отверг (вход с другого устройства), null — сеть. */
+    /**
+     * true — сессия жива, false — сервер её больше не признаёт (401: вошли на
+     * другом устройстве), null — неизвестно. Только 401 — повод выйти: 426
+     * (версия приложения устарела), 5xx на время перезапуска сервера и т. п.
+     * сессию не отменяют — выход по ним стирал бы ключи и всю переписку.
+     */
     suspend fun checkSession(token: String): Boolean? = try {
-        callShort(req("/session/check", token).get().build()).first == 200
+        when (callShort(req("/session/check", token).get().build()).first) {
+            200 -> true
+            401 -> false
+            else -> null
+        }
     } catch (_: Exception) {
         null
     }

@@ -3,10 +3,12 @@ package com.oshinobu.app.ui.chat
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.onConsumedWindowInsetsChanged
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -126,23 +128,29 @@ fun rememberEmojiKeyboardState(): EmojiKeyboardState {
 }
 
 /**
- * Место под полем ввода: высота = max(клавиатура, панель эмодзи, отступ
- * навигации + 5dp) и считается на этапе раскладки — в том же кадре, что и
- * анимация клавиатуры, поэтому поле движется ровно с ней, без отставания на
- * кадр. Панель эмодзи лежит сверху зоны и строится заранее, пока открыта
- * клавиатура (её под клавиатурой не видно): иначе первая отрисовка сетки
- * съедает кадры, и клавиатура "исчезает" без анимации.
+ * Место под полем ввода: от низа окна до поля = max(клавиатура, панель
+ * эмодзи, отступ навигации + 5dp). Считается на этапе раскладки — в том же
+ * кадре, что и анимация клавиатуры, поэтому поле движется ровно с ней, без
+ * отставания на кадр. Если контейнер уже сам поднят над клавиатурой
+ * (шторка Material3 оборачивает содержимое в imePadding), зона меньше на
+ * этот подъём — иначе клавиатура учлась бы дважды. Панель эмодзи лежит
+ * сверху зоны и строится заранее, пока открыта клавиатура (её под
+ * клавиатурой не видно): иначе первая отрисовка сетки съедает кадры, и
+ * клавиатура "исчезает" без анимации.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EmojiKeyboardArea(state: EmojiKeyboardState, onEmoji: (String) -> Unit) {
     val density = LocalDensity.current
     val ime = WindowInsets.ime
     val nav = WindowInsets.navigationBars
+    var consumed by remember { mutableStateOf(WindowInsets(0)) }
     val keyboardUp by remember { derivedStateOf { ime.getBottom(density) > 0 } }
     val emojiShown by remember { derivedStateOf { state.reserve.value > 0f || keyboardUp } }
     Box(
-        Modifier.fillMaxWidth().clipToBounds().layout { measurable, constraints ->
-            val h = maxOf(ime.getBottom(this), state.reserve.value.toInt(), nav.getBottom(this) + 5.dp.roundToPx())
+        Modifier.fillMaxWidth().onConsumedWindowInsetsChanged { consumed = it }.clipToBounds().layout { measurable, constraints ->
+            val fromBottom = maxOf(ime.getBottom(this), state.reserve.value.toInt(), nav.getBottom(this) + 5.dp.roundToPx())
+            val h = (fromBottom - consumed.getBottom(this)).coerceAtLeast(0)
             val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = state.keyboardHeightPx.coerceAtLeast(h)))
             layout(constraints.maxWidth, h) { placeable.place(0, 0) }
         },

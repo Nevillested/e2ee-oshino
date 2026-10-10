@@ -92,12 +92,26 @@ func NewAppApkHandler(v AppVersion) func(http.ResponseWriter, *http.Request) {
 	}
 }
 
+// versionExempt — маршруты, доступные любой версии клиента:
+//   - /app/version, /app/apk — устаревшему клиенту надо узнать, что он устарел,
+//     и откуда-то скачать новую версию;
+//   - /session/check — только сверяет токен, ничего не отдаёт; клиенты 1.0.0+44
+//     и +45 считали ЛЮБОЙ не-200 ответ на него (в т. ч. 426) отменой сессии и
+//     выходили из аккаунта со стиранием ключей — при смене обязательной версии
+//     такой клиент обязан получить здесь честный ответ;
+//   - /health.
+var versionExempt = map[string]bool{
+	"/app/version":   true,
+	ApkPath:          true,
+	"/session/check": true,
+	"/health":        true,
+}
+
 // RequireAppVersion пропускает к остальным маршрутам только клиентов с
-// обязательной версией. /app/version, /app/apk (устаревшему клиенту надо
-// откуда-то скачать новую версию) и /health доступны всем.
+// обязательной версией (кроме versionExempt).
 func RequireAppVersion(v AppVersion, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if v.VersionCode == 0 || r.URL.Path == "/app/version" || r.URL.Path == ApkPath || r.URL.Path == "/health" {
+		if v.VersionCode == 0 || versionExempt[r.URL.Path] {
 			next.ServeHTTP(w, r)
 			return
 		}

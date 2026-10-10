@@ -72,6 +72,14 @@ class NetTest {
     }
 
     @Test
+    fun `сессию отменяет только 401 — устаревшая версия и сбои сервера не выход`() = runBlocking {
+        for ((code, expected) in listOf(200 to true, 401 to false, 426 to null, 502 to null, 500 to null)) {
+            server.enqueue(MockResponse().setResponseCode(code).setBody("{}"))
+            assertEquals(expected, api.checkSession("tok"), "HTTP $code")
+        }
+    }
+
+    @Test
     fun `коды ошибок превращаются в ключи локализации`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(429))
         assertEquals("error.tooManyLoginAttempts", assertFailsWith<ApiException> { api.login("a", "b", "c") }.errorKey)

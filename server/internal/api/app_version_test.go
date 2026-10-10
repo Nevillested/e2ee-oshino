@@ -23,6 +23,7 @@ func TestRequireAppVersion(t *testing.T) {
 		{"/ws", "", http.StatusUpgradeRequired},
 		{"/app/version", "", http.StatusOK},
 		{"/app/apk", "", http.StatusOK},
+		{"/session/check", "44", http.StatusOK},
 		{"/health", "", http.StatusOK},
 	}
 	for _, c := range cases {
