@@ -43,10 +43,13 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -64,6 +67,7 @@ import androidx.core.content.ContextCompat
 import com.airbnb.lottie.compose.LottieAnimation
 import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.LottieConstants
+import com.airbnb.lottie.compose.animateLottieCompositionAsState
 import com.airbnb.lottie.compose.rememberLottieComposition
 import com.oshinobu.app.R
 import com.oshinobu.app.ui.theme.CardShape
@@ -271,7 +275,13 @@ fun rememberWithPermission(permission: String): (action: () -> Unit) -> Unit {
  * (Lottie, LottieFiles — Lottie Simple License; res/raw/loading_cat.json).
  */
 @Composable
-fun AppLoadingIndicator(modifier: Modifier = Modifier, size: Dp = 24.dp) {
+fun AppLoadingIndicator(modifier: Modifier = Modifier, size: Dp = 24.dp, onLoopsDone: ((Int) -> Unit)? = null) {
     val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.loading_cat))
-    LottieAnimation(composition, iterations = LottieConstants.IterateForever, modifier = modifier.size(size))
+    val state = animateLottieCompositionAsState(composition, iterations = LottieConstants.IterateForever)
+    // сколько полных кругов кошка уже сделала (заставка ждёт конца круга)
+    if (onLoopsDone != null) {
+        val callback by rememberUpdatedState(onLoopsDone)
+        LaunchedEffect(state) { snapshotFlow { state.iteration - 1 }.collect { callback(it) } }
+    }
+    LottieAnimation(composition, { state.progress }, modifier = modifier.size(size))
 }

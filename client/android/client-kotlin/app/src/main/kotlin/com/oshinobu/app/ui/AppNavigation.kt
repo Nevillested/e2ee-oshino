@@ -31,10 +31,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -402,9 +404,24 @@ private const val PROFILE_CLOSE_MS = 300
 @Composable
 private fun SplashScreen(onSignedOut: () -> Unit, onSignedIn: () -> Unit) {
     val core = LocalContext.current.app.core
-    LaunchedEffect(Unit) { if (resumeSession(core)) onSignedIn() else onSignedOut() }
-    FullScreenLoading()
+    var signedIn by remember { mutableStateOf<Boolean?>(null) }
+    var loopsDone by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) { signedIn = resumeSession(core) }
+    // кошка докручивает хотя бы один полный круг, и экран меняется ровно на стыке кругов —
+    // не посреди движения (анимация не загрузилась — не ждём дольше SPLASH_LOOP_WAIT_MS)
+    LaunchedEffect(signedIn) {
+        val result = signedIn ?: return@LaunchedEffect
+        val atReady = loopsDone
+        withTimeoutOrNull(SPLASH_LOOP_WAIT_MS) { snapshotFlow { loopsDone }.first { it >= 1 && it > atReady } }
+        if (result) onSignedIn() else onSignedOut()
+    }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        AppLoadingIndicator(size = 64.dp, onLoopsDone = { loopsDone = it })
+    }
 }
+
+/** Дольше этого заставка круг кошки не ждёт (один круг — около 2 с). */
+private const val SPLASH_LOOP_WAIT_MS = 4_000L
 
 /** Поднять сохранённую сессию; false — входа нет (или сервер его больше не признаёт — всё стёрто). */
 private suspend fun resumeSession(core: OshinobuCore): Boolean {

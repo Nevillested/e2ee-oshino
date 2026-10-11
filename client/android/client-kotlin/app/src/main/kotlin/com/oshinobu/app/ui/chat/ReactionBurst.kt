@@ -3,6 +3,8 @@ package com.oshinobu.app.ui.chat
 import android.content.Context
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,7 +30,9 @@ import com.airbnb.lottie.compose.LottieAnimation
 import com.airbnb.lottie.compose.LottieCompositionSpec
 import com.airbnb.lottie.compose.animateLottieCompositionAsState
 import com.airbnb.lottie.compose.rememberLottieComposition
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -63,17 +67,35 @@ fun ReactionBurst(emoji: String, onDone: () -> Unit) {
     val context = LocalContext.current
     val asset = remember(emoji) { ReactionAnimations.asset(context, emoji) }
     val particles = remember { Animatable(0f) }
+    // большое живое эмодзи вырастает из бейджа и в конце сжимается обратно в него — без обрыва
+    val presence = remember { Animatable(0f) }
     // нет анимации у Noto — ждать нечего, только частицы
     var lottieDone by remember { mutableStateOf(asset == null) }
 
     LaunchedEffect(Unit) {
-        particles.animateTo(1f, tween(700, easing = FastOutSlowInEasing))
-        snapshotFlow { lottieDone }.first { it }
+        coroutineScope {
+            launch { particles.animateTo(1f, tween(700, easing = FastOutSlowInEasing)) }
+            if (asset != null) {
+                presence.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow))
+                snapshotFlow { lottieDone }.first { it }
+                presence.animateTo(0f, tween(260, easing = FastOutSlowInEasing))
+            }
+        }
         onDone()
     }
 
     Box(Modifier.wrapContentSize(unbounded = true).requiredSize(BurstSize), contentAlignment = Alignment.Center) {
-        if (asset != null) ReactionLottie(asset) { lottieDone = true }
+        if (asset != null) {
+            Box(
+                Modifier.fillMaxSize().graphicsLayer {
+                    // от размера бейджа (~четверть) до полного и обратно
+                    val p = presence.value
+                    scaleX = 0.25f + 0.75f * p
+                    scaleY = 0.25f + 0.75f * p
+                    alpha = p.coerceIn(0f, 1f)
+                },
+            ) { ReactionLottie(asset) { lottieDone = true } }
+        }
         val t = particles.value
         for (i in 0 until PARTICLES) {
             val angle = 2 * PI * i / PARTICLES
