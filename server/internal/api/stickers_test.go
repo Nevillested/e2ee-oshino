@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -92,9 +93,9 @@ func TestValidPackTitle(t *testing.T) {
 		" Котики":      false,
 		"Котики!":      false,
 		"emoji😀":       false,
-		"Очень длинное название пака": false,
-		"12345678901234567890":        true,
-		"123456789012345678901":       false,
+		"Очень длинное название пака": true,
+		strings.Repeat("я", 50):       true,
+		strings.Repeat("я", 51):       false,
 	} {
 		if got := validPackTitle(title); got != want {
 			t.Errorf("%q: got %v, want %v", title, got, want)

@@ -182,7 +182,9 @@ fun StickerPackSheet(stickerId: String, onSend: ((StickerInfo) -> Unit)?, onDism
                         }
                         if (p.isOwner) {
                             Spacer(Modifier.height(4.dp))
-                            DialogButton(stringResource(R.string.sticker_deleteForever), color = ErrorRed) { if (!busy) confirmDelete = true }
+                            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                DialogButton(stringResource(R.string.sticker_deleteForever), color = ErrorRed) { if (!busy) confirmDelete = true }
+                            }
                         }
                     }
                 }
@@ -219,8 +221,8 @@ private fun CenteredMessage(text: String) {
 
 // ---------------- загрузка своего пака ----------------
 
-/** Как на сервере: латиница, кириллица, цифры и пробелы, 1–20 символов, без пробелов по краям. */
-private const val MAX_TITLE = 20
+/** Как на сервере: латиница, кириллица, цифры и пробелы, 1–50 символов, без пробелов по краям. */
+private const val MAX_TITLE = 50
 private val TitleChars = Regex("[A-Za-zА-Яа-яЁё0-9 ]")
 private const val MAX_ARCHIVE_BYTES = 80L * 1024 * 1024
 

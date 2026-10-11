@@ -65,6 +65,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
@@ -94,10 +95,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.GZIPInputStream
 
-/** Стикер в переписке — без пузыря, такого размера. */
-val StickerMessageSize = 160.dp
+/** Стикер в переписке — без пузыря; бо́льшая сторона — такая доля ширины экрана. */
+private const val StickerScreenFraction = 0.45f
 
 /**
  * Расшифрованные в память стикеры: картинки (по объёму) и анимации — чтобы
@@ -109,26 +111,42 @@ private object StickerMemory {
     }
     private val animations = LruCache<String, LottieComposition>(48)
 
+    /** Пропорции (ширина / высота) — переживают вытеснение картинки из памяти: рамка в ленте не прыгает. */
+    private val aspects = ConcurrentHashMap<String, Float>()
+
     fun bitmap(file: File): ImageBitmap? = bitmaps.get(file.path)
+
+    fun aspect(file: File): Float? = aspects[file.path]
+
+    fun rememberAspect(file: File, width: Int, height: Int) {
+        if (width > 0 && height > 0) aspects[file.path] = width.toFloat() / height
+    }
 
     fun animation(file: File): LottieComposition? = animations.get(file.path)
 
     fun loadBitmap(file: File): ImageBitmap? =
-        BitmapFactory.decodeFile(file.path)?.asImageBitmap()?.also { bitmaps.put(file.path, it) }
+        BitmapFactory.decodeFile(file.path)?.asImageBitmap()?.also {
+            bitmaps.put(file.path, it)
+            rememberAspect(file, it.width, it.height)
+        }
 
     /** TGS — Lottie JSON в gzip. */
     fun loadAnimation(file: File): LottieComposition? =
         LottieCompositionFactory.fromJsonInputStreamSync(GZIPInputStream(file.inputStream().buffered()), "sticker:${file.name}")
-            .value?.also { animations.put(file.path, it) }
+            .value?.also {
+                animations.put(file.path, it)
+                rememberAspect(file, it.bounds.width(), it.bounds.height())
+            }
 }
 
-/** Файл стикера: картинка или (TGS) бесконечная анимация. */
+/** Файл стикера: картинка или (TGS) бесконечная анимация. [onAspect] — пропорции, когда стали известны. */
 @Composable
-fun StickerFileView(file: File, animated: Boolean, modifier: Modifier = Modifier) {
+fun StickerFileView(file: File, animated: Boolean, modifier: Modifier = Modifier, onAspect: ((Float) -> Unit)? = null) {
     if (animated) {
         var composition by remember(file.path) { mutableStateOf(StickerMemory.animation(file)) }
         LaunchedEffect(file.path) {
             if (composition == null) composition = withContext(Dispatchers.IO) { runCatching { StickerMemory.loadAnimation(file) }.getOrNull() }
+            StickerMemory.aspect(file)?.let { onAspect?.invoke(it) }
         }
         val progress by animateLottieCompositionAsState(composition, iterations = LottieConstants.IterateForever)
         LottieAnimation(composition, { progress }, modifier)
@@ -136,6 +154,7 @@ fun StickerFileView(file: File, animated: Boolean, modifier: Modifier = Modifier
         var bitmap by remember(file.path) { mutableStateOf(StickerMemory.bitmap(file)) }
         LaunchedEffect(file.path) {
             if (bitmap == null) bitmap = withContext(Dispatchers.IO) { runCatching { StickerMemory.loadBitmap(file) }.getOrNull() }
+            StickerMemory.aspect(file)?.let { onAspect?.invoke(it) }
         }
         val b = bitmap
         if (b != null) Image(b, null, modifier, contentScale = ContentScale.Fit) else Box(modifier)
@@ -156,15 +175,22 @@ private val RetryDelaysMs = longArrayOf(3_000, 10_000, 30_000, 60_000)
 /**
  * Стикер из переписки по id: с устройства, иначе — скачав его пак
  * целиком. Пак удалён автором и файла нет — надпись вместо стикера.
+ * Размер: бо́льшая сторона — 45% ширины экрана, рамка — по пропорциям
+ * картинки (пока они неизвестны — квадрат).
  */
 @Composable
-fun StickerById(stickerId: String, modifier: Modifier = Modifier, size: Dp = StickerMessageSize) {
+fun StickerById(stickerId: String, modifier: Modifier = Modifier) {
     val colors = LocalAppColors.current
     val stickers = LocalContext.current.app.core.stickers
     val version = rememberStickerFilesVersion()
     var state by remember(stickerId) {
         mutableStateOf<StickerFile?>(stickers.cachedFile(stickerId)?.let { StickerFile.Ready(it, it.extension == "tgs") })
     }
+    var aspect by remember(stickerId) { mutableStateOf((state as? StickerFile.Ready)?.file?.let(StickerMemory::aspect)) }
+    val side = LocalConfiguration.current.screenWidthDp.dp * StickerScreenFraction
+    val a = aspect
+    val width = if (a != null && a < 1f) side * a else side
+    val height = if (a != null && a > 1f) side / a else side
     LaunchedEffect(stickerId, version) {
         var attempt = 0
         while (true) {
@@ -174,9 +200,9 @@ fun StickerById(stickerId: String, modifier: Modifier = Modifier, size: Dp = Sti
             delay(RetryDelaysMs[minOf(attempt++, RetryDelaysMs.lastIndex)])
         }
     }
-    Box(modifier.size(size), contentAlignment = Alignment.Center) {
+    Box(modifier.size(width, height), contentAlignment = Alignment.Center) {
         when (val s = state) {
-            is StickerFile.Ready -> StickerFileView(s.file, s.animated, Modifier.fillMaxSize())
+            is StickerFile.Ready -> StickerFileView(s.file, s.animated, Modifier.fillMaxSize(), onAspect = { aspect = it })
             StickerFile.PackDeleted -> Text(
                 stringResource(R.string.sticker_packDeleted),
                 color = colors.textMuted, fontSize = 12.sp, fontStyle = FontStyle.Italic, textAlign = TextAlign.Center,
@@ -184,7 +210,7 @@ fun StickerById(stickerId: String, modifier: Modifier = Modifier, size: Dp = Sti
             )
             else -> Icon(
                 Icons.Outlined.Image, null, tint = colors.textMuted.copy(alpha = 0.5f),
-                modifier = Modifier.fillMaxSize().background(colors.surface.copy(alpha = 0.6f), RoundedCornerShape(20.dp)).padding(size / 3),
+                modifier = Modifier.fillMaxSize().background(colors.surface.copy(alpha = 0.6f), RoundedCornerShape(20.dp)).padding(minOf(width, height) / 3),
             )
         }
     }
@@ -197,7 +223,13 @@ fun PanelSticker(sticker: StickerInfo, modifier: Modifier = Modifier) {
     val version = rememberStickerFilesVersion()
     var file by remember(sticker.id) { mutableStateOf(stickers.cachedFile(sticker.id)) }
     LaunchedEffect(sticker.id, version) {
-        if (file?.exists() != true) file = stickers.file(sticker)
+        // не скачалось (нет сети, сбой сервера) — пробуем ещё, реже и реже
+        var attempt = 0
+        while (file?.exists() != true) {
+            file = stickers.file(sticker)
+            if (file != null) break
+            delay(RetryDelaysMs[minOf(attempt++, RetryDelaysMs.lastIndex)])
+        }
     }
     val f = file
     if (f != null) StickerFileView(f, sticker.animated, modifier) else Box(modifier)

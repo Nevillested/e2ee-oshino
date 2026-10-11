@@ -27,9 +27,11 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
-import java.util.zip.ZipInputStream
+import java.util.zip.ZipFile
 
 /** Что показать на месте стикера из переписки. */
 sealed interface StickerFile {
@@ -188,7 +190,15 @@ class Stickers(
             dropRecentOf(pack.id)
             return null
         }
-        if (!ensurePack(pack)) return null
+        val ok = try {
+            ensurePack(pack)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.error("Stickers pack download failed pack=${pack.id}: $e")
+            return null
+        }
+        if (!ok) return null
         return fileOf(sticker).takeIf { it.exists() }
     }
 
@@ -237,11 +247,12 @@ class Stickers(
     /** Из архива берутся только файлы этого пака (<id>.<формат>), с пределом размера. */
     private fun extract(pack: StickerPackInfo, zip: File) {
         val wanted = pack.stickers.associateBy { "${it.id}.${it.format}" }
-        ZipInputStream(zip.inputStream().buffered()).use { zin ->
-            while (true) {
-                val entry = zin.nextEntry ?: break
+        // ZipFile читает по центральному каталогу — и записи с "data descriptor"
+        // после данных (ZipInputStream на таких несжатых записях падает)
+        ZipFile(zip).use { zf ->
+            for (entry in zf.entries()) {
                 val sticker = wanted[entry.name] ?: continue
-                val data = zin.readAtMost(MAX_STICKER_BYTES + 1)
+                val data = zf.getInputStream(entry).use { it.readAtMost(MAX_STICKER_BYTES + 1) }
                 if (data.size > MAX_STICKER_BYTES) continue
                 val tmp = File(dir, ".${entry.name}.tmp")
                 tmp.writeBytes(data)
@@ -251,8 +262,8 @@ class Stickers(
     }
 
     // readNBytes — только с Android 13
-    private fun ZipInputStream.readAtMost(limit: Int): ByteArray {
-        val out = java.io.ByteArrayOutputStream()
+    private fun InputStream.readAtMost(limit: Int): ByteArray {
+        val out = ByteArrayOutputStream()
         val buf = ByteArray(16 * 1024)
         while (out.size() < limit) {
             val n = read(buf, 0, minOf(buf.size, limit - out.size()))

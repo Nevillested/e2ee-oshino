@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMade
@@ -48,26 +47,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.IntrinsicMeasurable
-import androidx.compose.ui.layout.IntrinsicMeasureScope
-import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.layout.Measurable
-import androidx.compose.ui.layout.MeasurePolicy
-import androidx.compose.ui.layout.MeasureResult
-import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
-import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.oshinobu.app.R
@@ -132,53 +121,6 @@ fun MetaRow(msg: StoredMessage, onColoredBubble: Boolean = true, status: String 
             StatusIcon(status, onColoredBubble)
         }
     }
-}
-
-/**
- * Текст и метаданные (время/статус) в одном блоке: если на последней строке
- * текста хватает места — метаданные встают туда же, иначе — отдельной
- * строкой справа снизу (как в Telegram/WhatsApp).
- */
-@Composable
-fun TextWithMeta(text: AnnotatedString, color: Color, maxWidth: Dp, meta: @Composable () -> Unit) {
-    val layoutRef = remember { arrayOfNulls<TextLayoutResult>(1) }
-    val policy = remember {
-        object : MeasurePolicy {
-            override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
-                val textP = measurables[0].measure(constraints.copy(minWidth = 0))
-                val metaP = measurables[1].measure(constraints.copy(minWidth = 0))
-                val gap = 6.dp.roundToPx()
-                val layout = layoutRef[0]
-                val lastLine = (layout?.lineCount ?: 1) - 1
-                val lastLineWidth = layout?.let { (it.getLineRight(lastLine) - it.getLineLeft(lastLine)).toInt() } ?: textP.width
-                val lineBottom = layout?.getLineBottom(lastLine)?.toInt() ?: textP.height
-                val fitsInline = lastLineWidth + gap + metaP.width <= constraints.maxWidth
-                val width = (if (fitsInline) maxOf(textP.width, lastLineWidth + gap + metaP.width) else maxOf(textP.width, metaP.width))
-                    .coerceIn(constraints.minWidth, constraints.maxWidth)
-                val height = if (fitsInline) maxOf(textP.height, lineBottom) else textP.height + metaP.height
-                return layout(width, height) {
-                    textP.place(0, 0)
-                    val metaY = if (fitsInline) lineBottom - metaP.height - 2.dp.roundToPx() else textP.height
-                    metaP.place(width - metaP.width, metaY.coerceAtLeast(0))
-                }
-            }
-
-            // ширина "по содержимому": текст одной строкой плюс метаданные (родитель обрежет до максимума)
-            override fun IntrinsicMeasureScope.maxIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) =
-                measurables[0].maxIntrinsicWidth(height) + 6.dp.roundToPx() + measurables[1].maxIntrinsicWidth(height)
-
-            override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) =
-                maxOf(measurables[0].minIntrinsicWidth(height), measurables[1].minIntrinsicWidth(height))
-        }
-    }
-    Layout(
-        content = {
-            Text(text, color = color, fontSize = 16.sp, onTextLayout = { layoutRef[0] = it })
-            Box { meta() }
-        },
-        modifier = Modifier.widthIn(max = maxWidth),
-        measurePolicy = policy,
-    )
 }
 
 /** Нейтральный ряд по центру — для записей о звонках и заглушек нерасшифрованных сообщений. */

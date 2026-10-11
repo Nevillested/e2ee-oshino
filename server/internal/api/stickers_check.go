@@ -28,10 +28,10 @@ const (
 	maxTgsJSONSz        = 1024 * 1024
 	maxStickerSide      = 512
 	maxStickerArchiveSz = 80 * 1024 * 1024
-	maxPackTitleRunes   = 20
+	maxPackTitleRunes   = 50
 )
 
-// Название пака: латиница, кириллица, цифры и пробелы, 1–20 символов.
+// Название пака: латиница, кириллица, цифры и пробелы, 1–50 символов.
 var packTitleRe = regexp.MustCompile(`^[A-Za-zА-Яа-яЁё0-9 ]+$`)
 
 // validPackTitle — название уже без пробелов по краям.

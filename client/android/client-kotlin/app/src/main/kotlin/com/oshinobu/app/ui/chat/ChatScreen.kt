@@ -365,7 +365,6 @@ fun ChatScreen(
                                 selectionMode = vm.selectionMode,
                                 selected = rep.messageId in vm.selected,
                                 dissolving = group.any { it.messageId in vm.dissolving },
-                                justReacted = rep.messageId in vm.justReacted,
                                 flash = if (flashId == group.key()) flashToken else 0,
                                 highlighted = currentMatch != null && group.any { it.messageId == currentMatch.messageId },
                                 swipeDx = if (swipeReplyId == rep.messageId) swipeReplyDx else 0f,
@@ -400,6 +399,7 @@ fun ChatScreen(
                                 MessageBubble(
                                     vm = vm,
                                     group = group,
+                                    justReacted = rep.messageId in vm.justReacted,
                                     peerName = peerName,
                                     maxBubble = maxBubble,
                                     maxText = maxText,
@@ -635,7 +635,6 @@ private fun MessageRow(
     selectionMode: Boolean,
     selected: Boolean,
     dissolving: Boolean,
-    justReacted: Boolean,
     flash: Int,
     highlighted: Boolean,
     swipeDx: Float,
@@ -741,12 +740,8 @@ private fun MessageRow(
         if (isMine) Spacer(Modifier.weight(1f))
         Box(Modifier.offset { IntOffset(animatedDx.toInt(), 0) }) {
             Dissolvable(dissolving) {
-                Box(Modifier.padding(bottom = if (rep.myReaction != null || rep.peerReaction != null) 8.dp else 0.dp)) {
-                    HighlightFrame(highlighted) { bubble() }
-                    Box(Modifier.align(if (isMine) Alignment.BottomStart else Alignment.BottomEnd).padding(horizontal = 8.dp).offset(y = 8.dp)) {
-                        ReactionBadges(rep.myReaction, rep.peerReaction, justReacted)
-                    }
-                }
+                // реакции — в нижней строке самого сообщения, рядом со временем
+                HighlightFrame(highlighted) { bubble() }
             }
         }
         if (!isMine) Spacer(Modifier.weight(1f))

@@ -134,6 +134,8 @@ private fun aggregateStatus(group: List<StoredMessage>): String = when {
 fun MessageBubble(
     vm: ChatViewModel,
     group: List<StoredMessage>,
+    /** Реакцию только что поставили — бейдж в строке времени текста "хлопает". */
+    justReacted: Boolean,
     peerName: String,
     maxBubble: Dp,
     maxText: Dp,
@@ -164,7 +166,11 @@ fun MessageBubble(
                 }
             }
             Spacer(Modifier.height(4.dp))
-            MetaRow(last.copy(edited = false), status = aggregateStatus(group))
+            // реакция альбома — на подписи, если она есть, иначе на первом вложении
+            val rep = caption ?: group.first()
+            ReactionMetaRow(rep, justReacted, Modifier.padding(horizontal = 4.dp)) {
+                MetaRow(last.copy(edited = false), status = aggregateStatus(group))
+            }
         }
         return
     }
@@ -187,6 +193,10 @@ fun MessageBubble(
             )
             Spacer(Modifier.height(4.dp))
             Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (msg.myReaction != null || msg.peerReaction != null) {
+                    ReactionBadges(msg.myReaction, msg.peerReaction, justReacted)
+                    Spacer(Modifier.width(10.dp))
+                }
                 if (msg.fileSize > 0) {
                     Text(fileSizeText(msg.fileSize), color = colors.textMuted, fontSize = 10.sp)
                     Spacer(Modifier.width(6.dp))
@@ -200,7 +210,7 @@ fun MessageBubble(
     val stickerId = msg.stickerId
     if (stickerId != null) {
         // стикер — без пузыря; тап по нему — его пак, по строке рядом — меню
-        Column(Modifier.padding(vertical = 4.dp), horizontalAlignment = if (msg.isMine) Alignment.End else Alignment.Start) {
+        Column(Modifier.padding(vertical = 4.dp).width(IntrinsicSize.Max), horizontalAlignment = if (msg.isMine) Alignment.End else Alignment.Start) {
             if (msg.replyToPreview != null) {
                 Box(Modifier.widthIn(max = maxText).background(colors.bubble(msg.isMine), BubbleShape).padding(start = 8.dp, end = 8.dp, top = 6.dp)) {
                     ReplyPreview(msg, vm.findMessage(msg.replyToMessageId), peerName, onJump)
@@ -209,8 +219,10 @@ fun MessageBubble(
             }
             StickerById(stickerId, Modifier.clickable(interactionSource = null, indication = null) { onOpenStickerPack(stickerId) })
             Spacer(Modifier.height(4.dp))
-            Box(Modifier.background(colors.surface.copy(alpha = 0.85f), RoundedCornerShape(10.dp)).padding(horizontal = 7.dp, vertical = 2.dp)) {
-                MetaRow(msg, onColoredBubble = false)
+            ReactionMetaRow(msg, justReacted) {
+                Box(Modifier.background(colors.surface.copy(alpha = 0.85f), RoundedCornerShape(10.dp)).padding(horizontal = 7.dp, vertical = 2.dp)) {
+                    MetaRow(msg, onColoredBubble = false)
+                }
             }
         }
         return
@@ -236,23 +248,42 @@ fun MessageBubble(
                     resolveFile = { vm.mediaFile(msg, userInitiated = true) },
                 )
                 Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (msg.fileSize > 0) {
-                        Text(fileSizeText(msg.fileSize), color = colors.bubbleMuted(msg.isMine), fontSize = 10.sp)
-                        Spacer(Modifier.width(6.dp))
+                ReactionMetaRow(msg, justReacted) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (msg.fileSize > 0) {
+                            Text(fileSizeText(msg.fileSize), color = colors.bubbleMuted(msg.isMine), fontSize = 10.sp)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        MetaRow(msg)
                     }
-                    MetaRow(msg)
                 }
             }
             msg.isMedia -> Column(horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth()) {
                 AttachmentBubble(vm, msg, 220.dp, msg.messageId in revealed, { onReveal(msg.messageId) }, onOpenViewer, onOpenFile, onSaveFile)
                 Spacer(Modifier.height(4.dp))
-                MetaRow(msg)
+                ReactionMetaRow(msg, justReacted) { MetaRow(msg) }
             }
-            else -> Box(Modifier.fillMaxWidth()) {
-                TextWithMeta(linkified(msg.text, msg.isMine), colors.bubbleText(msg.isMine), maxText) { MetaRow(msg) }
+            // текст: время — всегда отдельной нижней строкой справа, реакции — в ней же слева
+            else -> Column(Modifier.fillMaxWidth()) {
+                Text(linkified(msg.text, msg.isMine), color = colors.bubbleText(msg.isMine), fontSize = 16.sp, modifier = Modifier.widthIn(max = maxText))
+                Spacer(Modifier.height(4.dp))
+                ReactionMetaRow(msg, justReacted) { MetaRow(msg) }
             }
         }
+    }
+}
+
+/**
+ * Нижняя строка сообщения — одинаковая у всех: реакции слева, время и
+ * статус ([meta]) справа.
+ */
+@Composable
+private fun ReactionMetaRow(msg: StoredMessage, justReacted: Boolean, modifier: Modifier = Modifier, meta: @Composable () -> Unit) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        ReactionBadges(msg.myReaction, msg.peerReaction, justReacted)
+        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.weight(1f))
+        meta()
     }
 }
 
