@@ -83,6 +83,7 @@ import com.oshinobu.app.ui.theme.LocalAppColors
 import com.oshinobu.core.OshinobuCore
 import com.oshinobu.core.service.CallPeer
 import com.oshinobu.core.service.CallState
+import com.oshinobu.core.service.ForwardItem
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
@@ -170,7 +171,7 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
     val openCall = { if (current() != Routes.CALL) nav.navigate(Routes.CALL) }
     val withMic = rememberWithPermission(Manifest.permission.RECORD_AUDIO)
     // что пересылаем: живёт от выбора "Переслать" до открытия чата-получателя
-    var forwardDraft by remember { mutableStateOf<List<String>>(emptyList()) }
+    var forwardDraft by remember { mutableStateOf<List<ForwardItem>>(emptyList()) }
     // заставка → список чатов: список раскрывается кругом из центра, где крутилась кошка
     var revealHome by remember { mutableStateOf(false) }
     val str = listOf(navArgument("login") { type = NavType.StringType }, navArgument("url") { type = NavType.StringType })
@@ -330,12 +331,12 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
             CompositionLocalProvider(LocalNavAnimatedScope provides this) {
             ChatScreen(
                 target = target,
-                forwardedTexts = forwarded,
+                forwarded = forwarded,
                 onBack = { nav.popBackStack() },
                 onOpenTransfers = { nav.navigate(Routes.TRANSFERS) },
                 onOpenProfile = { accountId, login -> nav.navigate(Routes.peerProfile(accountId, login)) },
-                onForward = { texts ->
-                    forwardDraft = texts
+                onForward = { items ->
+                    forwardDraft = items
                     nav.navigate(Routes.FORWARD)
                 },
                 onOpenMedia = { login, messageId -> nav.navigate(Routes.media(login, messageId)) },

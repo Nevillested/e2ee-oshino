@@ -155,7 +155,7 @@ class PendingSendRetrier(
                         if (job.videoNote) MessageType.VIDEO_NOTE else MessageType.VOICE, progress[job.id] ?: 0.0, isActive,
                     ),
                 )
-                is PendingSendJob.Text -> emptyList()
+                is PendingSendJob.Text, is PendingSendJob.Sticker -> emptyList()
             }
         }.sortedByDescending { it.active }
     }
@@ -194,6 +194,7 @@ class PendingSendRetrier(
         try {
             when (job) {
                 is PendingSendJob.Text -> sendText(job)
+                is PendingSendJob.Sticker -> sendSticker(job)
                 is PendingSendJob.Recorded -> sendRecorded(job)
                 is PendingSendJob.Media -> sendMedia(job)
                 is PendingSendJob.MediaGroup -> sendGroup(job)
@@ -222,6 +223,12 @@ class PendingSendRetrier(
     private suspend fun sendText(job: PendingSendJob.Text) {
         val deviceId = messenger.resolvePeerDeviceId(job.peerLogin, job.peerDeviceId)
         val inner = InnerMessage(job.id, MessageType.TEXT, job.sentAt, job.text, replyToMessageId = job.replyToId, replyToPreview = job.replyToPreview)
+        messenger.send(deviceId, inner, peerLogin = job.peerLogin)
+    }
+
+    private suspend fun sendSticker(job: PendingSendJob.Sticker) {
+        val deviceId = messenger.resolvePeerDeviceId(job.peerLogin, job.peerDeviceId)
+        val inner = InnerMessage.sticker(job.stickerId, job.id, job.replyToId, job.replyToPreview).copy(sentAt = job.sentAt)
         messenger.send(deviceId, inner, peerLogin = job.peerLogin)
     }
 

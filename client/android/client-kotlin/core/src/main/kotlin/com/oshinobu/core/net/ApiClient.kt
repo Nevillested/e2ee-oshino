@@ -98,6 +98,41 @@ data class AccountProfile(
     val hasAvatar: Boolean,
 )
 
+/** Стикер: id и формат файла — png, webp (статичные) или tgs (анимированный Lottie). */
+data class StickerInfo(val id: String, val format: String, val packId: String) {
+    val animated: Boolean get() = format == "tgs"
+}
+
+data class StickerPackInfo(
+    val id: String,
+    val title: String,
+    val isOwner: Boolean,
+    val installed: Boolean,
+    /** Удалён автором: стикеров в ответе нет. */
+    val deleted: Boolean,
+    val stickers: List<StickerInfo>,
+)
+
+/**
+ * Шаг загрузки пака, о котором сообщил сервер: received, unpacking,
+ * counting, checking, saving, registering, done (с [pack]) или error (с
+ * [code]). [name] — файл в архиве, [limit] — нарушенный предел.
+ */
+data class StickerUploadEvent(
+    val stage: String,
+    val bytes: Long? = null,
+    val count: Int? = null,
+    val index: Int? = null,
+    val total: Int? = null,
+    val name: String? = null,
+    val code: String? = null,
+    val limit: Int? = null,
+    val pack: StickerPackInfo? = null,
+)
+
+/** Сервер отверг пак: [code] — ключ причины (title.invalid, pack.quota, file.webm …). */
+class StickerUploadException(val code: String, val fileName: String? = null, val limit: Int? = null) : Exception(code)
+
 /** Видимость полей профиля: 0 = никто, 1 = все, 2 = только контакты. */
 data class PrivacySettings(val findByLogin: Int, val avatar: Int, val birthday: Int, val status: Int)
 
@@ -719,6 +754,123 @@ class ApiClient(
         try {
             call(req("/media/$mediaId/received", token).post(ByteArray(0).toRequestBody()).build())
         } catch (_: Exception) {
+        }
+    }
+
+    // ---------------- стикеры ----------------
+
+    private fun parseStickerPack(o: JsonObject): StickerPackInfo {
+        val id = o.str("id")!!
+        return StickerPackInfo(
+            id = id,
+            title = o.str("title").orEmpty(),
+            isOwner = o.bool("is_owner"),
+            installed = o.bool("installed"),
+            deleted = o.bool("deleted"),
+            stickers = o.objects("stickers").map { StickerInfo(it.str("id")!!, it.str("format")!!, id) },
+        )
+    }
+
+    /** Установленные паки аккаунта, новые первыми. */
+    suspend fun getMyStickerPacks(token: String): List<StickerPackInfo> {
+        val (code, body) = callShort(req("/stickers/packs/mine", token).get().build())
+        if (code != 200) fail("error.stickersFailed", code)
+        return obj(body).objects("packs").map(::parseStickerPack)
+    }
+
+    /** null — пака нет. */
+    suspend fun getStickerPack(token: String, packId: String): StickerPackInfo? {
+        val (code, body) = callShort(req("/stickers/packs/$packId", token).get().build())
+        return when (code) {
+            200 -> parseStickerPack(obj(body))
+            404 -> null
+            else -> fail("error.stickersFailed", code)
+        }
+    }
+
+    /** Пак, которому принадлежит стикер из переписки; null — такого стикера нет. */
+    suspend fun getStickerPackBySticker(token: String, stickerId: String): StickerPackInfo? {
+        val (code, body) = callShort(req("/stickers/items/$stickerId/pack", token).get().build())
+        return when (code) {
+            200 -> parseStickerPack(obj(body))
+            404 -> null
+            else -> fail("error.stickersFailed", code)
+        }
+    }
+
+    /** Весь пак одним ZIP в [dest]; false — пак удалён автором (410). */
+    suspend fun downloadStickerPack(token: String, packId: String, dest: File): Boolean = transfer("error.downloadFailed") {
+        exec(media, req("/stickers/packs/$packId/files", token).get().build()).use {
+            when (it.code) {
+                200 -> {
+                    dest.outputStream().use { out -> it.body!!.byteStream().copyTo(out) }
+                    true
+                }
+                410 -> false
+                else -> fail("error.downloadFailed", it.code)
+            }
+        }
+    }
+
+    suspend fun installStickerPack(token: String, packId: String) {
+        if (callShort(req("/stickers/packs/$packId/install", token).post(ByteArray(0).toRequestBody()).build()).first != 200) fail("error.stickersFailed")
+    }
+
+    suspend fun uninstallStickerPack(token: String, packId: String) {
+        if (callShort(req("/stickers/packs/$packId/install", token).delete().build()).first != 200) fail("error.stickersFailed")
+    }
+
+    /** Удалить пак навсегда — только автор. */
+    suspend fun deleteStickerPack(token: String, packId: String) {
+        if (callShort(req("/stickers/packs/$packId", token).delete().build()).first != 200) fail("error.stickersFailed")
+    }
+
+    /**
+     * Загрузка пака (ZIP): [onProgress] — отправка архива в процентах,
+     * дальше [onEvent] — шаги проверки на сервере. Возвращает готовый пак;
+     * отказ сервера — [StickerUploadException]. Отмена корутины рвёт
+     * соединение — сервер тогда ничего не сохраняет.
+     */
+    suspend fun uploadStickerPack(
+        token: String,
+        title: String,
+        archive: File,
+        onProgress: (Double) -> Unit,
+        onEvent: (StickerUploadEvent) -> Unit,
+    ): StickerPackInfo = transfer("error.uploadFailed") {
+        val u = url("/stickers/packs").toHttpUrl().newBuilder().addQueryParameter("title", title).build()
+        val body = ProgressBody(archive.asRequestBody("application/zip".toMediaType()), onProgress)
+        val request = Request.Builder().url(u).header("Authorization", "Bearer $token").post(body).build()
+        exec(media, request).use { response ->
+            if (response.code != 200) {
+                val o = runCatching { obj(response.body?.string().orEmpty()) }.getOrNull()
+                val code = o?.str("code") ?: fail("error.uploadFailed", response.code)
+                throw StickerUploadException(code, limit = o.int("limit", 0).takeIf { it > 0 })
+            }
+            val source = response.body!!.source()
+            while (true) {
+                val line = source.readUtf8Line() ?: break
+                if (line.isBlank()) continue
+                val o = obj(line)
+                val event = StickerUploadEvent(
+                    stage = o.str("stage").orEmpty(),
+                    bytes = (o["bytes"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull(),
+                    count = o.int("count", -1).takeIf { it >= 0 },
+                    index = o.int("index", -1).takeIf { it >= 0 },
+                    total = o.int("total", -1).takeIf { it >= 0 },
+                    name = o.str("name"),
+                    code = o.str("code"),
+                    limit = o.int("limit", 0).takeIf { it > 0 },
+                    pack = (o["pack"] as? JsonObject)?.let(::parseStickerPack),
+                )
+                when (event.stage) {
+                    "error" -> throw StickerUploadException(event.code ?: "server.error", event.name, event.limit)
+                    "done" -> return@transfer event.pack ?: throw StickerUploadException("server.error")
+                    else -> onEvent(event)
+                }
+            }
+            // поток оборвался без "done" — пак не сохранён
+            throw StickerUploadException("server.error")
         }
     }
 }

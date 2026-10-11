@@ -25,6 +25,7 @@ import com.oshinobu.core.service.PendingSendRetrier
 import com.oshinobu.core.service.RouterHost
 import com.oshinobu.core.service.RtcEngine
 import com.oshinobu.core.service.SendQueueProcessor
+import com.oshinobu.core.service.Stickers
 import com.oshinobu.core.service.UploadCancellations
 import com.oshinobu.core.storage.AppDirs
 import com.oshinobu.core.storage.AppLockStore
@@ -107,6 +108,7 @@ class OshinobuCore(
     val peerProfiles = PeerProfiles(api, session, dirs, scope, logger)
     val avatars = Avatars(api, session, dirs, scope, logger)
     val myAccount = MyAccount(api, session, dirs, logger)
+    val stickers = Stickers(api, session, secure, dirs, logger)
     val crashes = CrashStore(dirs)
     val crashReporter = CrashReporter(logger, crashes, api, session, prefs, scope)
     val chatActions = ChatActions(api, session, chats, messenger, router, cleanup) {
@@ -176,6 +178,7 @@ class OshinobuCore(
         scope.launch { syncMutedChats(token) }
         scope.launch { syncBlockedContacts(token) }
         scope.launch { myAccount.load() }
+        scope.launch { stickers.sync() }
         scope.launch { ws.blockStatusEvents.collect { syncBlockedContacts(token) } }
         scope.launch {
             ws.profileChanges.collect { change ->
@@ -228,5 +231,6 @@ class OshinobuCore(
         session.accountId = null
         keys.clearAll()
         myAccount.reset()
+        stickers.reset()
     }
 }

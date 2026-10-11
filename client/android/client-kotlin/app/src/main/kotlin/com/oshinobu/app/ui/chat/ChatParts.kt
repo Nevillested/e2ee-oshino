@@ -145,6 +145,7 @@ fun MessageBubble(
     onOpenViewer: (StoredMessage) -> Unit,
     onOpenFile: (StoredMessage) -> Unit,
     onSaveFile: (StoredMessage) -> Unit,
+    onOpenStickerPack: (stickerId: String) -> Unit,
 ) {
     val colors = LocalAppColors.current
     if (group.size > 1) {
@@ -190,6 +191,25 @@ fun MessageBubble(
                     Text(fileSizeText(msg.fileSize), color = colors.textMuted, fontSize = 10.sp)
                     Spacer(Modifier.width(6.dp))
                 }
+                MetaRow(msg, onColoredBubble = false)
+            }
+        }
+        return
+    }
+
+    val stickerId = msg.stickerId
+    if (stickerId != null) {
+        // стикер — без пузыря; тап по нему — его пак, по строке рядом — меню
+        Column(Modifier.padding(vertical = 4.dp), horizontalAlignment = if (msg.isMine) Alignment.End else Alignment.Start) {
+            if (msg.replyToPreview != null) {
+                Box(Modifier.widthIn(max = maxText).background(colors.bubble(msg.isMine), BubbleShape).padding(start = 8.dp, end = 8.dp, top = 6.dp)) {
+                    ReplyPreview(msg, vm.findMessage(msg.replyToMessageId), peerName, onJump)
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+            StickerById(stickerId, Modifier.clickable(interactionSource = null, indication = null) { onOpenStickerPack(stickerId) })
+            Spacer(Modifier.height(4.dp))
+            Box(Modifier.background(colors.surface.copy(alpha = 0.85f), RoundedCornerShape(10.dp)).padding(horizontal = 7.dp, vertical = 2.dp)) {
                 MetaRow(msg, onColoredBubble = false)
             }
         }

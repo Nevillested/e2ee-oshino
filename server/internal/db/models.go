@@ -26,6 +26,12 @@ type Account struct {
 	AvatarImage           []byte
 }
 
+type AccountStickerPack struct {
+	AccountID pgtype.UUID
+	PackID    pgtype.UUID
+	AddedAt   pgtype.Timestamptz
+}
+
 type ChatMute struct {
 	AccountID     pgtype.UUID
 	PeerAccountID pgtype.UUID
@@ -151,4 +157,21 @@ type SignedPrekey struct {
 	Pubkey    []byte
 	Signature []byte
 	CreatedAt pgtype.Timestamptz
+}
+
+type Sticker struct {
+	ID        pgtype.UUID
+	PackID    pgtype.UUID
+	Position  int32
+	Format    string
+	FilePath  string
+	SizeBytes int32
+}
+
+type StickerPack struct {
+	ID             pgtype.UUID
+	OwnerAccountID pgtype.UUID
+	Title          string
+	CreatedAt      pgtype.Timestamptz
+	DeletedAt      pgtype.Timestamptz
 }

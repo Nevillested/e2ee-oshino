@@ -9,8 +9,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.requiredSize
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -22,7 +20,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -84,7 +84,16 @@ fun ReactionBurst(emoji: String, onDone: () -> Unit) {
         onDone()
     }
 
-    Box(Modifier.wrapContentSize(unbounded = true).requiredSize(BurstSize), contentAlignment = Alignment.Center) {
+    // места в раскладке не занимает (иначе бейдж на время анимации отъезжал от уголка
+    // сообщения): нулевой размер, рисуется квадратом BurstSize с центром в точке привязки
+    Box(
+        Modifier.layout { measurable, _ ->
+            val size = BurstSize.roundToPx()
+            val placeable = measurable.measure(Constraints.fixed(size, size))
+            layout(0, 0) { placeable.place(-size / 2, -size / 2) }
+        },
+        contentAlignment = Alignment.Center,
+    ) {
         if (asset != null) {
             Box(
                 Modifier.fillMaxSize().graphicsLayer {

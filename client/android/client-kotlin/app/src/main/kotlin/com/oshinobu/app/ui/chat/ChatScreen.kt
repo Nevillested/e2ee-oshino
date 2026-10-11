@@ -74,6 +74,8 @@ import com.oshinobu.app.ui.home.ChatTarget
 import com.oshinobu.app.ui.reactionHaptic
 import com.oshinobu.app.ui.rememberPeerDisplayName
 import com.oshinobu.app.ui.theme.LocalAppColors
+import com.oshinobu.core.net.StickerInfo
+import com.oshinobu.core.service.ForwardItem
 import com.oshinobu.core.storage.MessageStatus
 import com.oshinobu.core.storage.StoredMessage
 import kotlinx.coroutines.FlowPreview
@@ -84,7 +86,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
 /** Подписи вложений для панели передач — в языке интерфейса на момент открытия чата. */
-data class MediaLabels(val photo: String, val video: String, val file: String, val voice: String, val videoNote: String) {
+data class MediaLabels(val photo: String, val video: String, val file: String, val voice: String, val videoNote: String, val sticker: String) {
     fun of(m: StoredMessage) = m.fileName ?: when {
         m.isVoice -> voice
         m.isVideoNote -> videoNote
@@ -92,6 +94,9 @@ data class MediaLabels(val photo: String, val video: String, val file: String, v
         m.isFile -> file
         else -> photo
     }
+
+    /** Цитата в ответе: у стикера текста нет — подпись. */
+    fun quote(m: StoredMessage): String = if (m.isSticker) sticker else m.text
 }
 
 @Composable
@@ -101,6 +106,7 @@ fun rememberMediaLabels(): MediaLabels {
         MediaLabels(
             context.getString(R.string.media_photo), context.getString(R.string.media_video), context.getString(R.string.media_file),
             context.getString(R.string.media_voiceNote), context.getString(R.string.media_videoNote),
+            context.getString(R.string.sticker_preview),
         )
     }
 }
@@ -129,6 +135,7 @@ private fun List<StoredMessage>.key(): String = first().groupId ?: first().messa
 
 /** Краткое описание сообщения для баннеров (ответ, закреп). */
 fun previewOf(context: Context, m: StoredMessage): String = when {
+    m.isSticker -> context.getString(R.string.sticker_preview)
     m.isVoice -> "🎤 ${context.getString(R.string.media_voiceNote)}"
     m.isVideoNote -> "🎥 ${context.getString(R.string.media_videoNote)}"
     m.isMedia && m.isFile -> "📎 ${context.getString(R.string.media_file)}"
@@ -150,11 +157,11 @@ private fun Context.copyToClipboard(text: String) {
 @Composable
 fun ChatScreen(
     target: ChatTarget,
-    forwardedTexts: List<String>,
+    forwarded: List<ForwardItem>,
     onBack: () -> Unit,
     onOpenTransfers: () -> Unit,
     onOpenProfile: (accountId: String, login: String) -> Unit,
-    onForward: (List<String>) -> Unit,
+    onForward: (List<ForwardItem>) -> Unit,
     onOpenMedia: (peerLogin: String, messageId: String) -> Unit,
     onStartCall: (ChatTarget) -> Unit,
     onOpenCall: () -> Unit,
@@ -167,7 +174,7 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     val labels = rememberMediaLabels()
     val vm: ChatViewModel = viewModel(key = "chat:${target.login}") {
-        ChatViewModel(app.core, app.routerHost, target.login, target.accountId, target.deviceId, forwardedTexts, labels)
+        ChatViewModel(app.core, app.routerHost, target.login, target.accountId, target.deviceId, forwarded, labels)
     }
     val thumbnailer = remember { AndroidVideoThumbnailer(app.core.dirs.support) }
     val playback = remember { PlaybackCoordinator(scope) }
@@ -184,6 +191,9 @@ fun ChatScreen(
     var searchAsList by remember { mutableStateOf(false) }
     var searchIndex by remember { mutableIntStateOf(0) }
     var revealedSpoilers by remember { mutableStateOf(setOf<String>()) }
+    var stickerPreview by remember { mutableStateOf<StickerInfo?>(null) }
+    var stickerPackFor by remember { mutableStateOf<String?>(null) }
+    var stickerUpload by remember { mutableStateOf(false) }
     var flashId by remember { mutableStateOf<String?>(null) }
     var flashToken by remember { mutableIntStateOf(0) }
     var swipeReplyId by remember { mutableStateOf<String?>(null) }
@@ -293,7 +303,7 @@ fun ChatScreen(
             }
             MessageAction.PIN -> vm.setPinned(msg, true)
             MessageAction.UNPIN -> vm.setPinned(msg, false)
-            MessageAction.FORWARD -> onForward(listOf(msg.text))
+            MessageAction.FORWARD -> onForward(listOf(msg.toForwardItem()))
             MessageAction.EDIT -> {
                 vm.startEdit(msg)
                 inputFocus.requestFocus()
@@ -401,6 +411,7 @@ fun ChatScreen(
                                     onOpenViewer = { m -> onOpenMedia(target.login, m.messageId) },
                                     onOpenFile = { openFile(it) },
                                     onSaveFile = saveFile,
+                                    onOpenStickerPack = { stickerPackFor = it },
                                 )
                             }
                         }
@@ -432,7 +443,7 @@ fun ChatScreen(
                                 vm.notifyCopied()
                             }
                         },
-                        onForward = { vm.selectedTexts().takeIf { it.isNotEmpty() }?.let(onForward) },
+                        onForward = { vm.selectedForwardItems().takeIf { it.isNotEmpty() }?.let(onForward) },
                         onDelete = { deleteIds = vm.selected.toList() },
                     )
                     2 -> SearchHeader(vm.searchQuery.orEmpty(), onQuery = { vm.setSearch(it); searchIndex = 0 }, onClose = vm::closeSearch)
@@ -493,7 +504,18 @@ fun ChatScreen(
                     onSendFiles = { files -> vm.sendFiles(files.toOutgoing(asFiles = true), thumbnailer) },
                 )
             }
-            EmojiKeyboardArea(emojiKeyboard, onEmoji = vm::insertEmoji)
+            EmojiKeyboardArea(
+                emojiKeyboard,
+                onEmoji = vm::insertEmoji,
+                stickers = if (composerBlocked || vm.searchQuery != null) null else { bottomPadding ->
+                    StickerPanel(
+                        bottomPadding = bottomPadding,
+                        onSend = vm::sendSticker,
+                        onPreview = { stickerPreview = it },
+                        onAddPack = { stickerUpload = true },
+                    )
+                },
+            )
         }
 
         // ---------------- запись ----------------
@@ -505,13 +527,16 @@ fun ChatScreen(
             )
         }
 
+        // долгое нажатие на стикер в панели — он крупно поверх чата
+        StickerPreviewOverlay(stickerPreview)
+
         // ---------------- меню и диалоги ----------------
         menu?.let { t ->
             MessageContextMenu(
                 target = t,
                 isPinned = vm.pinnedId == t.msg.messageId,
-                showCopy = !t.msg.isMedia && !t.msg.isCallLog,
-                showEdit = t.msg.isMine && !t.msg.isMedia && !t.msg.isCallLog && t.msg.groupId == null,
+                showCopy = !t.msg.isMedia && !t.msg.isCallLog && !t.msg.isSticker,
+                showEdit = t.msg.isMine && !t.msg.isMedia && !t.msg.isCallLog && !t.msg.isSticker && t.msg.groupId == null,
                 sortedReactions = vm::sortedReactions,
                 onReaction = { emoji ->
                     menu = null
@@ -546,6 +571,10 @@ fun ChatScreen(
             },
         )
     }
+    stickerPackFor?.let { id ->
+        StickerPackSheet(id, onSend = if (composerBlocked) null else vm::sendSticker, onDismiss = { stickerPackFor = null })
+    }
+    if (stickerUpload) StickerUploadDialog(onClose = { stickerUpload = false })
     if (confirmReset) {
         ResetSessionDialog(onDismiss = { confirmReset = false }, onConfirm = {
             confirmReset = false

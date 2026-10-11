@@ -248,7 +248,8 @@ private fun ClearCacheDialog(onClose: () -> Unit) {
     val context = LocalContext.current
     val core = context.app.core
     val colors = LocalAppColors.current
-    val size = remember { core.media.cacheSize() }
+    // кэш — вложения и стикеры (стикеры потом скачаются заново)
+    val size = remember { core.media.cacheSize() + core.stickers.cacheSize() }
     val emptyText = stringResource(R.string.settings_cacheEmpty)
     LaunchedEffect(size) {
         if (size == 0L) {
@@ -263,7 +264,7 @@ private fun ClearCacheDialog(onClose: () -> Unit) {
         onClose,
         confirm = {
             DialogButton(stringResource(R.string.settings_clearCache)) {
-                val count = core.media.clearCache()
+                val count = core.media.clearCache() + core.stickers.clearCache()
                 core.logger.log("Settings media cache cleared count=$count freedBytes=$size")
                 Toast.makeText(context, cleared, Toast.LENGTH_SHORT).show()
                 onClose()

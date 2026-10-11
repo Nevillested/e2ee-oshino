@@ -404,6 +404,17 @@ class MessageRouter(
                 ),
                 owner.accountId, unread,
             )
+            MessageType.STICKER -> {
+                val stickerId = inner.bodyJson().optString("sticker_id") ?: return
+                chats.addMessage(
+                    login,
+                    StoredMessage(
+                        inner.messageId, "", false, inner.sentAt, stickerId = stickerId,
+                        replyToMessageId = inner.replyToMessageId, replyToPreview = inner.replyToPreview,
+                    ),
+                    owner.accountId, unread,
+                )
+            }
             MessageType.MEDIA -> chats.addMessage(
                 login,
                 mediaMessage(inner.messageId, inner.bodyJson(), inner.sentAt, inner.groupId)

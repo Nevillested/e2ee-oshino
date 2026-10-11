@@ -58,12 +58,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.oshinobu.app.R
 import com.oshinobu.app.app
-import com.oshinobu.app.ui.emoji.EmojiPicker
 import com.oshinobu.app.ui.theme.LocalAppColors
 import kotlinx.coroutines.launch
 
@@ -192,11 +190,4 @@ fun Composer(
             }
         }
     }
-}
-
-/** Панель эмодзи на месте клавиатуры (той же высоты). */
-@Composable
-fun EmojiPanel(height: Dp, onEmoji: (String) -> Unit) {
-    val colors = LocalAppColors.current
-    Box(Modifier.fillMaxWidth().height(height).background(colors.surface)) { EmojiPicker(onEmoji) }
 }

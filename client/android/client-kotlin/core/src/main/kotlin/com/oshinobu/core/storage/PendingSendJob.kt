@@ -64,6 +64,29 @@ sealed class PendingSendJob {
         }
     }
 
+    /** Стикер: в конверте только его id, загружать нечего. */
+    data class Sticker(
+        override val id: String,
+        override val state: String,
+        override val peerLogin: String,
+        override val peerDeviceId: String,
+        val stickerId: String,
+        val sentAt: Long,
+        val replyToId: String? = null,
+        val replyToPreview: String? = null,
+    ) : PendingSendJob() {
+        override val legacyNotes get() = false
+        override val messageIds get() = listOf(id)
+        override fun withState(state: String) = copy(state = state)
+        override fun toJson() = buildJsonObject {
+            common("sticker")
+            put("sticker_id", stickerId)
+            put("sent_at", sentAt)
+            replyToId?.let { put("reply_to_id", it) }
+            replyToPreview?.let { put("reply_to_preview", it) }
+        }
+    }
+
     /** Голосовое ([videoNote] = false) или видео-кружок. Файл — своя копия, удаляется после отправки. */
     data class Recorded(
         override val id: String,
@@ -191,6 +214,10 @@ sealed class PendingSendJob {
             return when (j.optString("kind")) {
                 "text" -> Text(
                     id, state, peerLogin, peerDeviceId, j.string("text"), j.optLong("sent_at") ?: 0,
+                    j.optString("reply_to_id"), j.optString("reply_to_preview"),
+                )
+                "sticker" -> Sticker(
+                    id, state, peerLogin, peerDeviceId, j.string("sticker_id"), j.optLong("sent_at") ?: 0,
                     j.optString("reply_to_id"), j.optString("reply_to_preview"),
                 )
                 "voice", "video_note" -> Recorded(

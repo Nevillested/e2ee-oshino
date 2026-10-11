@@ -24,6 +24,7 @@ object MessageType {
     const val MEDIA = "media"
     const val VOICE = "voice"
     const val VIDEO_NOTE = "video_note"
+    const val STICKER = "sticker"
     const val MEDIA_GROUP = "media_group"
     const val CALL_MISSED = "call_missed"
     const val REACTION = "reaction"
@@ -122,6 +123,13 @@ data class InnerMessage(
             ),
             replyToMessageId = replyToMessageId, replyToPreview = replyToPreview,
         )
+
+        /** Стикер — только его id; файл получатель берёт из пака на сервере. */
+        fun sticker(stickerId: String, messageId: String? = null, replyToMessageId: String? = null, replyToPreview: String? = null) =
+            InnerMessage(
+                messageId ?: newId(), MessageType.STICKER, now(), json("sticker_id" to stickerId),
+                replyToMessageId = replyToMessageId, replyToPreview = replyToPreview,
+            )
 
         private fun recorded(type: String, ref: MediaRef, durationMs: Long, messageId: String?, replyTo: String?, replyPreview: String?) =
             InnerMessage(

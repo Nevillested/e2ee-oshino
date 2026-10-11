@@ -42,6 +42,8 @@ data class StoredMessage(
     val isVoice: Boolean = false,
     val isVideoNote: Boolean = false,
     val durationMs: Long? = null,
+    /** Стикер: id на сервере, текст пустой. */
+    val stickerId: String? = null,
     val status: String = MessageStatus.SENT,
     val processingStep: String? = null,
     val localPreviewPath: String? = null,
@@ -62,6 +64,8 @@ data class StoredMessage(
     /** Только для чужих: квитанция о прочтении уже отправлена. */
     val readReceiptSent: Boolean = false,
 ) {
+    val isSticker: Boolean get() = stickerId != null
+
     fun toJson(): JsonObject = buildJsonObject {
         put("id", messageId)
         put("text", text)
@@ -81,6 +85,7 @@ data class StoredMessage(
         put("is_voice", isVoice)
         put("is_video_note", isVideoNote)
         put("duration_ms", durationMs)
+        stickerId?.let { put("sticker_id", it) }
         put("status", status)
         put("step", processingStep)
         put("local_preview", localPreviewPath)
@@ -123,6 +128,7 @@ data class StoredMessage(
                 isVoice = b("is_voice"),
                 isVideoNote = b("is_video_note"),
                 durationMs = l("duration_ms"),
+                stickerId = s("sticker_id"),
                 status = s("status") ?: MessageStatus.SENT,
                 processingStep = s("step"),
                 localPreviewPath = s("local_preview"),

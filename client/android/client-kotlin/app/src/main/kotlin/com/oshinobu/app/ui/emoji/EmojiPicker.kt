@@ -16,8 +16,8 @@ import androidx.compose.ui.unit.dp
 
 /** Панель эмодзи вместо клавиатуры: все эмодзи сеткой по 10 в ряд. */
 @Composable
-fun EmojiPicker(onEmoji: (String) -> Unit, modifier: Modifier = Modifier) {
-    LazyVerticalGrid(GridCells.Fixed(10), modifier, contentPadding = PaddingValues(8.dp)) {
+fun EmojiPicker(onEmoji: (String) -> Unit, modifier: Modifier = Modifier, contentPadding: PaddingValues = PaddingValues(8.dp)) {
+    LazyVerticalGrid(GridCells.Fixed(10), modifier, contentPadding = contentPadding) {
         items(allEmojis) { emoji ->
             BoxWithConstraints(Modifier.aspectRatio(1f).clickable { onEmoji(emoji) }) {
                 val fontSize = with(LocalDensity.current) { (maxWidth * 0.55f).toSp() }

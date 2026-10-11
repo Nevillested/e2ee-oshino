@@ -1,6 +1,8 @@
 package com.oshinobu.core.service
 
 import com.oshinobu.core.protocol.InnerMessage
+import com.oshinobu.core.protocol.MessageType
+import com.oshinobu.core.string
 import com.oshinobu.core.storage.ChatStore
 import com.oshinobu.core.storage.MessageStatus
 import com.oshinobu.core.storage.PendingSendJob
@@ -11,6 +13,12 @@ import kotlinx.coroutines.CancellationException
 import java.io.File
 import java.util.Collections
 import java.util.UUID
+
+/** Что пересылается: текст или стикер (по id). */
+sealed interface ForwardItem {
+    data class Text(val text: String) : ForwardItem
+    data class Sticker(val stickerId: String) : ForwardItem
+}
 
 /** Собеседник открытого чата. [deviceId] обновляется, если он переустановил приложение. */
 data class ChatPeer(val login: String, val accountId: String, val deviceId: String)
@@ -47,8 +55,9 @@ class ChatService(
     private val receiptsInFlight: MutableSet<String> = Collections.synchronizedSet(HashSet())
 
     /** Новый текст: пузырь сразу ('sending'), отправка — следом. */
-    suspend fun sendText(peer: ChatPeer, text: String, replyTo: StoredMessage? = null) {
-        val inner = InnerMessage.text(text, replyTo?.messageId, replyTo?.text)
+    /** [replyPreview] — цитата в ответе (у стикера и вложений текста нет — подпись вроде "Стикер"). */
+    suspend fun sendText(peer: ChatPeer, text: String, replyTo: StoredMessage? = null, replyPreview: String? = replyTo?.text) {
+        val inner = InnerMessage.text(text, replyTo?.messageId, replyTo?.let { replyPreview })
         chats.addMessage(
             peer.login,
             StoredMessage(
@@ -57,35 +66,64 @@ class ChatService(
             ),
             accountId = peer.accountId,
         )
-        sendTextNetwork(peer, inner)
+        sendNetwork(peer, inner)
     }
 
-    /** Пересылка: несколько текстов разом — все пузыри появляются одним движением. */
-    suspend fun sendTexts(peer: ChatPeer, texts: List<String>) {
-        val inners = texts.map { InnerMessage.text(it) }
-        inners.forEach {
-            chats.addMessage(peer.login, StoredMessage(it.messageId, it.body, true, it.sentAt, status = MessageStatus.SENDING), accountId = peer.accountId)
+    /** Стикер: пузырь сразу ('sending'), в конверте — только id стикера. */
+    suspend fun sendSticker(peer: ChatPeer, stickerId: String, replyTo: StoredMessage? = null, replyPreview: String? = null) {
+        val inner = InnerMessage.sticker(stickerId, replyToMessageId = replyTo?.messageId, replyToPreview = replyTo?.let { replyPreview })
+        addSticker(peer, inner, stickerId)
+        sendNetwork(peer, inner)
+    }
+
+    private suspend fun addSticker(peer: ChatPeer, inner: InnerMessage, stickerId: String) {
+        chats.addMessage(
+            peer.login,
+            StoredMessage(
+                inner.messageId, "", true, inner.sentAt, stickerId = stickerId, status = MessageStatus.SENDING,
+                replyToMessageId = inner.replyToMessageId, replyToPreview = inner.replyToPreview,
+            ),
+            accountId = peer.accountId,
+        )
+    }
+
+    /** Пересылка: несколько сообщений разом — все пузыри появляются одним движением. */
+    suspend fun sendForwarded(peer: ChatPeer, items: List<ForwardItem>) {
+        val inners = items.map { item ->
+            when (item) {
+                is ForwardItem.Text -> InnerMessage.text(item.text).also {
+                    chats.addMessage(peer.login, StoredMessage(it.messageId, it.body, true, it.sentAt, status = MessageStatus.SENDING), accountId = peer.accountId)
+                }
+                is ForwardItem.Sticker -> InnerMessage.sticker(item.stickerId).also { addSticker(peer, it, item.stickerId) }
+            }
         }
-        inners.forEach { sendTextNetwork(peer, it) }
+        inners.forEach { sendNetwork(peer, it) }
     }
 
     /**
      * Сбой ДО готового конверта (нет сети для бандла и т.п.) — сообщение
      * 'failed' и задание в очередь отправок: «Повторить отправку» в меню.
      */
-    private suspend fun sendTextNetwork(peer: ChatPeer, inner: InnerMessage) {
+    private suspend fun sendNetwork(peer: ChatPeer, inner: InnerMessage) {
         try {
             messenger.send(peer.deviceId, inner, peerLogin = peer.login)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log.error("ChatService send FAILED (text ${inner.messageId}) to=${peer.deviceId}: $e")
+            log.error("ChatService send FAILED (${inner.type} ${inner.messageId}) to=${peer.deviceId}: $e")
             chats.updateMessageStatus(peer.login, inner.messageId, MessageStatus.FAILED)
             pendingStore.put(
-                PendingSendJob.Text(
-                    inner.messageId, PendingSendJob.FAILED, peer.login, peer.deviceId, inner.body, inner.sentAt,
-                    inner.replyToMessageId, inner.replyToPreview,
-                ),
+                if (inner.type == MessageType.STICKER) {
+                    PendingSendJob.Sticker(
+                        inner.messageId, PendingSendJob.FAILED, peer.login, peer.deviceId, inner.bodyJson().string("sticker_id"),
+                        inner.sentAt, inner.replyToMessageId, inner.replyToPreview,
+                    )
+                } else {
+                    PendingSendJob.Text(
+                        inner.messageId, PendingSendJob.FAILED, peer.login, peer.deviceId, inner.body, inner.sentAt,
+                        inner.replyToMessageId, inner.replyToPreview,
+                    )
+                },
             )
         }
     }

@@ -40,6 +40,7 @@ fun errorStringRes(key: String): Int? = when (key) {
     "error.registerFailed" -> R.string.error_registerFailed
     "error.reportFailed" -> R.string.error_reportFailed
     "error.statusSaveFailed" -> R.string.error_statusSaveFailed
+    "error.stickersFailed" -> R.string.error_stickersFailed
     "error.tooManyLoginAttempts" -> R.string.error_tooManyLoginAttempts
     "error.uploadFailed" -> R.string.error_uploadFailed
     "error.userLookupFailed" -> R.string.error_userLookupFailed
@@ -86,6 +87,7 @@ fun Context.translate(key: String): String {
         "media.photo" -> R.string.media_photo
         "media.video" -> R.string.media_video
         "media.file" -> R.string.media_file
+        "sticker.preview" -> R.string.sticker_preview
         "chat.undecryptablePreview" -> R.string.chat_undecryptablePreview
         "chat.queued" -> R.string.chat_queued
         "chat.encrypting" -> R.string.chat_encrypting

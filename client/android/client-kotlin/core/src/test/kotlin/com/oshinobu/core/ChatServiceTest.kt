@@ -1,6 +1,9 @@
 package com.oshinobu.core
 
+import com.oshinobu.core.service.ForwardItem
+import com.oshinobu.core.storage.ChatStore
 import com.oshinobu.core.storage.MessageStatus
+import com.oshinobu.core.storage.PendingSendJob
 import kotlinx.coroutines.runBlocking
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -48,6 +51,34 @@ class ChatServiceTest {
         assertEquals(null, alice.chats.getKnownPeers().single().pinnedMessageId)
         net.eventually("удалено у Боба") { bob.chats.getMessages("alice").none { it.messageId == first.messageId } }
         net.eventually("закреп снят у Боба") { bob.chats.getKnownPeers().single().pinnedMessageId == null }
+    }
+
+    @Test
+    fun `стикер — только id, ответ на него с подписью, пересылка`() = runBlocking {
+        val alice = net.device("alice")
+        val bob = net.device("bob")
+        val toBob = alice.peerOf(bob)
+
+        alice.chatService.sendSticker(toBob, "st-1")
+        net.eventually("стикер у Боба") { bob.chats.getMessages("alice").size == 1 }
+        val sticker = bob.chats.getMessages("alice").single()
+        assertEquals("st-1", sticker.stickerId)
+        assertEquals("", sticker.text)
+        assertEquals("Стикер", ChatStore.decodePreview(bob.chats.getKnownPeers().single().lastMessage) { if (it == "sticker.preview") "Стикер" else it })
+
+        bob.chatService.sendText(bob.peerOf(alice), "класс", replyTo = sticker, replyPreview = "Стикер")
+        net.eventually("ответ у Алисы") { alice.chats.getMessages("bob").any { it.replyToMessageId == sticker.messageId } }
+        assertEquals("Стикер", alice.chats.getMessages("bob").first { it.replyToMessageId != null }.replyToPreview)
+
+        alice.chatService.sendForwarded(toBob, listOf(ForwardItem.Sticker("st-2"), ForwardItem.Text("и текст")))
+        net.eventually("пересланное у Боба") { bob.chats.getMessages("alice").count { !it.isMine } == 3 }
+        assertEquals(listOf("st-1", "st-2", null), bob.chats.getMessages("alice").filter { !it.isMine }.map { it.stickerId })
+    }
+
+    @Test
+    fun `задание повтора стикера переживает JSON`() {
+        val job = PendingSendJob.Sticker("m1", PendingSendJob.FAILED, "bob", "dev", "st-9", 42, "r1", "Стикер")
+        assertEquals(job, PendingSendJob.fromJson(job.toJson()))
     }
 
     @Test

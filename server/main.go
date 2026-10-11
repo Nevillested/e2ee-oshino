@@ -161,6 +161,17 @@ func main() {
 	mux.HandleFunc("GET /contacts/blocked", api.NewGetBlockedContactsHandler(queries))
 	mux.HandleFunc("POST /reports", api.NewReportHandler(queries))
 	mux.HandleFunc("POST /feedback", api.NewFeedbackHandler(queries))
+	// стикерпаки (файлы — STICKERS_DIR на диске Москвы, по умолчанию /e2ee/stickers)
+	stickerStore := api.NewStickerStore()
+	mux.HandleFunc("POST /stickers/packs", api.NewUploadStickerPackHandler(queries, pg_connect, stickerStore))
+	mux.HandleFunc("GET /stickers/packs/mine", api.NewMyStickerPacksHandler(queries))
+	mux.HandleFunc("GET /stickers/packs/{pack_id}", api.NewGetStickerPackHandler(queries))
+	mux.HandleFunc("GET /stickers/packs/{pack_id}/files", api.NewStickerPackFilesHandler(queries, stickerStore))
+	mux.HandleFunc("POST /stickers/packs/{pack_id}/install", api.NewInstallStickerPackHandler(queries, true))
+	mux.HandleFunc("DELETE /stickers/packs/{pack_id}/install", api.NewInstallStickerPackHandler(queries, false))
+	mux.HandleFunc("DELETE /stickers/packs/{pack_id}", api.NewDeleteStickerPackHandler(queries, pg_connect, stickerStore))
+	mux.HandleFunc("GET /stickers/items/{sticker_id}", api.NewGetStickerHandler(queries, stickerStore))
+	mux.HandleFunc("GET /stickers/items/{sticker_id}/pack", api.NewGetStickerPackBySticker(queries))
 
 	//сохраняем в переменную и запускаем HTTP-сервер на порту 8080. ListenAndServe - блокирующая функция, которая будет работать до тех пор, пока сервер не будет остановлен или не произойдет ошибка
 	//внутри запускается бесконечный цикл, который как раз через mux проверяет, какие запросы пришли и вызывает в горутине (параллельно) соответствующие функции-обработчики, а сам цикл продолжает работать и ждать новых запросов

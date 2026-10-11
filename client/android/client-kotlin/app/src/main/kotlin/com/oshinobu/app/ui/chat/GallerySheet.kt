@@ -569,10 +569,10 @@ fun CaptionBar(text: TextFieldValue, onTextChange: (TextFieldValue) -> Unit, sen
             }
         }
         // эмодзи — в позицию курсора (как в поле сообщения), а не в конец
-        EmojiKeyboardArea(emojiKeyboard) { emoji ->
+        EmojiKeyboardArea(emojiKeyboard, onEmoji = { emoji ->
             val start = minOf(text.selection.start, text.selection.end)
             val end = maxOf(text.selection.start, text.selection.end)
             onTextChange(TextFieldValue(text.text.replaceRange(start, end, emoji), TextRange(start + emoji.length)))
-        }
+        })
     }
 }

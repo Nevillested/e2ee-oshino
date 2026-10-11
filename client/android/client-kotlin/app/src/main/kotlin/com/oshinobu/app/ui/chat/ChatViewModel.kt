@@ -13,12 +13,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.oshinobu.app.AndroidRouterHost
 import com.oshinobu.core.OshinobuCore
+import com.oshinobu.core.net.StickerInfo
 import com.oshinobu.core.net.ConnectionStatus
 import com.oshinobu.core.optBool
 import com.oshinobu.core.optLong
 import com.oshinobu.core.optString
 import com.oshinobu.core.service.ChatPeer
 import com.oshinobu.core.service.DownloadSpec
+import com.oshinobu.core.service.ForwardItem
 import com.oshinobu.core.service.OutgoingFile
 import com.oshinobu.core.service.RetryOutcome
 import com.oshinobu.core.service.VideoThumbnailer
@@ -33,6 +35,9 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import java.io.File
+
+/** Сообщение как пересылаемое: стикер — по id, остальное — текстом. */
+fun StoredMessage.toForwardItem(): ForwardItem = stickerId?.let(ForwardItem::Sticker) ?: ForwardItem.Text(text)
 
 /** Длительность анимации "рассыпания" удаляемого сообщения. */
 const val DISSOLVE_MS = 700L
@@ -57,9 +62,9 @@ class ChatViewModel(
     login: String,
     accountId: String,
     deviceId: String,
-    forwardedTexts: List<String>,
-    /** Подписи вложений для панели передач. */
-    labels: MediaLabels,
+    forwarded: List<ForwardItem>,
+    /** Подписи вложений для панели передач и цитат. */
+    private val labels: MediaLabels,
 ) : ViewModel() {
     private val media = MediaResolver(core, login, labels)
 
@@ -96,7 +101,7 @@ class ChatViewModel(
         private set
     var editing by mutableStateOf<StoredMessage?>(null)
         private set
-    var forwarding by mutableStateOf(forwardedTexts.takeIf { it.isNotEmpty() })
+    var forwarding by mutableStateOf(forwarded.takeIf { it.isNotEmpty() })
         private set
 
     // выделение и поиск
@@ -316,14 +321,24 @@ class ChatViewModel(
             !forward.isNullOrEmpty() -> {
                 input.clearText()
                 forwarding = null
-                viewModelScope.launch { core.chatService.sendTexts(peer, forward + listOfNotNull(text.takeIf { it.isNotEmpty() })) }
+                viewModelScope.launch { core.chatService.sendForwarded(peer, forward + listOfNotNull(text.takeIf { it.isNotEmpty() }?.let(ForwardItem::Text))) }
             }
             text.isNotEmpty() -> {
                 input.clearText()
                 val reply = replyTo
                 replyTo = null
-                viewModelScope.launch { core.chatService.sendText(peer, text, reply) }
+                viewModelScope.launch { core.chatService.sendText(peer, text, reply, reply?.let(labels::quote)) }
             }
+        }
+    }
+
+    /** Стикер из панели — сразу отдельным сообщением (с ответом, если он начат). */
+    fun sendSticker(sticker: StickerInfo) {
+        val reply = replyTo
+        replyTo = null
+        viewModelScope.launch {
+            core.stickers.recordRecent(sticker)
+            core.chatService.sendSticker(peer, sticker.id, reply, reply?.let(labels::quote))
         }
     }
 
@@ -386,7 +401,8 @@ class ChatViewModel(
         viewModelScope.launch {
             val error = runCatching {
                 val token = core.session.token ?: error("no session")
-                core.api.reportMessage(token, peer.deviceId, msg.text, comment)
+                // у стикера текста нет — в жалобу уходит его id (по нему сервер найдёт пак)
+                core.api.reportMessage(token, peer.deviceId, msg.stickerId?.let { "sticker:$it" } ?: msg.text, comment)
             }.exceptionOrNull()
             onDone(error)
         }
@@ -449,8 +465,12 @@ class ChatViewModel(
 
     fun clearSelection() = selected.clear()
 
-    /** Тексты выделенных сообщений (без медиа и звонков) — для копирования и пересылки. */
-    fun selectedTexts(): List<String> = messages.filter { it.messageId in selected && !it.isMedia && !it.isCallLog && !it.isUndecryptable }.map { it.text }
+    /** Тексты выделенных сообщений (без медиа, стикеров и звонков) — для копирования. */
+    fun selectedTexts(): List<String> = messages.filter { it.messageId in selected && !it.isMedia && !it.isSticker && !it.isCallLog && !it.isUndecryptable }.map { it.text }
+
+    /** Выделенное для пересылки: тексты и стикеры. */
+    fun selectedForwardItems(): List<ForwardItem> =
+        messages.filter { it.messageId in selected && !it.isMedia && !it.isCallLog && !it.isUndecryptable }.map { it.toForwardItem() }
 
     // ---------------- поиск ----------------
 

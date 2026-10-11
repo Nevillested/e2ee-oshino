@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.SoftwareKeyboardController
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.oshinobu.app.app
 import kotlinx.coroutines.FlowPreview
@@ -140,7 +141,12 @@ fun rememberEmojiKeyboardState(): EmojiKeyboardState {
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun EmojiKeyboardArea(state: EmojiKeyboardState, onEmoji: (String) -> Unit) {
+fun EmojiKeyboardArea(
+    state: EmojiKeyboardState,
+    onEmoji: (String) -> Unit,
+    /** Вкладка стикеров рядом с эмодзи (только в переписке). */
+    stickers: (@Composable (bottomPadding: Dp) -> Unit)? = null,
+) {
     val density = LocalDensity.current
     val ime = WindowInsets.ime
     val nav = WindowInsets.navigationBars
@@ -158,7 +164,7 @@ fun EmojiKeyboardArea(state: EmojiKeyboardState, onEmoji: (String) -> Unit) {
         if (emojiShown) {
             // построена заранее, но видна только в режиме эмодзи
             Box(Modifier.graphicsLayer { alpha = if (state.reserve.value > 0f) 1f else 0f }) {
-                EmojiPanel(height = with(density) { state.keyboardHeightPx.toDp() }, onEmoji = onEmoji)
+                EmojiPanel(height = with(density) { state.keyboardHeightPx.toDp() }, onEmoji = onEmoji, stickers = stickers)
             }
         }
     }

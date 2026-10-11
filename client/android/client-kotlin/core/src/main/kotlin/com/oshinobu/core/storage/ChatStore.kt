@@ -43,6 +43,7 @@ class ChatStore(private val secure: SecureStore, private val now: () -> Long = S
             if (m.isUndecryptable) return "${PREVIEW_MARK}undecryptable"
             if (m.isVoice) return "${PREVIEW_MARK}voice"
             if (m.isVideoNote) return "${PREVIEW_MARK}videoNote"
+            if (m.isSticker) return "${PREVIEW_MARK}sticker"
             if (m.isMedia) {
                 val caption = m.text.trim()
                 // старые превью, "замороженные" переведённой строкой с эмодзи
@@ -65,6 +66,7 @@ class ChatStore(private val secure: SecureStore, private val now: () -> Long = S
                 "voice" -> "🎤 ${tr("media.voiceNote")}"
                 "videoNote" -> "🎥 ${tr("media.videoNote")}"
                 "photo" -> "📷 ${tr("media.photo")}"
+                "sticker" -> tr("sticker.preview")
                 "video" -> "🎬 ${tr("media.video")}"
                 "file" -> arg.ifEmpty { "📎 ${tr("media.file")}" }
                 "undecryptable" -> "🔒 ${tr("chat.undecryptablePreview")}"
