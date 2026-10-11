@@ -204,7 +204,6 @@
     <string name="home_deletedAccount">Deleted account</string>
     <string name="home_notes">Notes</string>
     <string name="language_english">English</string>
-    <string name="language_restartNotice">Restart the app for the language change to take full effect</string>
     <string name="language_russian">Russian</string>
     <string name="language_title">Language</string>
     <string name="login_invalid">Login: 3-32 characters, Latin letters and digits only</string>

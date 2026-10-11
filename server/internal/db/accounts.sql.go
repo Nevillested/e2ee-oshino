@@ -14,7 +14,7 @@ import (
 const createAccount = `-- name: CreateAccount :one
 INSERT INTO accounts (login, password_hash, totp_secret)
 VALUES ($1, $2, $3)
-RETURNING id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility, display_name
+RETURNING id, login, password_hash, totp_secret, created_at, language, email, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility, display_name, avatar_image
 `
 
 type CreateAccountParams struct {
@@ -34,7 +34,6 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (A
 		&i.CreatedAt,
 		&i.Language,
 		&i.Email,
-		&i.AvatarObjectKey,
 		&i.StatusText,
 		&i.Birthday,
 		&i.FindByLoginVisibility,
@@ -42,6 +41,7 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (A
 		&i.BirthdayVisibility,
 		&i.StatusVisibility,
 		&i.DisplayName,
+		&i.AvatarImage,
 	)
 	return i, err
 }
@@ -55,19 +55,19 @@ func (q *Queries) DeleteAccount(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
-const getAccountAvatarKey = `-- name: GetAccountAvatarKey :one
-SELECT avatar_object_key FROM accounts WHERE id = $1
+const getAccountAvatarImage = `-- name: GetAccountAvatarImage :one
+SELECT avatar_image FROM accounts WHERE id = $1
 `
 
-func (q *Queries) GetAccountAvatarKey(ctx context.Context, id pgtype.UUID) (pgtype.Text, error) {
-	row := q.db.QueryRow(ctx, getAccountAvatarKey, id)
-	var avatar_object_key pgtype.Text
-	err := row.Scan(&avatar_object_key)
-	return avatar_object_key, err
+func (q *Queries) GetAccountAvatarImage(ctx context.Context, id pgtype.UUID) ([]byte, error) {
+	row := q.db.QueryRow(ctx, getAccountAvatarImage, id)
+	var avatar_image []byte
+	err := row.Scan(&avatar_image)
+	return avatar_image, err
 }
 
 const getAccountByEmail = `-- name: GetAccountByEmail :one
-SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility, display_name FROM accounts WHERE email = $1
+SELECT id, login, password_hash, totp_secret, created_at, language, email, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility, display_name, avatar_image FROM accounts WHERE email = $1
 `
 
 func (q *Queries) GetAccountByEmail(ctx context.Context, email pgtype.Text) (Account, error) {
@@ -81,7 +81,6 @@ func (q *Queries) GetAccountByEmail(ctx context.Context, email pgtype.Text) (Acc
 		&i.CreatedAt,
 		&i.Language,
 		&i.Email,
-		&i.AvatarObjectKey,
 		&i.StatusText,
 		&i.Birthday,
 		&i.FindByLoginVisibility,
@@ -89,12 +88,13 @@ func (q *Queries) GetAccountByEmail(ctx context.Context, email pgtype.Text) (Acc
 		&i.BirthdayVisibility,
 		&i.StatusVisibility,
 		&i.DisplayName,
+		&i.AvatarImage,
 	)
 	return i, err
 }
 
 const getAccountByID = `-- name: GetAccountByID :one
-SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility, display_name FROM accounts WHERE id = $1
+SELECT id, login, password_hash, totp_secret, created_at, language, email, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility, display_name, avatar_image FROM accounts WHERE id = $1
 `
 
 func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (Account, error) {
@@ -108,7 +108,6 @@ func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (Account, 
 		&i.CreatedAt,
 		&i.Language,
 		&i.Email,
-		&i.AvatarObjectKey,
 		&i.StatusText,
 		&i.Birthday,
 		&i.FindByLoginVisibility,
@@ -116,12 +115,13 @@ func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (Account, 
 		&i.BirthdayVisibility,
 		&i.StatusVisibility,
 		&i.DisplayName,
+		&i.AvatarImage,
 	)
 	return i, err
 }
 
 const getAccountByLogin = `-- name: GetAccountByLogin :one
-SELECT id, login, password_hash, totp_secret, created_at, language, email, avatar_object_key, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility, display_name FROM accounts WHERE login = $1
+SELECT id, login, password_hash, totp_secret, created_at, language, email, status_text, birthday, find_by_login_visibility, avatar_visibility, birthday_visibility, status_visibility, display_name, avatar_image FROM accounts WHERE login = $1
 `
 
 func (q *Queries) GetAccountByLogin(ctx context.Context, login string) (Account, error) {
@@ -135,7 +135,6 @@ func (q *Queries) GetAccountByLogin(ctx context.Context, login string) (Account,
 		&i.CreatedAt,
 		&i.Language,
 		&i.Email,
-		&i.AvatarObjectKey,
 		&i.StatusText,
 		&i.Birthday,
 		&i.FindByLoginVisibility,
@@ -143,21 +142,23 @@ func (q *Queries) GetAccountByLogin(ctx context.Context, login string) (Account,
 		&i.BirthdayVisibility,
 		&i.StatusVisibility,
 		&i.DisplayName,
+		&i.AvatarImage,
 	)
 	return i, err
 }
 
-const updateAccountAvatar = `-- name: UpdateAccountAvatar :exec
-UPDATE accounts SET avatar_object_key = $2 WHERE id = $1
+const updateAccountAvatarImage = `-- name: UpdateAccountAvatarImage :exec
+UPDATE accounts SET avatar_image = $2 WHERE id = $1
 `
 
-type UpdateAccountAvatarParams struct {
-	ID              pgtype.UUID
-	AvatarObjectKey pgtype.Text
+type UpdateAccountAvatarImageParams struct {
+	ID          pgtype.UUID
+	AvatarImage []byte
 }
 
-func (q *Queries) UpdateAccountAvatar(ctx context.Context, arg UpdateAccountAvatarParams) error {
-	_, err := q.db.Exec(ctx, updateAccountAvatar, arg.ID, arg.AvatarObjectKey)
+// NULL — фото нет.
+func (q *Queries) UpdateAccountAvatarImage(ctx context.Context, arg UpdateAccountAvatarImageParams) error {
+	_, err := q.db.Exec(ctx, updateAccountAvatarImage, arg.ID, arg.AvatarImage)
 	return err
 }
 

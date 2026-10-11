@@ -204,7 +204,6 @@
     <string name="home_deletedAccount">Удалённый аккаунт</string>
     <string name="home_notes">Заметки</string>
     <string name="language_english">English</string>
-    <string name="language_restartNotice">Чтобы изменения языка вступили в силу везде, перезапустите приложение</string>
     <string name="language_russian">Russian</string>
     <string name="language_title">Язык</string>
     <string name="login_invalid">Логин: от 3 до 32 символов, только латинские буквы и цифры</string>

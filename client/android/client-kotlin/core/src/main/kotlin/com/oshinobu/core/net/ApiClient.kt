@@ -516,7 +516,8 @@ class ApiClient(
     private suspend fun avatarBytes(token: String, path: String): ByteArray? = withTimeout(SHORT_TIMEOUT_MS) {
         exec(http, req(path, token).get().build()).use {
             when (it.code) {
-                200 -> it.body!!.bytes()
+                // пустое "фото" — сбой хранилища, а не новое фото: сохранённую копию не затираем
+                200 -> it.body!!.bytes().takeIf { bytes -> bytes.isNotEmpty() } ?: throw ApiException("error.avatarLoadFailed", 200)
                 404 -> null
                 else -> throw ApiException("error.avatarLoadFailed", it.code)
             }

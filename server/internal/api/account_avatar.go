@@ -6,60 +6,56 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"server/internal/db"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/minio/minio-go/v7"
 )
 
 // Фото профиля — сознательно НЕ шифруется (в отличие от вложений в
 // переписке): его должен видеть кто угодно из контактов, а честная схема
 // с расшариванием ключа каждому контакту отдельно (как profile key у
-// Signal) — отдельная, гораздо более объёмная задача. Ключ объекта в
-// MinIO фиксированный (avatar_<account_id>) — новая загрузка просто
-// перезаписывает старый файл, не нужно отдельно чистить прежние версии.
-func avatarObjectKey(accountID string) string {
-	return "avatar_" + accountID
-}
+// Signal) — отдельная, гораздо более объёмная задача.
+//
+// Хранится в базе на Москве, в самой таблице аккаунтов (accounts.avatar_image),
+// как и весь остальной профиль, и только оттуда отдаётся — от NAS фото
+// профиля не зависит (см. 023_account_avatar_image.sql).
 
-func NewUploadAvatarHandler(queries *db.Queries, minioClient *minio.Client, registry *ConnectionRegistry) func(http.ResponseWriter, *http.Request) {
+// maxAvatarBytes — клиент присылает уже сжатый JPEG (десятки КБ); запас —
+// на большой исходник, но не мегабайты в каждой строке аккаунта.
+const maxAvatarBytes = 2 * 1024 * 1024
+
+func NewUploadAvatarHandler(queries *db.Queries, registry *ConnectionRegistry) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var Session, err = CheckToken(w, r, queries)
 		if err != nil {
 			return
 		}
 
-		file, header, formErr := r.FormFile("file")
+		r.Body = http.MaxBytesReader(w, r.Body, maxAvatarBytes+64*1024)
+		file, _, formErr := r.FormFile("file")
 		if formErr != nil {
 			http.Error(w, "ошибка получения файла из запроса", http.StatusBadRequest)
 			return
 		}
 		defer file.Close()
 
-		var accountIDStr = Session.AccountID.String()
-		var objectKey = avatarObjectKey(accountIDStr)
-
-		var _, uploadErr = minioClient.PutObject(
-			r.Context(),
-			os.Getenv("MINIO_BUCKET"),
-			objectKey,
-			file,
-			header.Size,
-			minio.PutObjectOptions{ContentType: "image/jpeg"},
-		)
-		if uploadErr != nil {
-			log.Printf("ошибка загрузки аватара в MinIO: %v", uploadErr)
-			http.Error(w, "ошибка загрузки файла", http.StatusInternalServerError)
+		image, readErr := io.ReadAll(io.LimitReader(file, maxAvatarBytes+1))
+		if readErr != nil || len(image) == 0 {
+			http.Error(w, "ошибка чтения файла", http.StatusBadRequest)
+			return
+		}
+		if len(image) > maxAvatarBytes {
+			http.Error(w, "фото слишком большое", http.StatusRequestEntityTooLarge)
 			return
 		}
 
-		var SqlErr = queries.UpdateAccountAvatar(r.Context(), db.UpdateAccountAvatarParams{
-			ID:              Session.AccountID,
-			AvatarObjectKey: pgtype.Text{String: objectKey, Valid: true},
-		})
-		if SqlErr != nil {
+		if SqlErr := queries.UpdateAccountAvatarImage(r.Context(), db.UpdateAccountAvatarImageParams{
+			ID:          Session.AccountID,
+			AvatarImage: image,
+		}); SqlErr != nil {
+			log.Printf("ошибка сохранения аватара: %v", SqlErr)
 			http.Error(w, "ошибка сохранения аватара", http.StatusInternalServerError)
 			return
 		}
@@ -68,48 +64,26 @@ func NewUploadAvatarHandler(queries *db.Queries, minioClient *minio.Client, regi
 		// пользователя — один способ обновления для всех полей профиля,
 		// с учётом приватности): прицельно контактам, с учётом
 		// avatar_visibility, и с доставкой офлайн-получателю при
-		// следующем подключении — не широковещательно всем подряд, как
-		// раньше.
+		// следующем подключении.
 		notifyProfileUpdatedIfVisible(r.Context(), queries, registry, Session.AccountID, "avatar")
 
 		w.WriteHeader(http.StatusOK)
 	}
 }
 
-// Удаление своего фото профиля — чистим и MinIO (иначе объект просто
-// вечно занимал бы место, никем не доставаемый), и саму ссылку на него
-// в БД (это и есть источник истины для GetAvatarHandler — без него он
-// сразу отвечает 404, даже не пытаясь смотреть в MinIO). Отсутствие
-// файла в MinIO на момент удаления — не ошибка (RemoveObject тут не
-// строгий, просто логируем и продолжаем очищать БД).
-func NewDeleteAvatarHandler(queries *db.Queries, minioClient *minio.Client, registry *ConnectionRegistry) func(http.ResponseWriter, *http.Request) {
+// Удаление своего фото профиля.
+func NewDeleteAvatarHandler(queries *db.Queries, registry *ConnectionRegistry) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var Session, err = CheckToken(w, r, queries)
 		if err != nil {
 			return
 		}
 
-		avatarKey, SqlErr := queries.GetAccountAvatarKey(r.Context(), Session.AccountID)
-		if SqlErr == nil && avatarKey.Valid {
-			if rmErr := minioClient.RemoveObject(r.Context(), os.Getenv("MINIO_BUCKET"), avatarKey.String, minio.RemoveObjectOptions{}); rmErr != nil {
-				log.Printf("ошибка удаления файла аватара из MinIO: %v", rmErr)
-			}
-		}
-
-		if UpdErr := queries.UpdateAccountAvatar(r.Context(), db.UpdateAccountAvatarParams{
-			ID:              Session.AccountID,
-			AvatarObjectKey: pgtype.Text{Valid: false},
-		}); UpdErr != nil {
+		if SqlErr := queries.UpdateAccountAvatarImage(r.Context(), db.UpdateAccountAvatarImageParams{ID: Session.AccountID}); SqlErr != nil {
 			http.Error(w, "ошибка удаления аватара", http.StatusInternalServerError)
 			return
 		}
 
-		// Единый механизм с status/birthday/display_name (см. ТЗ
-		// пользователя — один способ обновления для всех полей профиля,
-		// с учётом приватности): прицельно контактам, с учётом
-		// avatar_visibility, и с доставкой офлайн-получателю при
-		// следующем подключении — не широковещательно всем подряд, как
-		// раньше.
 		notifyProfileUpdatedIfVisible(r.Context(), queries, registry, Session.AccountID, "avatar")
 
 		w.WriteHeader(http.StatusOK)
@@ -117,32 +91,26 @@ func NewDeleteAvatarHandler(queries *db.Queries, minioClient *minio.Client, regi
 }
 
 // serveAvatar — общая часть для "отдать аватар по id" и "отдать СВОЙ
-// аватар": ищет ключ объекта в БД и стримит сам файл из MinIO.
-func serveAvatar(ctx context.Context, w http.ResponseWriter, queries *db.Queries, minioClient *minio.Client, accountID pgtype.UUID) {
-	var avatarKey, SqlErr = queries.GetAccountAvatarKey(ctx, accountID)
+// аватар": байты из базы; нет фото (или аккаунта) — 404.
+func serveAvatar(ctx context.Context, w http.ResponseWriter, queries *db.Queries, accountID pgtype.UUID) {
+	image, SqlErr := queries.GetAccountAvatarImage(ctx, accountID)
 	if SqlErr != nil {
 		if errors.Is(SqlErr, pgx.ErrNoRows) {
 			http.Error(w, "Аккаунт не найден", http.StatusNotFound)
 		} else {
-			http.Error(w, "Ошибка поиска аккаунта", http.StatusInternalServerError)
+			http.Error(w, "Ошибка чтения фото профиля", http.StatusInternalServerError)
 		}
 		return
 	}
-	if !avatarKey.Valid {
+	if len(image) == 0 {
 		http.Error(w, "У аккаунта нет фото профиля", http.StatusNotFound)
 		return
 	}
 
-	object, ObjErr := minioClient.GetObject(ctx, os.Getenv("MINIO_BUCKET"), avatarKey.String, minio.GetObjectOptions{})
-	if ObjErr != nil {
-		http.Error(w, "Ошибка получения файла", http.StatusInternalServerError)
-		return
-	}
-	defer object.Close()
-
 	w.Header().Set("Content-Type", "image/jpeg")
-	if _, CopyErr := io.Copy(w, object); CopyErr != nil {
-		log.Printf("ошибка отдачи аватара: %v", CopyErr)
+	w.Header().Set("Content-Length", strconv.Itoa(len(image)))
+	if _, WriteErr := w.Write(image); WriteErr != nil {
+		log.Printf("ошибка отдачи аватара: %v", WriteErr)
 	}
 }
 
@@ -182,7 +150,7 @@ func avatarVisibleTo(ctx context.Context, queries *db.Queries, ownerID, viewerID
 // Отдать аватар любого аккаунта по его ID — сперва проверяем настройки
 // приватности владельца (см. avatarVisibleTo), затем доступ на уровне
 // "это вообще авторизованный пользователь приложения".
-func NewGetAvatarHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+func NewGetAvatarHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var Session, err = CheckToken(w, r, queries)
 		if err != nil {
@@ -201,7 +169,7 @@ func NewGetAvatarHandler(queries *db.Queries, minioClient *minio.Client) func(ht
 			return
 		}
 
-		serveAvatar(r.Context(), w, queries, minioClient, accountID)
+		serveAvatar(r.Context(), w, queries, accountID)
 	}
 }
 
@@ -214,13 +182,13 @@ func NewGetAvatarHandler(queries *db.Queries, minioClient *minio.Client) func(ht
 // что и для чужих, подставляя туда СВОЙ закэшированный (и потенциально
 // битый) id; этот эндпоинт делает то же самое, что уже работает для
 // загрузки/удаления — доверяет только токену.
-func NewGetMyAvatarHandler(queries *db.Queries, minioClient *minio.Client) func(http.ResponseWriter, *http.Request) {
+func NewGetMyAvatarHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var Session, err = CheckToken(w, r, queries)
 		if err != nil {
 			return
 		}
 
-		serveAvatar(r.Context(), w, queries, minioClient, Session.AccountID)
+		serveAvatar(r.Context(), w, queries, Session.AccountID)
 	}
 }

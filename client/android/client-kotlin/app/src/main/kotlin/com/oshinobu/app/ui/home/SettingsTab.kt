@@ -170,11 +170,11 @@ private fun ThemeDialog(onClose: () -> Unit) {
 private fun LanguageDialog(onClose: () -> Unit) {
     val context = LocalContext.current
     val colors = LocalAppColors.current
-    val notice = stringResource(R.string.language_restartNotice)
+    // язык меняется на лету: Activity не пересоздаётся (configChanges="locale" в манифесте),
+    // Compose просто перерисовывает надписи — открытый экран и введённое остаются
     fun choose(tag: String) {
         onClose()
         context.app.setLanguage(tag)
-        Toast.makeText(context, notice, Toast.LENGTH_SHORT).show()
     }
     AppDialog(stringResource(R.string.language_title), onClose, confirm = { DialogButton(stringResource(R.string.common_cancel), onClick = onClose) }) {
         Column {

@@ -1,6 +1,5 @@
 package com.oshinobu.app.ui.chat
 
-import com.oshinobu.app.ui.AppLoadingIndicator
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -40,6 +39,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -48,6 +48,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.oshinobu.app.app
 import com.oshinobu.app.media.MediaDecoding
+import com.oshinobu.app.ui.AppLoadingIndicator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -129,7 +130,10 @@ fun CameraCaptureDialog(onClose: () -> Unit, onSend: (PickedFile, caption: Strin
                         shot = null
                     }
                 }
-                Box(Modifier.align(Alignment.BottomCenter)) { CaptionBar(sending = false) { onSend(taken, it) } }
+                var caption by remember(taken.file) { mutableStateOf(TextFieldValue("")) }
+                Box(Modifier.align(Alignment.BottomCenter)) {
+                    CaptionBar(caption, { caption = it }, sending = false) { onSend(taken, caption.text.trim()) }
+                }
             }
         }
     }

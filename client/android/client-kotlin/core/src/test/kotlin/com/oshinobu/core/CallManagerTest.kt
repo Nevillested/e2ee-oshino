@@ -70,7 +70,8 @@ class CallManagerTest {
             alice.calls.startCall(bob.callPeer())
             net.eventually("bob rings") { bob.calls.state.value == CallState.INCOMING_RINGING }
             // экран входящего: "ответить" и сразу уход на экран разговора — его корутина отменяется
-            val screen = net.scope.launch { bob.calls.acceptCall() }
+            // как на экране: "ответить" вызвано (UNDISPATCHED — успело начаться), затем экран ушёл
+            val screen = net.scope.launch(start = CoroutineStart.UNDISPATCHED) { bob.calls.acceptCall() }
             screen.cancel()
             net.eventually("both connected") {
                 alice.calls.state.value == CallState.CONNECTED && bob.calls.state.value == CallState.CONNECTED

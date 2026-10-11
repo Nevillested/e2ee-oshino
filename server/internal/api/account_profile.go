@@ -324,7 +324,7 @@ func NewGetAccountProfileHandler(queries *db.Queries) func(http.ResponseWriter, 
 			Resp.Birthday = Account.Birthday.Time.Format("2006-01-02")
 		}
 		if fieldVisible(Account.AvatarVisibility) {
-			Resp.HasAvatar = Account.AvatarObjectKey.Valid
+			Resp.HasAvatar = len(Account.AvatarImage) > 0
 		}
 
 		w.Header().Set("Content-Type", "application/json")

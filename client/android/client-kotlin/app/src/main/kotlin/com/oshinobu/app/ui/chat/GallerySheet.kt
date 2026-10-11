@@ -12,6 +12,8 @@ import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,6 +25,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -91,6 +95,10 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -120,6 +128,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
 
 /**
  * Своя галерея (как во Flutter-клиенте): шторка с сеткой фото и видео, первая
@@ -143,6 +152,8 @@ fun GallerySheet(onDismiss: () -> Unit, onSend: (List<PickedFile>, caption: Stri
     var previewIndex by remember { mutableStateOf<Int?>(null) }
     var cameraOpen by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
+    // подпись одна на шторку и предпросмотр: начал писать в одном месте — продолжил в другом
+    var caption by remember { mutableStateOf(TextFieldValue("")) }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         access = DeviceGallery.access(context)
@@ -167,15 +178,22 @@ fun GallerySheet(onDismiss: () -> Unit, onSend: (List<PickedFile>, caption: Stri
         then()
     }
 
-    fun send(caption: String) {
+    fun send() {
         if (sending) return
         sending = true
         val ordered = selected.toList()
+        val text = caption.text.trim()
         scope.launch {
             val store = context.app.core.pendingSends
             val files = ordered.mapNotNull { MediaImport.import(context, it.uri, store) }
-            close { if (files.isNotEmpty()) onSend(files, caption, spoiler) }
+            close { if (files.isNotEmpty()) onSend(files, text, spoiler) }
         }
+    }
+
+    /** "Отправить" в предпросмотре: ничего не выбрано — уходит то, что сейчас на экране. */
+    fun sendFromPreview(current: GalleryItem) {
+        if (selected.isEmpty()) selected.add(current)
+        send()
     }
 
     ModalBottomSheet(
@@ -225,14 +243,22 @@ fun GallerySheet(onDismiss: () -> Unit, onSend: (List<PickedFile>, caption: Stri
                     }
                 }
                 if (selected.isNotEmpty()) {
-                    Box(Modifier.align(Alignment.BottomCenter)) { CaptionBar(sending, ::send) }
+                    Box(Modifier.align(Alignment.BottomCenter)) { CaptionBar(caption, { caption = it }, sending, ::send) }
                 }
             }
         }
     }
 
     previewIndex?.let { start ->
-        GalleryPreview(items.orEmpty(), start, selected, onToggle = ::toggle, onClose = { previewIndex = null })
+        GalleryPreview(
+            items.orEmpty(), start, selected,
+            caption = caption,
+            onCaptionChange = { caption = it },
+            sending = sending,
+            onToggle = ::toggle,
+            onSend = ::sendFromPreview,
+            onClose = { previewIndex = null },
+        )
     }
     if (cameraOpen) {
         CameraCaptureDialog(onClose = { cameraOpen = false }) { file, caption ->
@@ -335,22 +361,87 @@ private fun GalleryTile(item: GalleryItem, order: Int?, blurred: Boolean, onOpen
     }
 }
 
-/** Просмотр выбранного на весь экран: листание, выбор кружком сверху, видео с перемоткой. */
+/**
+ * Предпросмотр из галереи на весь экран: листание, выбор (кружок справа
+ * вверху), видео с перемоткой, подпись с эмодзи/клавиатурой и "отправить" —
+ * как в шторке; закрывается свайпом вверх или вниз, как просмотр медиа в чате.
+ */
 @Composable
-private fun GalleryPreview(items: List<GalleryItem>, start: Int, selected: List<GalleryItem>, onToggle: (GalleryItem) -> Unit, onClose: () -> Unit) {
+private fun GalleryPreview(
+    items: List<GalleryItem>,
+    start: Int,
+    selected: List<GalleryItem>,
+    caption: TextFieldValue,
+    onCaptionChange: (TextFieldValue) -> Unit,
+    sending: Boolean,
+    onToggle: (GalleryItem) -> Unit,
+    onSend: (GalleryItem) -> Unit,
+    onClose: () -> Unit,
+) {
     if (items.isEmpty()) return
     val pager = rememberPagerState(initialPage = start.coerceIn(0, items.size - 1)) { items.size }
+    val dismiss = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
-            HorizontalPager(pager, Modifier.fillMaxSize()) { page -> PreviewPage(items[page], current = pager.currentPage == page) }
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = (1f - abs(dismiss.value) / 1500f).coerceIn(0.3f, 1f)))) {
+            HorizontalPager(
+                pager,
+                Modifier.fillMaxSize()
+                    .graphicsLayer { translationY = dismiss.value }
+                    .dismissOnVerticalDrag(
+                        onDrag = { dy -> scope.launch { dismiss.snapTo(dismiss.value + dy) } },
+                        onEnd = {
+                            scope.launch {
+                                if (abs(dismiss.value) > with(density) { 120.dp.toPx() }) {
+                                    dismiss.animateTo(if (dismiss.value > 0) 3000f else -3000f, tween(200))
+                                    onClose()
+                                } else {
+                                    dismiss.animateTo(0f, tween(180))
+                                }
+                            }
+                        },
+                    ),
+            ) { page -> PreviewPage(items[page], current = pager.currentPage == page) }
+            val item = items[pager.currentPage]
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
                 Spacer(Modifier.weight(1f))
-                val item = items[pager.currentPage]
                 val order = selected.indexOf(item).takeIf { it >= 0 }?.plus(1)
                 Box(Modifier.padding(end = 14.dp).clickable { onToggle(item) }) { OrderBadge(order, 28) }
             }
+            Box(Modifier.align(Alignment.BottomCenter).graphicsLayer { alpha = 1f - (abs(dismiss.value) / 600f).coerceIn(0f, 1f) }) {
+                CaptionBar(caption, onCaptionChange, sending, onSend = { onSend(item) })
+            }
         }
+    }
+}
+
+/**
+ * Свайп вверх/вниз — закрыть (как просмотр медиа в чате). Перехватывает
+ * жест раньше страниц (проход Initial), но только вертикальный:
+ * горизонтальный уходит листанию, два пальца — не наш.
+ */
+private fun Modifier.dismissOnVerticalDrag(onDrag: (Float) -> Unit, onEnd: () -> Unit): Modifier = pointerInput(Unit) {
+    val slop = viewConfiguration.touchSlop
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        var vertical = false
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            if (event.changes.count { it.pressed } > 1) break
+            val ch = event.changes.firstOrNull { it.id == down.id } ?: break
+            if (!ch.pressed) break
+            if (!vertical) {
+                val d = ch.position - down.position
+                if (abs(d.x) > slop && abs(d.x) >= abs(d.y)) break
+                if (abs(d.y) <= slop || abs(d.y) <= abs(d.x)) continue
+                vertical = true
+            }
+            onDrag(ch.positionChange().y)
+            ch.consume()
+        }
+        if (vertical) onEnd()
     }
 }
 
@@ -449,9 +540,8 @@ private fun formatClock(ms: Long): String {
  * клавиатура меняются местами так же, как у поля сообщения в чате.
  */
 @Composable
-fun CaptionBar(sending: Boolean, onSend: (String) -> Unit) {
+fun CaptionBar(text: TextFieldValue, onTextChange: (TextFieldValue) -> Unit, sending: Boolean, onSend: () -> Unit) {
     val colors = LocalAppColors.current
-    var text by remember { mutableStateOf(TextFieldValue("")) }
     val emojiKeyboard = rememberEmojiKeyboardState()
     BackHandler(enabled = emojiKeyboard.emojiMode, onBack = emojiKeyboard::closeEmoji)
     Column(Modifier.fillMaxWidth()) {
@@ -465,7 +555,7 @@ fun CaptionBar(sending: Boolean, onSend: (String) -> Unit) {
             Box(Modifier.weight(1f).padding(vertical = 12.dp)) {
                 if (text.text.isEmpty()) Text(stringResource(R.string.chat_captionHint), color = colors.textMuted)
                 BasicTextField(
-                    text, { text = it }, maxLines = 4,
+                    text, onTextChange, maxLines = 4,
                     textStyle = TextStyle(color = colors.textPrimary, fontSize = 16.sp),
                     cursorBrush = SolidColor(colors.primary),
                     modifier = Modifier.fillMaxWidth().focusRequester(emojiKeyboard.focusRequester)
@@ -475,14 +565,14 @@ fun CaptionBar(sending: Boolean, onSend: (String) -> Unit) {
             if (sending) {
                 AppLoadingIndicator(Modifier.padding(10.dp), size = 24.dp, color = colors.primary)
             } else {
-                IconButton(onClick = { onSend(text.text.trim()) }) { Icon(Icons.AutoMirrored.Filled.Send, null, tint = colors.primary) }
+                IconButton(onClick = onSend) { Icon(Icons.AutoMirrored.Filled.Send, null, tint = colors.primary) }
             }
         }
         // эмодзи — в позицию курсора (как в поле сообщения), а не в конец
         EmojiKeyboardArea(emojiKeyboard) { emoji ->
             val start = minOf(text.selection.start, text.selection.end)
             val end = maxOf(text.selection.start, text.selection.end)
-            text = TextFieldValue(text.text.replaceRange(start, end, emoji), TextRange(start + emoji.length))
+            onTextChange(TextFieldValue(text.text.replaceRange(start, end, emoji), TextRange(start + emoji.length)))
         }
     }
 }

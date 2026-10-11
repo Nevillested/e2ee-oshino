@@ -16,7 +16,6 @@ type Account struct {
 	CreatedAt             pgtype.Timestamptz
 	Language              string
 	Email                 pgtype.Text
-	AvatarObjectKey       pgtype.Text
 	StatusText            pgtype.Text
 	Birthday              pgtype.Date
 	FindByLoginVisibility int16
@@ -24,6 +23,7 @@ type Account struct {
 	BirthdayVisibility    int16
 	StatusVisibility      int16
 	DisplayName           pgtype.Text
+	AvatarImage           []byte
 }
 
 type ChatMute struct {

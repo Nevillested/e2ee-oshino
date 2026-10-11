@@ -52,7 +52,7 @@ func NewAccountMeHandler(queries *db.Queries) func(http.ResponseWriter, *http.Re
 		if Account.Email.Valid {
 			Resp.Email = Account.Email.String
 		}
-		Resp.HasAvatar = Account.AvatarObjectKey.Valid
+		Resp.HasAvatar = len(Account.AvatarImage) > 0
 		if Account.StatusText.Valid {
 			Resp.Status = Account.StatusText.String
 		}
