@@ -462,6 +462,12 @@ fun AboutDialog(onClose: () -> Unit) {
             SettingRow(Icons.Outlined.Info, stringResource(R.string.about_version), version, onClick = null)
             SettingRow(Icons.Outlined.Description, stringResource(R.string.about_terms), null, onClick = { open("https://ee2e.oshino.space/terms/$lang/") })
             SettingRow(Icons.Outlined.PrivacyTip, stringResource(R.string.about_privacy), null, onClick = { open("https://ee2e.oshino.space/privacy/$lang/") })
+            Text(
+                stringResource(R.string.about_credits),
+                color = LocalAppColors.current.textMuted,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 12.dp),
+            )
         }
     }
 }

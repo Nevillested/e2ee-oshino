@@ -38,7 +38,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -281,28 +285,40 @@ fun ReactionBadges(myReaction: String?, peerReaction: String?, justChanged: Bool
 private fun ReactionChip(emoji: String?, mine: Boolean, justChanged: Boolean) {
     val colors = LocalAppColors.current
     val pop = remember { Animatable(1f) }
+    // анимация — только у бейджа, который действительно поменялся (а не у обоих), и не у
+    // реакций, которые просто показались при прокрутке
+    var celebrated by remember { mutableStateOf(emoji) }
+    var burst by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(justChanged, emoji) {
-        if (justChanged && emoji != null) {
-            pop.snapTo(1.35f)
-            pop.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium))
+        if (emoji == null) {
+            celebrated = null
+            return@LaunchedEffect
         }
+        if (!justChanged || emoji == celebrated) return@LaunchedEffect
+        celebrated = emoji
+        burst = emoji
+        pop.snapTo(1.35f)
+        pop.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium))
     }
-    AnimatedContent(
-        targetState = emoji,
-        transitionSpec = { (scaleIn(tween(220)) + fadeIn(tween(220))) togetherWith (scaleOut(tween(160)) + fadeOut(tween(160))) },
-        label = "reaction",
-    ) { e ->
-        if (e != null) {
-            Text(
-                e,
-                fontSize = 13.sp,
-                modifier = Modifier
-                    .scale(pop.value)
-                    .background(colors.surface, RoundedCornerShape(10.dp))
-                    .border(1.dp, if (mine) colors.primary else colors.textMuted.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 5.dp, vertical = 1.dp),
-            )
+    Box(contentAlignment = Alignment.Center) {
+        AnimatedContent(
+            targetState = emoji,
+            transitionSpec = { (scaleIn(tween(220)) + fadeIn(tween(220))) togetherWith (scaleOut(tween(160)) + fadeOut(tween(160))) },
+            label = "reaction",
+        ) { e ->
+            if (e != null) {
+                Text(
+                    e,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .scale(pop.value)
+                        .background(colors.surface, RoundedCornerShape(10.dp))
+                        .border(1.dp, if (mine) colors.primary else colors.textMuted.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                )
+            }
         }
+        burst?.let { b -> key(b) { ReactionBurst(b) { burst = null } } }
     }
 }
 

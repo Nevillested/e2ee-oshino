@@ -403,7 +403,7 @@ fun ResetTotpScreen(login: String, code: String, onBack: () -> Unit, onVerified:
         Gap(48)
         if (error == null) {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                AppLoadingIndicator(size = 32.dp, color = LocalAppColors.current.primary)
+                AppLoadingIndicator(size = 64.dp)
             }
         } else {
             Text(error!!, color = ErrorRed, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())

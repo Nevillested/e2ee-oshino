@@ -245,7 +245,6 @@ class TestNetwork : AutoCloseable {
             sounds.incrementAndGet()
         }
         override fun showBackgroundMessageNotification() = Unit
-        override fun vibrate() = Unit
     }
 
     /** Клиент со всеми сервисами на хранилищах в памяти. */

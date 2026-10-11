@@ -135,7 +135,7 @@ fun MediaStatusOverlay(statusText: String, percent: Double?, onCancel: (() -> Un
                         trackColor = Color.White.copy(alpha = 0.25f),
                     )
                 } else {
-                    AppLoadingIndicator(size = 36.dp, color = Color.White)
+                    AppLoadingIndicator(size = 56.dp)
                 }
                 if (onCancel != null) {
                     Icon(Icons.Filled.Close, null, tint = Color.White, modifier = Modifier.size(18.dp).clickable(onClick = onCancel))
@@ -360,7 +360,7 @@ private fun FileAttachment(
             contentAlignment = Alignment.Center,
         ) {
             if (download != null) {
-                AppLoadingIndicator(size = 22.dp, color = colors.textMuted)
+                AppLoadingIndicator(size = 22.dp)
             } else {
                 Icon(icon, null, tint = if (failed) Color(0xFFFF5252) else colors.textMuted, modifier = Modifier.size(32.dp))
             }
@@ -392,7 +392,7 @@ private fun FileAttachment(
     ) {
         Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
             if (download != null) {
-                AppLoadingIndicator(size = 20.dp, color = textColor)
+                AppLoadingIndicator(size = 20.dp)
             } else {
                 Icon(
                     if (needsDownload && !failed) Icons.Filled.Download else icon, null,

@@ -46,8 +46,6 @@ interface RouterHost {
     fun playMessageSound()
     /** Общее уведомление "новое сообщение" без содержимого — когда приложение свёрнуто. */
     fun showBackgroundMessageNotification()
-    /** Короткая вибрация на чужую реакцию в открытом чате. */
-    fun vibrate()
 }
 
 data class IncomingReaction(val peerLogin: String, val messageId: String)
@@ -455,7 +453,6 @@ class MessageRouter(
                 val emoji = b.optString("emoji")
                 chats.setReaction(login, target, isMine = false, emoji = emoji)
                 if (emoji != null) _reactions.tryEmit(IncomingReaction(login, target))
-                if (chatIsOpen) host.vibrate()
             }
             MessageType.PIN -> {
                 val b = inner.bodyJson()

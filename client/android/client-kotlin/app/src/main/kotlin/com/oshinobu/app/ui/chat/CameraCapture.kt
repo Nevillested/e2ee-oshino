@@ -113,7 +113,7 @@ fun CameraCaptureDialog(onClose: () -> Unit, onSend: (PickedFile, caption: Strin
                     Box(
                         Modifier.size(72.dp).clip(CircleShape).border(4.dp, Color.White, CircleShape).clickable { capture() },
                         contentAlignment = Alignment.Center,
-                    ) { if (capturing) AppLoadingIndicator(size = 32.dp, color = Color.White) }
+                    ) { if (capturing) AppLoadingIndicator(size = 64.dp) }
                     RoundIcon(Icons.Filled.Cameraswitch) {
                         controller.cameraSelector =
                             if (controller.cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA

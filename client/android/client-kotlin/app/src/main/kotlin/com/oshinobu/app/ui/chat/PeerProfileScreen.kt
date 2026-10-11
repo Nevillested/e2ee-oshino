@@ -66,7 +66,7 @@ fun PeerProfileScreen(accountId: String, login: String, onBack: () -> Unit) {
             Spacer(Modifier.height(24.dp))
             val loaded = profile
             if (loaded == null) {
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { AppLoadingIndicator(size = 32.dp, color = colors.primary) }
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { AppLoadingIndicator(size = 64.dp) }
             } else {
                 val p = loaded.getOrNull()
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {

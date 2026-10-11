@@ -3,11 +3,14 @@ package com.oshinobu.app.ui
 import android.Manifest
 import android.net.Uri
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
+import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.EaseInOut
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -17,6 +20,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,8 +37,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -73,6 +86,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.hypot
 
 /** Маршруты приложения. Аргументы — в пути, строки кодируются [Uri.encode]. */
 object Routes {
@@ -155,6 +169,8 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
     val withMic = rememberWithPermission(Manifest.permission.RECORD_AUDIO)
     // что пересылаем: живёт от выбора "Переслать" до открытия чата-получателя
     var forwardDraft by remember { mutableStateOf<List<String>>(emptyList()) }
+    // заставка → список чатов: список раскрывается кругом из центра, где крутилась кошка
+    var revealHome by remember { mutableStateOf(false) }
     val str = listOf(navArgument("login") { type = NavType.StringType }, navArgument("url") { type = NavType.StringType })
     val dispatcher = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
     // со звонка свайпом не уходят — только кнопками экрана
@@ -177,6 +193,8 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
         enterTransition = {
             when (targetState.destination.route) {
                 in Routes.CALL_ROUTES -> EnterTransition.None
+                // заставка → главный: вместо выезда — раскрытие кругом (сам круг — в composable HOME)
+                Routes.HOME if initialState.destination.route == Routes.SPLASH -> EnterTransition.None
                 Routes.PEER_PROFILE -> fadeIn(tween(PROFILE_OPEN_MS)) + scaleIn(tween(PROFILE_OPEN_MS), initialScale = 0.8f)
                 else -> slideInHorizontally(tween(450, easing = EaseInOut)) { it }
             }
@@ -215,7 +233,10 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
         composable(Routes.SPLASH) {
             SplashScreen(
                 onSignedOut = { nav.startOver(Routes.WELCOME) },
-                onSignedIn = { nav.startOver(Routes.HOME) },
+                onSignedIn = {
+                    revealHome = true
+                    nav.startOver(Routes.HOME)
+                },
             )
         }
         composable(Routes.WELCOME) {
@@ -270,12 +291,27 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
             }
         }
         composable(Routes.HOME) {
-            HomeScreen(
-                onSignedOut = { nav.startOver(Routes.WELCOME) },
-                onOpenChat = { nav.navigate(Routes.chat(it)) },
-                onOpenTransfers = { nav.navigate(Routes.TRANSFERS) },
-                onOpenCall = openCall,
-            )
+            // раскрытие — только при запуске (после заставки), не при возврате из чата
+            val reveal = remember { revealHome.also { revealHome = false } }
+            val fraction by transition.animateFloat(
+                transitionSpec = { tween(HOME_REVEAL_MS, easing = FastOutSlowInEasing) },
+                label = "homeReveal",
+            ) { state -> if (state == EnterExitState.Visible || !reveal) 1f else 0f }
+            Box(
+                Modifier.graphicsLayer {
+                    if (fraction < 1f) {
+                        clip = true
+                        shape = CircleRevealShape(fraction)
+                    }
+                },
+            ) {
+                HomeScreen(
+                    onSignedOut = { nav.startOver(Routes.WELCOME) },
+                    onOpenChat = { nav.navigate(Routes.chat(it)) },
+                    onOpenTransfers = { nav.navigate(Routes.TRANSFERS) },
+                    onOpenCall = openCall,
+                )
+            }
         }
         composable(
             Routes.CHAT,
@@ -343,6 +379,17 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
     }
 }
 
+/** Раскрытие списка чатов после заставки. */
+private const val HOME_REVEAL_MS = 600
+
+/** Круг из центра, [fraction] 0…1 — до полного покрытия (радиус — полудиагональ). */
+private class CircleRevealShape(private val fraction: Float) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        val radius = hypot(size.width, size.height) / 2 * fraction
+        return Outline.Generic(Path().apply { addOval(Rect(Offset(size.width / 2, size.height / 2), radius)) })
+    }
+}
+
 /** Профиль собеседника: открытие и закрытие (как у HeroZoomPageRoute во Flutter-клиенте). */
 private const val PROFILE_OPEN_MS = 350
 private const val PROFILE_CLOSE_MS = 300
@@ -399,7 +446,7 @@ private fun CallLaunchScreen(autoAccept: Boolean, onIncoming: () -> Unit, onInCa
     ) {
         Text(stringResource(R.string.call_incoming), color = colors.textMuted)
         Spacer(Modifier.height(16.dp))
-        AppLoadingIndicator(size = 32.dp, color = colors.primary)
+        AppLoadingIndicator(size = 64.dp)
     }
 }
 

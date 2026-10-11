@@ -96,6 +96,8 @@ dependencies {
     implementation("com.google.android.play:app-update-ktx:2.1.0")
     // разблокировка приложения отпечатком/лицом
     implementation("androidx.biometric:biometric:1.1.0")
+    // Lottie: анимация загрузки и анимированные реакции (Noto Animated Emoji в assets/reactions)
+    implementation("com.airbnb.android:lottie-compose:6.7.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1")
     implementation("androidx.lifecycle:lifecycle-process:2.9.1")

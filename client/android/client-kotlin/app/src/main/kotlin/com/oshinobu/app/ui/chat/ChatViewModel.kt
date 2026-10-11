@@ -249,7 +249,11 @@ class ChatViewModel(
         core.chats.syncBlockedFromServer(blocked.blockedByMe.toSet(), blocked.blockingMe.toSet())
     }
 
+    /** Реакцию поставили (я или собеседник, пока чат открыт) — экран отзывается вибрацией. */
+    val reactionPulses = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+
     private fun markJustReacted(messageId: String) {
+        reactionPulses.tryEmit(Unit)
         justReacted += messageId
         viewModelScope.launch {
             delay(900)

@@ -5,6 +5,7 @@
     <string name="about_terms">Terms of Service</string>
     <string name="about_title">About</string>
     <string name="about_version">App version</string>
+    <string name="about_credits">Animated emoji: Noto Emoji by Google, CC BY 4.0. Loading animation: LottieFiles, Lottie Simple License.</string>
     <string name="account_deleteBody">The account will be permanently deleted from the server. Your contacts will see you as a \"Deleted account\". This action cannot be undone.</string>
     <string name="account_deleteConfirm">Delete account permanently</string>
     <string name="account_deleteOfflineError">No connection to the server — the account can only be deleted while online</string>

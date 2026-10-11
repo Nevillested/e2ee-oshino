@@ -222,7 +222,7 @@ fun GallerySheet(onDismiss: () -> Unit, onSend: (List<PickedFile>, caption: Stri
             Box(Modifier.weight(1f)) {
                 val list = items
                 if (list == null) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppLoadingIndicator(size = 32.dp, color = colors.primary) }
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { AppLoadingIndicator(size = 64.dp) }
                 } else {
                     LazyVerticalGrid(
                         GridCells.Fixed(3), Modifier.fillMaxSize(),
@@ -462,7 +462,7 @@ private fun PreviewPage(item: GalleryItem, current: Boolean) {
         }
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
-                ?: AppLoadingIndicator(size = 32.dp, color = Color.White)
+                ?: AppLoadingIndicator(size = 64.dp)
         }
         return
     }
@@ -563,7 +563,7 @@ fun CaptionBar(text: TextFieldValue, onTextChange: (TextFieldValue) -> Unit, sen
                 )
             }
             if (sending) {
-                AppLoadingIndicator(Modifier.padding(10.dp), size = 24.dp, color = colors.primary)
+                AppLoadingIndicator(Modifier.padding(10.dp), size = 24.dp)
             } else {
                 IconButton(onClick = onSend) { Icon(Icons.AutoMirrored.Filled.Send, null, tint = colors.primary) }
             }

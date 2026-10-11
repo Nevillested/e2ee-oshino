@@ -142,7 +142,7 @@ fun ProfileTab() {
                     Modifier.size(diameter).clickable(enabled = !uploading) { if (avatar == null) pick() else avatarSheet = true },
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (uploading) AppLoadingIndicator(size = 32.dp, color = colors.primary) else AvatarImage(avatar, diameter)
+                    if (uploading) AppLoadingIndicator(size = 64.dp) else AvatarImage(avatar, diameter)
                 }
             }
             Spacer(Modifier.height(24.dp))

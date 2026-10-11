@@ -1,20 +1,16 @@
 package com.oshinobu.app.ui
 
-import kotlin.math.sin
-import kotlin.math.PI
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.foundation.Canvas
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.LinearEasing
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -53,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -60,13 +57,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.airbnb.lottie.compose.LottieAnimation
+import com.airbnb.lottie.compose.LottieCompositionSpec
+import com.airbnb.lottie.compose.LottieConstants
+import com.airbnb.lottie.compose.rememberLottieComposition
 import com.oshinobu.app.R
 import com.oshinobu.app.ui.theme.CardShape
 import com.oshinobu.app.ui.theme.LocalAppColors
 import kotlinx.coroutines.CancellationException
+import kotlin.math.PI
+import kotlin.math.sin
 
 /** Красный цвет ошибок — один на всё приложение. */
 val ErrorRed = Color(0xFFE53935)
@@ -165,7 +169,7 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
         contentPadding = PaddingValues(horizontal = 16.dp),
     ) {
         if (loading) {
-            AppLoadingIndicator(size = 22.dp, color = Color.White)
+            AppLoadingIndicator(size = 22.dp)
         } else {
             Text(text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         }
@@ -202,7 +206,7 @@ fun MutedText(text: String, fontSize: Int = 14) {
 @Composable
 fun FullScreenLoading() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        AppLoadingIndicator(size = 32.dp, color = LocalAppColors.current.primary)
+        AppLoadingIndicator(size = 64.dp)
     }
 }
 
@@ -263,24 +267,11 @@ fun rememberWithPermission(permission: String): (action: () -> Unit) -> Unit {
 }
 
 /**
- * Индикатор загрузки — три точки, пульсирующие волной (как AppLoadingIndicator
- * во Flutter-клиенте): масштаб 0.55–1 и прозрачность 0.35–1, период 1.1 с.
+ * Индикатор ожидания для всего приложения: кошка, сворачивающаяся клубком
+ * (Lottie, LottieFiles — Lottie Simple License; res/raw/loading_cat.json).
  */
 @Composable
-fun AppLoadingIndicator(modifier: Modifier = Modifier, size: Dp = 24.dp, color: Color = LocalAppColors.current.primary) {
-    val t by rememberInfiniteTransition(label = "loading").animateFloat(
-        0f, 1f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "t",
-    )
-    Canvas(modifier.size(size)) {
-        val dot = this.size.width / 4.2f
-        val step = (this.size.width - dot) / 2
-        for (i in 0..2) {
-            val wave = 0.5f + 0.5f * sin(2 * PI.toFloat() * (t - i * 0.22f))
-            drawCircle(
-                color.copy(alpha = color.alpha * (0.35f + 0.65f * wave)),
-                radius = dot / 2 * (0.55f + 0.45f * wave),
-                center = Offset(dot / 2 + i * step, this.size.height / 2),
-            )
-        }
-    }
+fun AppLoadingIndicator(modifier: Modifier = Modifier, size: Dp = 24.dp) {
+    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.loading_cat))
+    LottieAnimation(composition, iterations = LottieConstants.IterateForever, modifier = modifier.size(size))
 }

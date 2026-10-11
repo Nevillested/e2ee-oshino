@@ -109,7 +109,10 @@ fun MediaViewerScreen(peerLogin: String, messageId: String, onBack: () -> Unit) 
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
 
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = (1f - abs(dismiss.value) / 1500f).coerceIn(0.3f, 1f)))) {
+    // при свайпе фон и верхняя панель гаснут полностью, вместе с уезжающим фото: иначе после
+    // закрытия навигация уводила вправо полупрозрачный затемнённый экран
+    val dismissFade = (abs(dismiss.value) / with(density) { 400.dp.toPx() }).coerceIn(0f, 1f)
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 1f - dismissFade))) {
         HorizontalPager(pager, userScrollEnabled = !zoomed, modifier = Modifier.fillMaxSize().graphicsLayer { translationY = dismiss.value }) { page ->
             val msg = list[page]
             MediaPage(
@@ -130,7 +133,7 @@ fun MediaViewerScreen(peerLogin: String, messageId: String, onBack: () -> Unit) 
                 },
             )
         }
-        ViewerTopBar(list[pager.currentPage], resolver, onBack)
+        Box(Modifier.graphicsLayer { alpha = 1f - dismissFade }) { ViewerTopBar(list[pager.currentPage], resolver, onBack) }
     }
 }
 
@@ -202,7 +205,7 @@ private fun MediaPage(
                 if (percent != null) {
                     CircularProgressIndicator(progress = { (percent / 100).toFloat() }, color = Color.White, trackColor = Color.White.copy(alpha = 0.2f))
                 } else {
-                    AppLoadingIndicator(size = 32.dp, color = Color.White)
+                    AppLoadingIndicator(size = 64.dp)
                 }
             }
             PageFile.Failed -> Icon(Icons.Filled.BrokenImage, null, tint = Color.White.copy(alpha = 0.54f), modifier = Modifier.size(64.dp))

@@ -71,6 +71,7 @@ import com.oshinobu.app.media.AndroidVideoThumbnailer
 import com.oshinobu.app.media.FileActions
 import com.oshinobu.app.ui.call.OngoingCallBanner
 import com.oshinobu.app.ui.home.ChatTarget
+import com.oshinobu.app.ui.reactionHaptic
 import com.oshinobu.app.ui.rememberPeerDisplayName
 import com.oshinobu.app.ui.theme.LocalAppColors
 import com.oshinobu.core.storage.MessageStatus
@@ -197,6 +198,7 @@ fun ChatScreen(
     val emojiKeyboard = rememberEmojiKeyboardState()
     val inputFocus = emojiKeyboard.focusRequester
 
+    LaunchedEffect(Unit) { vm.reactionPulses.collect { context.reactionHaptic() } }
     LaunchedEffect(Unit) {
         vm.notices.collect { n ->
             val text = when (n) {

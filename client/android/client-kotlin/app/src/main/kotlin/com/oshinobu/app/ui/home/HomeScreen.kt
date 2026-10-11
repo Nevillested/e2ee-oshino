@@ -432,7 +432,7 @@ private fun SearchResults(query: String, onOpenChat: (ChatTarget) -> Unit, onOpe
     ) {
         when (found) {
             null -> Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                AppLoadingIndicator(size = 24.dp, color = colors.primary)
+                AppLoadingIndicator(size = 24.dp)
             }
             is SearchResult.NotFound -> Text(found.message, color = colors.textMuted, modifier = Modifier.padding(16.dp))
             is SearchResult.Self -> {
