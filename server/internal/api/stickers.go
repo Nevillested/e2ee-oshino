@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"hash/crc32"
 	"io"
 	"log"
 	"net/http"
@@ -424,17 +425,31 @@ func NewStickerPackFilesHandler(queries *db.Queries, store *StickerStore) func(h
 				log.Printf("стикеры: файл %s не прочитан: %v", s.FilePath, err)
 				return
 			}
-			// уже сжатые форматы — без повторного сжатия
-			fw, err := zw.CreateHeader(&zip.FileHeader{Name: s.ID.String() + "." + s.Format, Method: zip.Store})
-			if err != nil {
-				return
-			}
-			if _, err := fw.Write(data); err != nil {
+			if err := writeStoredEntry(zw, s.ID.String()+"."+s.Format, data); err != nil {
 				return
 			}
 		}
 		_ = zw.Close()
 	}
+}
+
+// writeStoredEntry — файл в ZIP без сжатия (форматы и так сжатые). CRC и
+// размеры — в заголовке перед данными, без "data descriptor" после них:
+// иначе java.util.zip.ZipInputStream на клиенте падает ("only DEFLATED
+// entries can have EXT descriptor"), а CreateHeader пишет descriptor всегда.
+func writeStoredEntry(zw *zip.Writer, name string, data []byte) error {
+	w, err := zw.CreateRaw(&zip.FileHeader{
+		Name:               name,
+		Method:             zip.Store,
+		CRC32:              crc32.ChecksumIEEE(data),
+		CompressedSize64:   uint64(len(data)),
+		UncompressedSize64: uint64(len(data)),
+	})
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(data)
+	return err
 }
 
 // NewGetStickerHandler — GET /stickers/items/{sticker_id}: один стикер. Пак удалён — 410.

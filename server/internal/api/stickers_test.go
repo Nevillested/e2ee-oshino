@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"image"
 	"image/png"
+	"io"
 	"net/http"
 	"testing"
 )
@@ -117,5 +118,38 @@ func TestStickerRoutesRegister(t *testing.T) {
 		"GET /stickers/items/{sticker_id}/pack",
 	} {
 		mux.HandleFunc(p, ok)
+	}
+}
+
+// Пак отдаётся ZIP без "data descriptor": клиент читает его потоком
+// (ZipInputStream), а тот не принимает descriptor у несжатых файлов.
+func TestStoredEntryHasNoDataDescriptor(t *testing.T) {
+	var b bytes.Buffer
+	zw := zip.NewWriter(&b)
+	data := pngBytes(t, 8, 8)
+	if err := writeStoredEntry(zw, "a.png", data); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(b.Bytes()), int64(b.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := zr.File[0]
+	if f.Flags&0x8 != 0 {
+		t.Fatalf("у записи флаг data descriptor: %#x", f.Flags)
+	}
+	if f.Method != zip.Store || f.UncompressedSize64 != uint64(len(data)) {
+		t.Fatalf("запись: метод %d, размер %d", f.Method, f.UncompressedSize64)
+	}
+	rc, err := f.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(rc)
+	if !bytes.Equal(got, data) {
+		t.Fatal("содержимое не совпало")
 	}
 }
