@@ -222,14 +222,16 @@ func parseWebM(data []byte) (webmInfo, error) {
 	return info, nil
 }
 
-// checkWebmSticker — видеостикер: WebM VP8/VP9 без звука, до 256 КБ, до
-// 3 с, сторона до 512.
+// checkWebmSticker — видеостикер: WebM/Matroska VP8/VP9 без звука, до
+// 256 КБ, до 3 с, сторона до 512.
 func checkWebmSticker(name string, data []byte) (string, *stickerCheckError) {
 	if len(data) > maxWebmStickerSz {
 		return "", &stickerCheckError{Code: "file.tooLarge", Name: name, Limit: maxWebmStickerSz / 1024}
 	}
 	info, err := parseWebM(data)
-	if err != nil || info.docType != "webm" {
+	// WebM — подмножество Matroska: многие видеостикеры записаны с DocType
+	// "matroska", внутри то же VP8/VP9 — кодек проверяется ниже
+	if err != nil || (info.docType != "webm" && info.docType != "matroska") {
 		return "", &stickerCheckError{Code: "file.corrupt", Name: name}
 	}
 	if info.codec != "V_VP8" && info.codec != "V_VP9" {

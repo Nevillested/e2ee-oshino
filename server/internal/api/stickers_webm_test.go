@@ -87,7 +87,8 @@ func TestCheckWebmSticker(t *testing.T) {
 		"со звуком":        {fakeWebm("webm", 2000, videoTrack("V_VP9", 512, 512), audioTrack()), "file.hasAudio"},
 		"AV1":              {fakeWebm("webm", 2000, videoTrack("V_AV1", 512, 512)), "file.badCodec"},
 		"большой кадр":     {fakeWebm("webm", 2000, videoTrack("V_VP9", 640, 512)), "file.badDimensions"},
-		"не webm":          {fakeWebm("matroska", 2000, videoTrack("V_VP9", 512, 512)), "file.corrupt"},
+		"matroska":         {fakeWebm("matroska", 2000, videoTrack("V_VP9", 512, 512)), ""},
+		"чужой контейнер":  {fakeWebm("mkv3d", 2000, videoTrack("V_VP9", 512, 512)), "file.corrupt"},
 		"мусор":            {[]byte{0x1A, 0x45, 0xDF, 0xA3, 0x00}, "file.corrupt"},
 		"тяжёлый":          {append(fakeWebm("webm", 2000, videoTrack("V_VP9", 512, 512)), make([]byte, maxWebmStickerSz)...), "file.tooLarge"},
 	} {
