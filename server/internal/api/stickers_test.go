@@ -41,7 +41,7 @@ func TestInspectSticker(t *testing.T) {
 		{"png too wide", "2.png", pngBytes(t, 513, 100), "", "file.badDimensions"},
 		{"tgs ok", "3.tgs", tgsBytes(t, `{"w":512,"h":512,"layers":[{}]}`), "tgs", ""},
 		{"tgs no layers", "4.tgs", tgsBytes(t, `{"w":512,"h":512,"layers":[]}`), "", "file.corrupt"},
-		{"webm", "5.webm", []byte("\x1aE\xdf\xa3 webm"), "", "file.webm"},
+		{"webm с битым заголовком", "5.webm", []byte("\x1aE\xdf\xa3 webm"), "", "file.corrupt"},
 		{"text", "6.txt", []byte("hello"), "", "file.unsupported"},
 		{"png renamed to jpg — по содержимому", "7.jpg", pngBytes(t, 100, 100), "png", ""},
 	}

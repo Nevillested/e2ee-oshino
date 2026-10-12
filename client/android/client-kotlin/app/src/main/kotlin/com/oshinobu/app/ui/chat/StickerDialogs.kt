@@ -253,6 +253,11 @@ private fun Context.uploadError(e: StickerUploadException): String {
         "file.tooLarge" -> getString(R.string.sticker_err_tooLarge, name, limit)
         "file.corrupt" -> getString(R.string.sticker_err_corrupt, name)
         "file.badDimensions" -> getString(R.string.sticker_err_dimensions, name, limit)
+        "file.badCodec" -> getString(R.string.sticker_err_badCodec, name)
+        "file.hasAudio" -> getString(R.string.sticker_err_hasAudio, name)
+        "file.badDuration" -> getString(R.string.sticker_err_badDuration, name, limit)
+        "file.convertFailed" -> getString(R.string.sticker_err_convertFailed, name)
+        "file.convertTooLarge" -> getString(R.string.sticker_err_convertTooLarge, name, limit)
         else -> getString(R.string.sticker_err_server)
     }
 }
@@ -336,6 +341,10 @@ fun StickerUploadDialog(onClose: () -> Unit) {
                             "counting" -> UploadPhase.Running(context.getString(R.string.sticker_stageCounting, e.count ?: 0), null)
                             "checking" -> UploadPhase.Running(
                                 context.getString(R.string.sticker_stageChecking, e.index ?: 0, e.total ?: 0) + (e.name?.let { "\n$it" } ?: ""),
+                                fraction(e.index, e.total),
+                            )
+                            "converting" -> UploadPhase.Running(
+                                context.getString(R.string.sticker_stageConverting, e.index ?: 0, e.total ?: 0) + (e.name?.let { "\n$it" } ?: ""),
                                 fraction(e.index, e.total),
                             )
                             "saving" -> UploadPhase.Running(context.getString(R.string.sticker_stageSaving, e.index ?: 0, e.total ?: 0), fraction(e.index, e.total))

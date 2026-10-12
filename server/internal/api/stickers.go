@@ -10,7 +10,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sync"
 
 	"server/internal/db"
 
@@ -24,6 +27,8 @@ import (
 // по умолчанию /e2ee/stickers): <dir>/<pack_id>/<sticker_id>.<формат>.
 type StickerStore struct {
 	Dir string
+	// путь к ffmpeg для WEBM-стикеров; пусто — не установлен, WEBM не принимаются
+	ffmpeg string
 }
 
 func NewStickerStore() *StickerStore {
@@ -34,7 +39,12 @@ func NewStickerStore() *StickerStore {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		log.Printf("стикеры: папка %s недоступна: %v", dir, err)
 	}
-	return &StickerStore{Dir: dir}
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		log.Printf("стикеры: ffmpeg не найден — WEBM-стикеры не принимаются")
+		ffmpeg = ""
+	}
+	return &StickerStore{Dir: dir, ffmpeg: ffmpeg}
 }
 
 // StickerJSON / StickerPackJSON — пак для клиента.
@@ -95,11 +105,14 @@ func pathUUID(r *http.Request, name string) (pgtype.UUID, bool) {
 // событие (NDJSON), каждое сразу уходит клиенту (nginx не копит —
 // X-Accel-Buffering: no).
 type uploadEvents struct {
+	mu sync.Mutex // перекодирование WEBM шлёт события из нескольких горутин
 	w  http.ResponseWriter
 	rc *http.ResponseController
 }
 
 func (e *uploadEvents) send(v map[string]any) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	b, _ := json.Marshal(v)
 	_, _ = e.w.Write(append(b, '\n'))
 	_ = e.rc.Flush()
@@ -196,6 +209,70 @@ func NewUploadStickerPackHandler(queries *db.Queries, pool *pgxpool.Pool, store 
 	}
 }
 
+// checkedSticker — файл архива, прошедший проверку.
+type checkedSticker struct {
+	id     uuid.UUID
+	format string
+	data   []byte
+	name   string // имя в архиве — для сообщений об ошибке
+}
+
+// convertWebmFiles — все WEBM пака в анимированный WebP, параллельно (по
+// ядрам, не больше 4), с событием "converting" на каждый готовый. Первая
+// ошибка останавливает остальные.
+func convertWebmFiles(ctx context.Context, store *StickerStore, files []*checkedSticker, ev *uploadEvents) *stickerCheckError {
+	var webm []*checkedSticker
+	for _, f := range files {
+		if f.format == "webm" {
+			webm = append(webm, f)
+		}
+	}
+	if len(webm) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ev.stage("converting", map[string]any{"index": 0, "total": len(webm)})
+	workers := min(max(runtime.NumCPU(), 1), 4)
+	jobs := make(chan *checkedSticker)
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		done     int
+		firstErr *stickerCheckError
+	)
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for f := range jobs {
+				webp, err := convertWebm(ctx, store.ffmpeg, store.Dir, f.name, f.data)
+				mu.Lock()
+				if err != nil {
+					if firstErr == nil || firstErr.Code == "cancelled" {
+						firstErr = err
+					}
+					cancel()
+				} else {
+					f.format, f.data = "webp", webp
+					done++
+					ev.stage("converting", map[string]any{"index": done, "total": len(webm), "name": f.name})
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, f := range webm {
+		if ctx.Err() != nil {
+			break
+		}
+		jobs <- f
+	}
+	close(jobs)
+	wg.Wait()
+	return firstErr
+}
+
 // storeStickerPack — распаковка, проверка, сохранение и регистрация пака.
 func storeStickerPack(
 	ctx context.Context, queries *db.Queries, pool *pgxpool.Pool, store *StickerStore,
@@ -217,12 +294,7 @@ func storeStickerPack(
 		return none, &stickerCheckError{Code: "archive.tooMany", Limit: maxStickersPerPack}
 	}
 
-	type checked struct {
-		id     uuid.UUID
-		format string
-		data   []byte
-	}
-	files := make([]checked, 0, len(entries))
+	files := make([]*checkedSticker, 0, len(entries))
 	for i, e := range entries {
 		if ctx.Err() != nil {
 			return none, &stickerCheckError{Code: "cancelled"}
@@ -236,7 +308,14 @@ func storeStickerPack(
 		if checkErr != nil {
 			return none, checkErr
 		}
-		files = append(files, checked{id: uuid.New(), format: format, data: data})
+		if format == "webm" && store.ffmpeg == "" {
+			return none, &stickerCheckError{Code: "file.webm", Name: e.name}
+		}
+		files = append(files, &checkedSticker{id: uuid.New(), format: format, data: data, name: e.name})
+	}
+	// WEBM — после проверки всего архива (не тратить время на пак с ошибкой)
+	if err := convertWebmFiles(ctx, store, files, ev); err != nil {
+		return none, err
 	}
 
 	packID := uuid.New()

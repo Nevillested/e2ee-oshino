@@ -109,13 +109,12 @@ func leadingNumber(s string) (int, string) {
 	return n, s[i:]
 }
 
-// inspectSticker — тип, объём и размеры одного файла; формат — png, webp или tgs.
+// inspectSticker — тип, объём и размеры одного файла; формат — png, webp,
+// tgs или webm (его потом перекодирует convertWebm).
 func inspectSticker(name string, data []byte) (string, *stickerCheckError) {
-	ext := strings.ToLower(path.Ext(name))
-	if ext == ".webm" {
-		return "", &stickerCheckError{Code: "file.webm", Name: name}
-	}
 	switch {
+	case len(data) >= 4 && bytes.Equal(data[0:4], []byte{0x1A, 0x45, 0xDF, 0xA3}):
+		return checkWebmSticker(name, data)
 	case bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")):
 		return checkStaticSticker("png", name, data)
 	case len(data) >= 12 && bytes.Equal(data[0:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")):

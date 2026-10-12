@@ -1,8 +1,14 @@
 package com.oshinobu.app.ui.chat
 
 import android.graphics.BitmapFactory
-import android.widget.Toast
+import android.graphics.ImageDecoder
+import android.graphics.drawable.AnimatedImageDrawable
+import android.graphics.drawable.Drawable
+import android.os.Build
 import android.util.LruCache
+import android.widget.ImageView
+import android.widget.Toast
+import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -25,8 +31,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -46,6 +52,7 @@ import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -74,6 +81,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.airbnb.lottie.LottieComposition
 import com.airbnb.lottie.LottieCompositionFactory
 import com.airbnb.lottie.compose.LottieAnimation
@@ -89,14 +97,14 @@ import com.oshinobu.app.ui.theme.LocalAppColors
 import com.oshinobu.core.net.StickerInfo
 import com.oshinobu.core.net.StickerPackInfo
 import com.oshinobu.core.service.StickerFile
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.zip.GZIPInputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.io.File
-import java.util.concurrent.ConcurrentHashMap
-import java.util.zip.GZIPInputStream
 
 /** Стикер в переписке — без пузыря; бо́льшая сторона — такая доля ширины экрана. */
 private const val StickerScreenFraction = 0.45f
@@ -120,6 +128,28 @@ private object StickerMemory {
 
     fun rememberAspect(file: File, width: Int, height: Int) {
         if (width > 0 && height > 0) aspects[file.path] = width.toFloat() / height
+    }
+
+    private val animatedWebp = ConcurrentHashMap<String, Boolean>()
+
+    fun isAnimatedWebp(file: File): Boolean? = animatedWebp[file.path]
+
+    /**
+     * Анимированный ли WebP (видеостикер — сервер перекодирует в него WEBM):
+     * заголовок VP8X с флагом анимации; заодно — пропорции холста.
+     */
+    fun probeWebp(file: File): Boolean {
+        animatedWebp[file.path]?.let { return it }
+        val h = ByteArray(30)
+        val n = runCatching { file.inputStream().use { it.read(h) } }.getOrDefault(0)
+        val animated = n >= 30 && String(h, 0, 4, Charsets.US_ASCII) == "RIFF" &&
+            String(h, 8, 8, Charsets.US_ASCII) == "WEBPVP8X" && (h[20].toInt() and 0x02) != 0
+        if (animated) {
+            fun u24(at: Int) = (h[at].toInt() and 0xFF) or ((h[at + 1].toInt() and 0xFF) shl 8) or ((h[at + 2].toInt() and 0xFF) shl 16)
+            rememberAspect(file, u24(24) + 1, u24(27) + 1)
+        }
+        animatedWebp[file.path] = animated
+        return animated
     }
 
     fun animation(file: File): LottieComposition? = animations.get(file.path)
@@ -151,14 +181,59 @@ fun StickerFileView(file: File, animated: Boolean, modifier: Modifier = Modifier
         val progress by animateLottieCompositionAsState(composition, iterations = LottieConstants.IterateForever)
         LottieAnimation(composition, { progress }, modifier)
     } else {
-        var bitmap by remember(file.path) { mutableStateOf(StickerMemory.bitmap(file)) }
+        // видеостикер (анимированный WebP) играет только с Android 9; раньше — первый кадр картинкой
+        var animatedWebp by remember(file.path) { mutableStateOf(StickerMemory.isAnimatedWebp(file)) }
         LaunchedEffect(file.path) {
-            if (bitmap == null) bitmap = withContext(Dispatchers.IO) { runCatching { StickerMemory.loadBitmap(file) }.getOrNull() }
-            StickerMemory.aspect(file)?.let { onAspect?.invoke(it) }
+            if (animatedWebp == null) animatedWebp = withContext(Dispatchers.IO) { StickerMemory.probeWebp(file) }
         }
-        val b = bitmap
-        if (b != null) Image(b, null, modifier, contentScale = ContentScale.Fit) else Box(modifier)
+        when {
+            animatedWebp == null -> Box(modifier)
+            animatedWebp == true && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> {
+                LaunchedEffect(file.path) { StickerMemory.aspect(file)?.let { onAspect?.invoke(it) } }
+                AnimatedWebpView(file, modifier)
+            }
+            else -> StaticStickerView(file, modifier, onAspect)
+        }
     }
+}
+
+@Composable
+private fun StaticStickerView(file: File, modifier: Modifier, onAspect: ((Float) -> Unit)?) {
+    var bitmap by remember(file.path) { mutableStateOf(StickerMemory.bitmap(file)) }
+    LaunchedEffect(file.path) {
+        if (bitmap == null) bitmap = withContext(Dispatchers.IO) { runCatching { StickerMemory.loadBitmap(file) }.getOrNull() }
+        StickerMemory.aspect(file)?.let { onAspect?.invoke(it) }
+    }
+    val b = bitmap
+    if (b != null) Image(b, null, modifier, contentScale = ContentScale.Fit) else Box(modifier)
+}
+
+/**
+ * Анимированный WebP — AnimatedImageDrawable (кадры декодирует сам, по
+ * ходу; бесконечный повтор задан в файле). Свой на каждый показ: один
+ * drawable в двух местах сразу не анимируется.
+ */
+@RequiresApi(Build.VERSION_CODES.P)
+@Composable
+private fun AnimatedWebpView(file: File, modifier: Modifier) {
+    var drawable by remember(file.path) { mutableStateOf<Drawable?>(null) }
+    LaunchedEffect(file.path) {
+        drawable = withContext(Dispatchers.IO) { runCatching { ImageDecoder.decodeDrawable(ImageDecoder.createSource(file)) }.getOrNull() }
+    }
+    val d = drawable
+    if (d == null) {
+        Box(modifier)
+        return
+    }
+    DisposableEffect(d) {
+        (d as? AnimatedImageDrawable)?.start()
+        onDispose { (d as? AnimatedImageDrawable)?.stop() }
+    }
+    AndroidView(
+        factory = { context -> ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
+        update = { view -> if (view.drawable !== d) view.setImageDrawable(d) },
+        modifier = modifier,
+    )
 }
 
 /** Растёт, когда стикеры на устройстве появились или пропали (скачан пак, очищен кэш). */

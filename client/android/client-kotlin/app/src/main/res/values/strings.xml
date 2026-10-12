@@ -395,7 +395,7 @@
     <string name="sticker_uploadTitle">New sticker pack</string>
     <string name="sticker_uploadName">Pack name</string>
     <string name="sticker_uploadNameHint">Letters, digits and spaces, up to %1$d characters</string>
-    <string name="sticker_uploadRules">A ZIP archive with up to 120 files. PNG or WebP — static, up to 512 KB and 512×512. TGS — animated, up to 64 KB. Files go in name order.</string>
+    <string name="sticker_uploadRules">A ZIP archive with up to 120 files. PNG or WebP — static, up to 512 KB and 512×512. TGS — animated, up to 64 KB. WEBM — video (VP8/VP9, no sound), up to 256 KB, 3 s and 512×512. Files go in name order.</string>
     <string name="sticker_uploadPick">Choose a ZIP archive</string>
     <string name="sticker_uploadNotZip">Only a ZIP archive can be uploaded</string>
     <string name="sticker_uploadStart">Upload</string>
@@ -418,13 +418,19 @@
     <string name="sticker_err_archiveInvalid">This is not a valid ZIP archive</string>
     <string name="sticker_err_archiveEmpty">There are no files in the archive</string>
     <string name="sticker_err_archiveTooMany">Too many files: at most %1$d stickers per pack</string>
-    <string name="sticker_err_webm">%1$s: WEBM video stickers are not supported</string>
+    <string name="sticker_err_webm">%1$s: the server can\'t process WEBM right now</string>
     <string name="sticker_err_unsupported">%1$s: unsupported file type (PNG, WebP or TGS only)</string>
     <string name="sticker_err_tooLarge">%1$s: file is larger than %2$d KB</string>
     <string name="sticker_err_corrupt">%1$s: the file is damaged</string>
     <string name="sticker_err_dimensions">%1$s: larger than %2$d×%2$d</string>
     <string name="sticker_ok">OK</string>
     <string name="sticker_uploadChange">Change</string>
+    <string name="sticker_stageConverting">Converting video stickers: %1$d of %2$d</string>
+    <string name="sticker_err_badCodec">%1$s: WEBM must be VP8 or VP9 video</string>
+    <string name="sticker_err_hasAudio">%1$s: a video sticker must have no sound</string>
+    <string name="sticker_err_badDuration">%1$s: video is longer than %2$d s or has no duration</string>
+    <string name="sticker_err_convertFailed">%1$s: couldn\'t convert the video</string>
+    <string name="sticker_err_convertTooLarge">%1$s: larger than %2$d KB after conversion — simplify the animation</string>
     <string name="sticker_err_server">Server error, try again later</string>
     <string name="error_stickersFailed">Couldn\'t reach the sticker server</string>
 </resources>
