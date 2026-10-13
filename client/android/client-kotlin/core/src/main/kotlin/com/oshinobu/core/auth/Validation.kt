@@ -1,7 +1,7 @@
 package com.oshinobu.core.auth
 
 // Проверки ввода при регистрации и смене пароля — те же правила, что у
-// сервера (auth.ValidateLogin / password_policy.go) и у Flutter-клиента.
+// сервера (auth.ValidateLogin / password_policy.go).
 // Возвращают ключ локализации ошибки или null.
 
 private val LOGIN = Regex("^[A-Za-z0-9]{3,32}$")

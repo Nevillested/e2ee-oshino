@@ -39,7 +39,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
- * WebRTC на Android (org.webrtc — та же сборка, что под flutter_webrtc).
+ * WebRTC на Android (org.webrtc, сборка webrtc-sdk).
  * Одна фабрика на процесс; видео — дорожки для экрана звонка
  * ([localVideo]/[remoteVideo]) и общий EGL-контекст для их отрисовки.
  *

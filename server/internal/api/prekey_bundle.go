@@ -34,7 +34,7 @@ type ResponseKeys struct {
 	Signature           string  `json:"signature"`
 	// nil (опущено из JSON, см. omitempty) — если у получателя закончились
 	// одноразовые prekeys, см. комментарий у ClaimOneTimePrekey ниже.
-	// client/lib/crypto/x3dh.dart уже готов к отсутствию этого поля.
+	// Клиент (core/.../crypto/X3dh.kt) готов к отсутствию этого поля.
 	OneTimePrekey *string `json:"one_time_prekey,omitempty"`
 }
 
@@ -95,10 +95,9 @@ func NewGetPrekeyBundleHandler(queries *db.Queries) func(http.ResponseWriter, *h
 		//одноразовый ключ — необязательная часть бандла. Раньше пустой пул
 		// (ErrNoRows) заваливал ВСЮ выдачу бандла 409-й ошибкой — новую
 		// переписку с этим человеком нельзя было начать вообще, пока он не
-		// зайдёт в сеть и prekey_replenisher.dart сам не пополнит пул.
-		// X3DH прекрасно работает и без четвёртого DH (см.
-		// client/lib/crypto/x3dh.dart — establishOutgoingRoot уже
-		// обрабатывает one_time_prekey == null), просто без дополнительной
+		// зайдёт в сеть и клиент сам не пополнит пул.
+		// X3DH прекрасно работает и без четвёртого DH (клиент,
+		// core/.../crypto/X3dh.kt, обрабатывает one_time_prekey == null), просто без дополнительной
 		// forward secrecy у самого первого сообщения — гораздо лучше, чем
 		// вообще не суметь написать человеку.
 		var oneTimePrekeyB64 *string

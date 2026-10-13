@@ -9,8 +9,7 @@ E2EE-мессенджер: сквозное шифрование (X3DH + Double 
 ```
 client/
   android/
-    client-kotlin/   нативный Android-клиент (Kotlin/Compose) — то, что в Google Play
-    client/          прежний Flutter-клиент (Dart) — не публиковался, оставлен для справки
+    client-kotlin/   Android-клиент (Kotlin/Compose) — то, что в Google Play
   ios/               будущий iOS-клиент (Swift) — не начат
 server/              Go-сервер (REST + WebSocket), деплоится на московскую VPS
 app-version.properties   версия приложения — одна на сборку Android и версионный шлюз сервера
@@ -21,10 +20,12 @@ app-version.properties   версия приложения — одна на с�
 ## Что это
 
 Приватный E2EE-мессенджер: 1:1-переписка, шифрование Double Ratchet + X3DH (протокол в духе Signal,
-реализован с нуля в `client/android/client/lib/crypto/`, без сторонней crypto-библиотеки для самого протокола).
-Регистрация только по инвайт-коду — открытой публичной регистрации нет.
+реализован с нуля в `client/android/client-kotlin/core/.../crypto/`, без сторонней crypto-библиотеки
+для самого протокола). Регистрация только по инвайт-коду — открытой публичной регистрации нет.
 
-- **Клиент** — Flutter/Dart, `client/android/client/`. Сейчас в закрытом тестировании (closed testing) в Google Play.
+- **Клиент** — Android, Kotlin + Jetpack Compose, `client/android/client-kotlin/`. В закрытом
+  тестировании (closed testing) в Google Play. Первая версия клиента (до `1.0.0+42`) была на
+  Flutter; с `+43` — Kotlin, Flutter-код удалён из репозитория 2026-10-13 (см. «Android-клиент»).
 - **Сервер** — Go, `server/` (основной код — `server/internal/`). Работает на VPS в Москве,
   владелец подключается и деплоит вручную по SSH.
 - Сервер — только маршрутизатор/хранилище опaque-конвертов: ключи, plaintext сообщений и
@@ -37,7 +38,7 @@ app-version.properties   версия приложения — одна на с�
 Клиент A                         Сервер (Go)                      Клиент B
 --------                         -----------                      --------
 X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS--> расшифровка,
-(crypto/*.dart)                  + очередь на диске, если          message_router.dart
+(core/.../crypto)                + очередь на диске, если          MessageRouter
                                   получатель офлайн
                                   (pending_messages, ack за 5с)
 ```
@@ -51,29 +52,39 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
 
 ## Крипто-слой (клиент)
 
-- `crypto/x3dh.dart` — согласование корневого ключа (X3DH: identity + signed-prekey +
+Пути — от `client/android/client-kotlin/core/src/main/kotlin/com/oshinobu/core/`.
+
+- `crypto/X3dh.kt` — согласование корневого ключа (X3DH: identity + signed-prekey +
   опциональный one-time-prekey).
-- `crypto/double_ratchet.dart` — `RatchetState`, шаг рэтчета на приём/отправку, защита от
-  replay (`messageNumber < receiveMessageNumber` → `AlreadyProcessedException`).
-- `crypto/key_store.dart` — identity-ключ (Ed25519) + отдельный подписанный X25519-ключ
-  ("identity_dh") для самого DH (Ed25519 сам по себе для DH не годится — сознательное решение,
-  не недоделка).
-- `crypto/session_store.dart` — персистентное состояние ратчета per-remote-device.
-- `services/message_router.dart` — единая точка входа для всех входящих WS-конвертов:
-  расшифровка, dispatch по `InnerMessage.type` (text/media/reaction/pin/edit/delete/delete_chat/
-  clear_chat/read_receipt), auto-recovery сессии после 3 подряд decrypt-failure
-  (`_onDecryptFailure` → `session_reset`).
-- `services/send_queue_processor.dart` — надёжная исходящая очередь на диске, элемент
-  уходит только по реальному ack от сервера.
+- `crypto/RatchetState.kt` — Double Ratchet: шаг на приём/отправку, пропущенные ключи, защита
+  от replay (`AlreadyProcessedException`).
+- `crypto/StoredIdentity.kt` + `storage/AccountStores.kt` (`KeyStore`) — identity-ключ (Ed25519)
+  + отдельный подписанный X25519-ключ ("identity_dh") для самого DH (Ed25519 сам по себе для DH
+  не годится — сознательное решение, не недоделка).
+- `storage/AccountStores.kt` (`SessionStore`) — состояние ратчета per-remote-device.
+- `crypto/MessageCipher.kt` — AES-GCM тела конверта; заголовочные поля связаны с шифротекстом
+  через AAD. `crypto/FileCiphers.kt` — шифрование вложений. `crypto/Primitives.kt` — X25519/
+  Ed25519 (BouncyCastle), HMAC/HKDF/AES-GCM (javax.crypto).
+- `protocol/InnerMessage.kt` — открытый текст внутри конверта (все типы: text/media/reaction/
+  pin/edit/delete/…/sticker); `protocol/PeerCipher.kt` — сборка и вскрытие конверта.
+- `service/MessageRouter.kt` — единая точка входа для всех входящих конвертов: расшифровка,
+  dispatch по типу, самолечение сессии после 3 подряд сбоев расшифровки (`session_reset`).
+- `service/SendQueueProcessor.kt` — надёжная исходящая очередь на диске, элемент уходит только
+  по реальному ack от сервера; `service/PeerMessenger.kt` — один путь «зашифровать и в очередь».
+- Формат протокола и хранения зафиксирован векторами: `ProtocolVectorsTest`, `StorageVectorsTest`
+  (см. «Android-клиент»).
 
 ## Известные особенности / принятые решения (не баги)
 
-- Домен сервера в `client/android/client/lib/config.dart` — `ee2e.oshino.space` (буквы переставлены
-  относительно "e2ee"). Не опечатка, менять не нужно.
-- Звонки: сигналинг (`call_offer`/`answer`/`ice`) теперь ТОЖЕ шифруется той же Double Ratchet
-  сессией, что и обычные сообщения (см. `call_service.dart` `_encryptCallSignal`/
-  `_decryptCallSignal`) — `call_id`/`sender_device_id`/`type` остаются снаружи в открытом виде
-  (нужны серверу для `PendingCallRegistry`), сервер при этом не менялся вообще.
+- Домен сервера (`ApiConfig` в `core/.../net/ApiClient.kt`) — `ee2e.oshino.space` (буквы
+  переставлены относительно "e2ee"). Не опечатка, менять не нужно.
+- Звонки: сигналинг (`call_offer`/`answer`/`ice`) шифруется той же Double Ratchet сессией, что и
+  обычные сообщения (`PeerMessenger.sealCallSignal` / `MessageRouter.openCallSignal`) —
+  `call_id`/`sender_device_id`/`type` остаются снаружи в открытом виде (нужны серверу для
+  `PendingCallRegistry`).
+- Фото профиля, обои чатов и стикеры хранятся на сервере НЕ зашифрованными (решения владельца):
+  аватар и обои должны переживать переустановку, когда ключей устройства уже нет; стикеры —
+  общие паки.
 
 ## Границы доверия
 
@@ -83,8 +94,8 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
 
 ## Хранилище медиа и передача файлов (инфраструктура)
 
-Все медиа/файлы шифруются на клиенте (AES-GCM: `crypto/streaming_file_cipher.dart` для
-чанковых, `crypto/media_cipher.dart` для мелких) ещё ДО загрузки. Сервер и хранилище видят
+Все медиа/файлы шифруются на клиенте (AES-GCM, `core/.../crypto/FileCiphers.kt`:
+`StreamingFileCipher` для больших, `MediaCipher` для мелких) ещё ДО загрузки. Сервер и хранилище видят
 только шифротекст; ключ расшифровки едет внутри Double-Ratchet-конверта.
 
 **Топология — простая звезда:**
@@ -109,25 +120,22 @@ X3DH/Double Ratchet   --WS-->    маршрутизация по device_id --WS-
   только бакет `e2ee-media`, не рут). `MINIO_PUBLIC_ENDPOINT` / `MINIO_PUBLIC_SECURE` в `.env`
   остались от снятой presigned-схемы (см. ниже) — не используются.
 
-**Единственный путь передачи файлов — через московский сервер** (`services/media_upload.dart`,
-`services/media_download_manager.dart`, `api/api_client.dart`):
+**Единственный путь передачи файлов — через московский сервер** (`core/.../service/MediaUploader.kt`,
+`service/MediaDownloadManager.kt`, `net/ApiClient.kt`; транспорт — OkHttp):
 
-- **Нечанковый файл (≤ 20 МБ):** `POST /upload-media` (multipart). Транспорт — обычный
-  dart:io (`ApiClient._uploadClient`), НЕ Cronet: Cronet буферизует тело запроса целиком и
-  `onSendProgress` врёт (прыгает на 100% заранее). Сервер сам кладёт объект в MinIO по FRP.
+- **Нечанковый файл (≤ 20 МБ):** `POST /upload-media` (multipart), прогресс — по реально
+  отправленным байтам. Сервер сам кладёт объект в MinIO по FRP.
 - **Чанковый файл (> 20 МБ):** `POST /upload-media/init` → части
   `PUT /upload-media/{id}/part/{n}` **строго последовательно, одним потоком** (1→2→3→…),
   каждая — 8 МБ, читается с диска разово → `POST /upload-media/{id}/complete` (сервер
   собирает по `ListObjectParts`). Прогресс растёт ровными шагами по числу подтверждённых
   частей (честного in-flight прогресса на этом шаге нет и не пытаемся). Докачка/резюм —
   истина у MinIO (`GET /upload-media/{id}/parts`); упавший сетевой шаг повторяется с
-  нарастающим backoff (`_retryChunkedStep`), зашифрованный temp-файл переживает перезапуск
-  приложения (`chunked_uploads/`, `ChunkedUploadSessionStore`).
+  нарастающей паузой, зашифрованный temp-файл переживает перезапуск приложения
+  (`chunked_uploads/`, `ChunkedUploadSessionStore`).
 - **Скачивание:** `GET /media/{id}` с заголовком `Range: bytes=<есть>-` — докачка с места
-  обрыва (`downloadEncryptedMediaResumable`), один поток, прогресс монотонный. Транспорт —
-  Cronet (`onReceiveProgress` не врёт, QUIC полезен). `.part`-хвост персистится
-  (`PartialDownloadStore`), на старте приложения обе очереди (`MediaDownloadManager`,
-  ручная + авто) докачиваются с места обрыва.
+  обрыва, один поток, прогресс монотонный. `.part`-хвост остаётся на диске, на старте
+  приложения обе очереди (`MediaDownloadManager`, ручная + авто) докачиваются с места обрыва.
 
 **Горячий буфер на Москве + NAS как архив (2026-10-08, сервер — код готов, НЕ задеплоен).**
 NAS часто выключен или его датасет не разблокирован (зашифрован, разблокируется вручную после
@@ -156,7 +164,7 @@ NAS часто выключен или его датасет не разблок
   состояния «доступен/недоступен». Заодно уборка: `.tmp` > 1 ч, брошенные чанковые загрузки
   > 3 дней, файлы без строки в БД (удалённый аккаунт) > 1 дня.
 - В буфере — тот же шифротекст, что и в MinIO; новых данных серверу не открывается.
-- Аватары по-прежнему только в MinIO (в эту задачу сознательно не включены).
+- Аватары в MinIO больше не лежат — с `023_account_avatar_image.sql` они в базе на Москве.
 
 **Снятая presigned-URL схема (история, чтобы не возвращаться).** Была: клиент PUT/GET байт
 напрямую в MinIO по presigned-URL через отдельный relay-VPS в Японии с nginx+TLS
@@ -184,12 +192,8 @@ NAS часто выключен или его датасет не разблок
 - На Москве: BBR + `fq` + расширенные TCP-буферы (`/etc/sysctl.d/99-oshino-net.conf`),
   в nginx для медиа `proxy_request_buffering off` / `proxy_buffering off` /
   `client_max_body_size 0` / `proxy_read_timeout 600s`.
-- На клиенте (Android): аппаратный потоковый AES-256-GCM для файлов
-  (`android/.../FileCipher.kt`, MethodChannel `oshinobu/file_cipher`, формат блоков
-  байт-в-байт как у `StreamingFileCipher.dart`, кросс-проверка
-  `test/streaming_file_cipher_interop_test.dart`) — шифрование большого файла из минут в
-  секунды; на iOS/desktop/при сбое канала — прежний чистый Dart в `compute`-изоляте.
-  Транспорт медиа-запросов на скачивании — Cronet (`cronet-embedded`, HTTP/2 + QUIC).
+- На клиенте: потоковый AES-256-GCM через javax.crypto (на Android — аппаратный), блоками по
+  4 МБ (`StreamingFileCipher`).
 
 ## Осакский VPS — личный VPN (в тракте мессенджера НЕ участвует)
 
@@ -210,583 +214,105 @@ NAS часто выключен или его датасет не разблок
 - Проверено: подключается с реальных телефонов из РФ (российские хостеры типа Sakura реже
   попадают в блок-листы, чем международные «VPN-friendly» — Vultr/DO/Linode/Melbicom).
 
-## Переезд на нативный Kotlin (`client/android/client-kotlin/`, начат 2026-10-08)
+## Android-клиент (`client/android/client-kotlin/`)
 
-Решение владельца: постепенно переписать клиент с Flutter на нативный Kotlin, **сохранив весь
-функционал**, кроме одного: **чат «Заметки» убирается совсем и навсегда** — и с клиента, и с
-сервера (им никто не пользуется). Вместо него: если в поиске вбить свой логин, тап открывает
-свой профиль (одна из трёх вкладок главного экрана). Серверную часть «Заметок» убирать только
-когда ни один выпущенный клиент её не использует (сейчас на устройствах Flutter `+42`).
+Kotlin + Jetpack Compose. `applicationId` — `com.oshinobu.oshinobu_client` (не менять: это само
+приложение в Google Play). Подпись — `oshinobu-release.jks`, путь и пароли — в локальном
+`client/android/client-kotlin/keystore.properties` (в git не попадает).
 
-**Принципы:**
-- `client/android/client/` (Flutter) не трогается ради переезда и продолжает выходить в Google Play, пока
-  Kotlin не догонит его по функциям. Откат = просто не выпускать Kotlin-сборку.
-- Kotlin-приложение — тот же `applicationId` (`com.oshinobu.oshinobu_client`), ставится поверх
-  Flutter и обязано прочитать его данные (ключи, сессии ratchet, переписку, настройки) — иначе
-  у пользователя пропадут чаты.
-- Протокол — байт-в-байт: пока часть людей на Flutter, Kotlin- и Flutter-клиенты обязаны
-  понимать друг друга. Проверяется двусторонними векторами (см. ниже), не на глаз.
+**История.** До `1.0.0+42` клиент был на Flutter/Dart. 2026-10-08…09 переписан на Kotlin с
+сохранением функций (кроме чата «Заметки» — убран; вместо него поиск своего логина открывает
+свой профиль), с `+43` в Play выходит Kotlin-сборка, поставленная поверх Flutter с тем же
+`applicationId`. Flutter-код удалён из репозитория 2026-10-13; он и его
+описание остались в истории git: `git show 168d527:README.md`, `git show 168d527:client/android/client/…`.
 
-**Модули:** `:core` — чистый Kotlin/JVM без Android (собирается и тестируется на любой машине с
-JDK); дальше `:app` — Android (Jetpack Compose).
+**Модули:**
+- `:core` — чистый Kotlin/JVM без Android: криптография, протокол, сеть, хранилища, сервисы.
+  Собирается и тестируется на любой машине с JDK.
+- `:flutter-compat` — Android-реализация хранилищ ядра (`SecureStore`/`Prefs`/`AppDirs`).
+  **Формат хранения унаследован от Flutter-версии и не меняется**: на нём лежат ключи,
+  сессии и переписка всех установленных копий. Отсюда «flutter» в именах: файл
+  `FlutterSharedPreferences` с ключами `flutter.*`, папка `app_flutter`, вендорный Java-код
+  flutter_secure_storage 10.3.1 (BSD-3; пакет `com.it_nomads.fluttersecurestorage` не менять —
+  от него зависят имена файлов и ключей Keystore). Самого Flutter в проекте нет.
+- `:app` — Android: экраны (Compose), уведомления и пуши, звонки, передачи в фоне.
 
-**Части:**
-- [x] **1. Ядро: криптография и формат конвертов (2026-10-08)** — `core/.../crypto`:
-      `Primitives.kt` (X25519/Ed25519 через BouncyCastle RFC 7748/8032, HMAC/HKDF/AES-GCM через
-      javax.crypto), `MessageCipher.kt` (AAD посимвольно как в Dart), `RatchetState.kt` (тот же
-      JSON состояния, что пишет Dart), `X3dh.kt`, `FileCiphers.kt` (целиком и потоково — формат
-      `StreamingFileCipher`/`FileCipher.kt`), `StoredIdentity.kt` (ключи устройства в формате
-      Flutter secure storage — те же имена ключей); `core/.../protocol`: `InnerMessage.kt` (все
-      13 типов), `PeerCipher.kt` (сборка/вскрытие конверта как `peer_messenger`/`message_router`).
-      **Совместимость проверена в обе стороны:** `client/android/client/test/kotlin_interop_test.dart` гоняет
-      НАСТОЯЩИЙ Dart-код (KeyStore, X3DH c одноразовым prekey, ответы в обе стороны со сменой
-      эпох, сообщения не по порядку, дубль, шифры файлов) и пишет
-      `core/src/test/resources/vectors/dart_transcript.json`; `DartInteropTest.kt` расшифровывает
-      его и сверяет JSON состояния ratchet после КАЖДОГО шага, затем пишет
-      `kotlin_transcript.json` — его так же проверяет Dart-тест. Оба зелёные.
-- [x] **2. Сеть (2026-10-08)** — `core/.../net`: `ApiClient.kt` (все эндпоинты
-      `api_client.dart` — те же пути, тела, коды; ошибки — `ApiException(errorKey)` с ключом
-      локализации Flutter, напр. `error.loginTaken`; загрузка multipart с прогрессом и именем
-      `encrypted.bin`, части чанковой загрузки, докачка по Range с обработкой 416, отмена через
-      корутину; `confirmMediaReceived`), `WebSocketClient.kt` (кадры `Type/DeliveryId/Ciphertext`,
-      `isConnected` = сокет есть И рукопожатие завершено, таймаут готовности 8 с, переподключение
-      через 3 с с проверкой `/session/check` → `sessionInvalidated`, авто-ack `call_*`, ожидание
-      соединения до 5 с для сигналов звонка, presence/typing/foreground). Сеть устройства
-      (ConnectivityManager) подаётся из Android-слоя: `onNetworkAvailable/onNetworkLost`.
-      Тесты на MockWebServer (`NetTest.kt`): тела запросов, ключи ошибок, multipart, Range-докачка,
-      кадры WS, авто-ack звонка, переподключение, «сессия недействительна».
-- [x] **3. Хранилище (2026-10-08).** Решение: **никакой миграции** — Kotlin работает прямо с
-      хранилищами Flutter в их формате (тогда и установка поверх Flutter, и откат обратно на
-      Flutter ничего не теряют). `core/.../storage`: интерфейсы `SecureStore`
-      (flutter_secure_storage) / `Prefs` (shared_preferences: файл `FlutterSharedPreferences`,
-      ключи `flutter.*`) / `AppDirs` (app_flutter / files / cache); `StoredMessage` + `ChatSummary`
-      (тот же JSON), `ChatStore` (все операции: дубли, надгробия, превью-маркеры, звонки, заглушки
-      нерасшифрованных, пины, мьюты/блоки, синхронизация с сервером), `KeyStore`, `SessionStore`,
-      очереди `SendQueueStore`/`PendingSendStore`, `ChunkedUploadSessionStore`,
-      `DownloadQueueStore`, `MediaFiles`, `AppLockStore` (PIN = hex(SHA-256(pin‖salt))),
-      `UiSettings`, `MyProfile`. Чат «Заметки» (`__notes__`) Kotlin скрывает (данные не трогает —
-      ради отката). **Совместимость проверена в обе стороны:**
-      `client/android/client/test/kotlin_storage_interop_test.dart` ↔ `StorageInteropTest.kt` (настоящий Dart-код
-      заполняет хранилище — Kotlin читает тем же видом, и наоборот).
-      Android-половина — модуль `:flutter-compat`: исходники flutter_secure_storage 10.3.1
-      (BSD-3, без Flutter-обёртки; пакет `com.it_nomads.fluttersecurestorage` не менять — от него
-      зависят имена файлов/ключей Keystore) + `FlutterStores.kt`: `FlutterSecureStoreAdapter` с
-      ТЕМИ ЖЕ AndroidOptions по умолчанию, `FlutterPrefsAdapter` (`FlutterSharedPreferences`,
-      `flutter.*`, Long/double-префикс/JSON-список), `flutterAppDirs` (app_flutter/files/cache).
-      `:flutter-compat` собирается (`assembleDebug`, 2026-10-09); проверка на устройстве поверх
-      установленной Flutter-сборки — когда будет готов `:app`.
-- [x] **4. Сервисы (2026-10-08; Android-часть — 2026-10-09)** — `core/.../service`, платформенные эффекты через
-      интерфейсы (`RouterHost`: звук/уведомление/вибрация/открытый чат; `Logger`), транспорт —
-      интерфейс `Transport` (реализует `WebSocketClient`):
-  - [x] `SendQueueProcessor` (надёжная очередь до ack, 8 с + поздний ack, переотправка на
-        реконнект), `AckRegistry`, `KeyedMutex` (= SendLock по device_id).
-  - [x] `PeerMessenger` — ОДИН путь "зашифровать и в очередь" вместо трёх копий во Flutter
-        (peer_messenger / control_message_sender / message_resend); `DeviceSetup`
-        (регистрация устройства + пополнение одноразовых prekey ≤5 → 20).
-  - [x] `MessageRouter` — все правила ack/самолечения/заглушек Flutter-версии, все 13 типов,
-        события реакций/удалений; `MessageCleanup` (следы удалённых сообщений).
-        Чистка по сравнению с Flutter: у медиа поле `text` пустое (во Flutter туда клалась
-        русская заглушка «📷 Фото», которую потом отфильтровывали по эмодзи), у звонка — тоже.
-  - [x] Сквозной тест `ServicesE2ETest.kt`: два клиента через фейковый сервер (ack, офлайн-очередь,
-        передоставка) — X3DH с одноразовым ключом, смена эпох, служебные без звука, повторная
-        доставка без дублей, удаление у обоих, офлайн-получатель, потеря сессии → заглушка
-        (одна на повторы), самолечение через session_reset. Стабилен (5/5 прогонов).
-  - [x] **Файлы:** `PendingSendJob` (типизированные задания, тот же JSON `pending_send_queue`;
-        задания «Заметок» из Flutter снимаются), `MediaUploader` (≤20 МБ целиком, больше — потоково
-        + части по 8 МБ последовательно с докачкой и 5 попытками на шаг; исходник сразу в кэш),
-        `PendingSendRetrier` (один рабочий цикл, повтор по кнопке, отмена задания / одного файла
-        группы, строки панели передач), `UploadCancellations` (отмена ОДНОЙ загрузки дочерней
-        корутиной — вместо dio CancelToken), `MediaDownloadManager` (ручная и авто-очередь < 3 МБ,
-        докачка по Range, кулдаун 20 с, ожидающие экраны, `confirmMediaReceived`).
-        Улучшения против Flutter: этап загрузки хранится КЛЮЧОМ локализации (`chat.encrypting`…),
-        а не переведённой строкой (та "замерзала" на старом языке); решение о FGS-уведомлении
-        передачи — поток состояния (`downloadingManually`, `activeJobId`) для Android-слоя, а не
-        вызов сервиса изнутри менеджера; шифрование файлов сразу через javax.crypto (на Android —
-        аппаратный AES), без «нативный путь + Dart-фолбэк».
-        Сквозной `MediaE2ETest.kt` (стенд `TestNetwork.kt` с медиа-эндпоинтами): файл целиком +
-        скачивание + `received`; 21 МБ частями с упавшей частью; группа с подписью и спойлером
-        одним конвертом. Стабилен (4/4).
-  - [x] **Профили, аватары, свой аккаунт, диагностика:** `RemoteCache<T>` — ОДИН обобщённый
-        кэш (память с TTL 3 мин, копия на диске отдаётся сразу + фоновое обновление с
-        уведомлением, объединение одновременных запросов, сбой сети не затирает значение,
-        поколения против устаревших ответов) вместо двух почти одинаковых классов Flutter
-        (PeerProfileCache, AvatarCache); поверх — `PeerProfiles`, `Avatars` (те же файлы на диске);
-        `MyAccount` (профиль/аватар/почта как StateFlow + копия на диске); `FileLogger` (тот же
-        debug_log.txt, ≤1 МБ) и `CrashReporter` (не чаще раза в 30 мин, последние 500 КБ).
-        Тесты `CachesTest.kt`.
-  - [x] `OshinobuCore` — контейнер, собирающий и связывающий всё ядро; платформа даёт только
-        SecureStore/Prefs/AppDirs/RouterHost. `startSession()` — регистрация устройства,
-        очереди, роутер, соединение, пополнение ключей.
-  - [x] `ChatActions` (мьют/блок с откатом, очистка/удаление чата, обновление собеседника) и
-        `ChatService` (текст, пересылка, правка, реакции, закреп, удаление у себя/у обоих,
-        квитанции о прочтении только по ack, отмена/повтор отправки, медиа и альбомы, голосовые
-        и кружки, ручной сброс шифрования). Тест `ChatServiceTest.kt`.
-  - [x] Android-часть сервисов (2026-10-09, `app/.../system`, `AndroidRouterHost`): пуши FCM
-        (`PushService` — тот же проект Firebase и `google-services.json`; токен отдаётся серверу
-        при каждом запуске сессии — `core.sessionActive`; «message» в фоне → общее уведомление;
-        `call`/`call_cancel` — в части 6), FGS `TransfersService` (включается/выключается по
-        потокам ядра `downloadingManually` + `activeJobId`, тексты «скачивание / выгрузка / и то и
-        другое»), локальные уведомления, звук, вибрация, ConnectivityManager →
-        `ws.onNetworkAvailable/Lost`, запрос разрешения на уведомления (Android 13+).
-- [x] **5. Экраны (Compose) (2026-10-09)** — модуль `:app` (applicationId
-      `com.oshinobu.oshinobu_client`, namespace `com.oshinobu.app`), строки сгенерированы из
-      `app_strings.dart` в `res/values{,-ru}/strings.xml`, язык приложения независимо от системы,
-      тема — порт `AppColors`, навигация — Navigation Compose.
-  - [x] Заставка, вход, регистрация, TOTP (QR), восстановление пароля/TOTP.
-  - [x] Главный экран: 3 вкладки со свайпом, поиск (свой логин → вкладка профиля; «Заметок»
-        нет), список чатов с меню (закреп/мьют/блок/очистить/удалить). Профиль (аватар, имя,
-        «о себе», день рождения). Настройки — как во Flutter, окнами поверх вкладки: почта
-        (адрес → код; отправленный код можно ввести 25 мин и после перезапуска —
-        `PendingEmailVerification`), смена пароля, приватность, блокировка приложения, о
-        приложении, тема, язык, размер шрифта, реакция по умолчанию, кэш, выход, удаление.
-  - [x] Блокировка приложения (`ui/lock`): PIN-клавиатура, экран блокировки поверх всего,
-        биометрия (androidx.biometric; после 3 неудач — только PIN), блокировка после фона
-        дольше заданного времени. `AppLockStore.state` — поток для UI.
-  - [x] Чат (`ui/chat`): лента снизу вверх с восстановлением места (якорь «сообщение + сдвиг»
-        вместо пиксельного offset Flutter — `chat_scroll_anchor:`), шапка (присутствие,
-        «печатает…», передачи, звонок, поиск, сброс шифрования), закреп, ответы с переходом и
-        вспышкой, правка, пересылка (экран выбора чата), реакции (меню с частыми первыми,
-        двойной тап — реакция по умолчанию, «хлопок» при появлении), выбор долгим тапом с
-        протяжкой, свайп влево — ответ, вправо — назад, удаление у себя/у обоих с анимацией
-        «рассыпания» (и при удалении собеседником), жалоба, поиск (переход по совпадениям и
-        списком), квитанции, блокировки, заглушки звонков и нерасшифрованных, ссылки, время
-        внутри последней строки текста. Медиа: фото/видео/файлы с состояниями отправки и
-        скачивания (кольцо с %, очередь, отмена, повтор), альбомы, спойлер (размытие + частицы),
-        просмотрщик (листание, щипок/двойной тап, свайп для закрытия, видео, сохранить в
-        галерею), открыть файл / сохранить в «Загрузки», голосовые и видео-кружки (один
-        `MediaPlayer` на чат + панель управления), запись голосовых (AAC) и кружков (CameraX,
-        смена камеры во время записи) с жестами фиксации/отмены, панель эмодзи на месте
-        клавиатуры без прыжков поля ввода, вставка картинок/GIF с клавиатуры, панель передач.
-  - Галерея (2026-10-09, по решению владельца — как во Flutter): своя шторка с сеткой фото и
-        видео из MediaStore (новые сверху, обновляется сама), первая плитка — живая камера
-        (тап — свой экран съёмки с подписью), выбор с номерами порядка, просмотр на весь экран
-        с видео и перемоткой, «скрыть под спойлером», подпись с эмодзи; частичный доступ к
-        фото на Android 14 — плашка «разрешить полный доступ».
-  - Главный экран (2026-10-09, правки владельца — как во Flutter): вместо надписи «Oshinobu» —
-        живой статус соединения с сервером (поиск вырастает справа поверх него); вкладки —
-        плавающая овальная панель по центру поверх списка, а не полоса во всю ширину.
-  - **Обязательная версия приложения (2026-10-09, решение владельца: версия не совпадает —
-        приложение заблокировано без вариантов).** Сервер (`internal/api/app_version.go`):
-        `APP_VERSION_CODE` (versionCode; 0/не задан — проверка выключена) и `APP_APK_URL`;
-        `GET /app/version` отдаёт их всем, остальные запросы и WebSocket от клиента с другой
-        версией (заголовок `X-App-Version`, нет или не та) — `426` с теми же данными. Клиент
-        шлёт версию в каждом запросе, проверяет `/app/version` при запуске и возвращении в
-        приложение, любой 426 — сразу экран «Нужно обновить приложение» (`ui/update`), назад —
-        только свернуть. Обновление: поставлено из Google Play — In-App Update (немедленное);
-        APK-файлом — скачивание по `APP_APK_URL` внутри приложения с прогрессом и установщик.
-        **Порядок выпуска:** сначала новая сборка доступна (Play прошёл проверку, APK лежит по
-        ссылке), только потом поднимать `APP_VERSION_CODE` и перезапускать сервер.
-  - **Решение владельца (2026-10-09): Flutter-клиент не публиковался — совместимость с Dart
-        больше не нужна, ориентир Kotlin ↔ Kotlin; всех обновят принудительно.**
-**Сборка и тесты (с 2026-10-09).** Инструменты на машине разработки лежат на 1ТБ-диске
-(системный почти полон): `/mnt/old/oshinobu-tools/` — JDK 17, Android SDK (platform 36,
-build-tools 35/36), кэш Gradle; диск сам расшифровывается ключ-файлом и монтируется при
-загрузке. Окружение: `source /mnt/old/oshinobu-tools/env.sh`, затем в `client/android/client-kotlin/`:
-`./gradlew :core:test` (ядро), `./gradlew assembleDebug` (Android). Путь к SDK — в
-`client/android/client-kotlin/local.properties` (не в git). Тесты совместимости с Dart:
-`flutter test test/kotlin_interop_test.dart test/kotlin_storage_interop_test.dart` (в `client/android/client/`),
-их пара — `DartInteropTest`/`StorageInteropTest`.
-Статус на 2026-10-09: 37 Kotlin-тестов ядра + 4 Dart-теста совместимости — все зелёные;
-`:app` компилируется без предупреждений (APK по решению владельца пока не собираем — проверка
-на устройстве после того, как будет готово всё).
-- [x] **6. Звонки (2026-10-09).** Ядро — `core/.../service/CallManager.kt` (порт
-      `call_service.dart`): весь сигнальный протокол (offer/answer/ICE с очередью кандидатов до
-      удалённого описания, renegotiation по perfect negotiation — вежливая сторона принимающая,
-      busy, reject, cancel, end, `call_unavailable` → запись + «пропущенный звонок» собеседнику,
-      запись звонка в чат), сигналы шифруются той же сессией ratchet
-      (`PeerMessenger.sealCallSignal` / `MessageRouter.openCallSignal`, сбои участвуют в
-      самолечении); WebRTC — за интерфейсом `RtcEngine`. Статусы — ключи локализации. Тест
-      `CallManagerTest.kt` (два клиента на стенде, фейковый WebRTC): ответ с ICE до описания,
-      отказ, «занято», видео с renegotiation, отказ через сервер, недоступный собеседник.
-      Android (`app/.../call`): `WebRtcEngine` (io.github.webrtc-sdk 144.7559.09 — та же сборка,
-      что под flutter_webrtc 1.6.0), `CallAudio` (выходы: у уха/громкая/проводные/Bluetooth,
-      список при Bluetooth, гашение экрана у уха, гудки), `CallRingService` (рингтон/вибрация по
-      режиму телефона, полноэкранное уведомление с «ответить/отклонить», 45 с, второй звонок —
-      «занято» через `/calls/decline`), `OngoingCallService` («идёт разговор» + «завершить»),
-      `CallActionReceiver`, `CallController` (всё это — по состоянию ядра; громкая связь при
-      первом видео собеседника), пуши `call`/`call_cancel`. Экраны: звонок (видео, своё окошко
-      с перетаскиванием, микрофон/камера/смена камеры/звук/завершить, выбор выхода), входящий,
-      полоса «вернуться к звонку» (главный экран и чат), картинка-в-картинке (авто при видео
-      собеседника, кнопка «свернуть»), показ поверх блокировки и разблокировка при уходе с
-      экрана звонка, разрешения (микрофон, камера, полноэкранный звонок на Android 14+).
-      Упрощения против Flutter (нет Flutter-движка в процессе): отклонение из уведомления и
-      пропущенный звонок пишутся прямо ядром — без `PendingMissedCallStore`/`CallCredentials`.
-  - **Исправления протокола, найденные тестами (Kotlin-сторона, совместимо с Flutter):**
-        1) X3DH-поля исходящей сессии прикладываются к каждому сообщению, пока собеседник не
-        ответил (как в Signal; ключ `x3dh_init:<device>`): раньше они были только в ПЕРВОМ, и
-        потерянный первый сигнал звонка (сигналы не стоят в очереди) делал сессию мёртвой у
-        получателя. Flutter-получатель такие поля при живой сессии просто игнорирует.
-        2) Отказ через сервер (`/calls/decline`, когда приложение собеседника не на связи)
-        приходит звонящему незашифрованным `{}` без отправителя — Flutter такой сигнал
-        отбрасывает и продолжает гудеть; Kotlin при исходящем звонке завершает его с
-        «отклонён»/«занято».
-- [ ] **7. Проверка на устройстве** (по решению владельца — когда готово всё): APK поверх
-      Flutter `+42` — данные Flutter читаются (ключи, переписка, настройки, PIN); переписка,
-      файлы и звонки Kotlin ↔ Flutter в обе стороны; пуши (FCM) при закрытом приложении;
-      звонок поверх блокировки; откат обратно на Flutter-сборку.
-- [ ] **8. Выпуск** Kotlin-сборки вместо Flutter; когда на устройствах не останется Flutter-
-      клиентов — удалить «Заметки» на сервере.
+**Ядро** (`core/src/main/kotlin/com/oshinobu/core/`):
+- `crypto/`, `protocol/` — см. «Крипто-слой» выше.
+- `net/` — `ApiClient` (REST; ошибки — `ApiException` с ключом локализации вроде
+  `error.loginTaken`, переводит слой интерфейса — `app/.../ui/Messages.kt`), `WebSocketClient`
+  (кадры `Type/DeliveryId/Ciphertext`, `isConnected` = сокет есть И рукопожатие завершено,
+  переподключение с проверкой `/session/check`, авто-ack сигналов звонка; события
+  `profile_updated`, `block_status_changed`, `wallpaper_changed`, presence/typing).
+- `storage/` — `ChatStore` (история, надгробия удалённых, превью-маркеры, пины, мьюты/блоки),
+  `KeyStore`, `SessionStore`, очереди отправки и скачивания, `MediaFiles`, `AppLockStore`
+  (PIN = hex(SHA-256(pin‖salt))), `UiSettings`, `MyProfile`.
+- `service/` — `SendQueueProcessor` + `AckRegistry` (надёжная очередь до ack), `PeerMessenger`
+  + `DeviceSetup` (шифрование и очередь; регистрация устройства, пополнение одноразовых prekey
+  ≤5 → 20), `MessageRouter` + `MessageCleanup`, `ChatService` (текст, ответы, пересылка — в том
+  числе вложений, правка, реакции, закреп, удаление, квитанции, стикеры) и `ChatActions`
+  (мьют/блок/очистка/удаление чата), `MediaUploader` + `PendingSendRetrier` + `MediaDownloadManager`
+  (файлы), `RemoteCache` → `PeerProfiles`/`Avatars`, `MyAccount`, `Stickers`, `Wallpapers`,
+  `CallManager` (сигнальный протокол звонков, WebRTC — за интерфейсом `RtcEngine`),
+  `FileLogger` + `CrashReporter` (журнал ≤1 МБ, отчёт об ошибке не чаще раза в 30 мин).
+  `OshinobuCore` собирает всё вместе; платформа даёт только хранилища и `RouterHost`.
+- Поведение протокола, которое легко сломать: X3DH-поля исходящей сессии прикладываются к
+  КАЖДОМУ сообщению, пока собеседник не ответил (ключ `x3dh_init:<device>`, как в Signal) —
+  иначе потерянный первый сигнал звонка делал сессию мёртвой; отказ от звонка через сервер
+  (`/calls/decline`, приложение собеседника не на связи) приходит незашифрованным `{}` и
+  завершает исходящий звонок с «отклонён»/«занято».
 
-## В работе / roadmap (закрытое тестирование, дедлайн ~2 недели с 2026-08-24)
+**Приложение** (`app/src/main/kotlin/com/oshinobu/app/`): `ui/` — экраны (вход/регистрация/
+TOTP/восстановление, главный экран с тремя вкладками, чат, профиль собеседника, настройки,
+блокировка приложения `ui/lock`, обновление `ui/update`); `system/` — пуши FCM (`PushService`),
+`TransfersService` (FGS передач), диагностика падений; `call/` — `WebRtcEngine`
+(io.github.webrtc-sdk), `CallAudio`, рингтон/«идёт разговор»/действия из уведомлений,
+`CallController`; `media/` — галерея, декодирование, «Загрузки».
+
+**Обязательная версия.** Версия одна на клиент и сервер — `app-version.properties` в корне.
+Клиент шлёт `X-App-Version` в каждом запросе; сервер (`internal/api/app_version.go`) на любую
+другую версию отвечает `426`, клиент показывает экран «Нужно обновить приложение» (из Play —
+In-App Update, из APK — скачивание по `APP_APK_URL`). Порядок выпуска: сначала новая сборка
+доступна (Play прошёл проверку, APK лежит по ссылке), потом деплой сервера с новой версией.
+
+**Сборка и тесты.** Инструменты — на 1ТБ-диске: `/mnt/old/oshinobu-tools/` (JDK 17, Android SDK,
+кэш Gradle). Окружение: `source /mnt/old/oshinobu-tools/env.sh`, затем в
+`client/android/client-kotlin/`: `./gradlew :core:test` (ядро), `./gradlew :app:bundleRelease
+:app:assembleRelease` (AAB для Play и APK). Путь к SDK — в `local.properties` (не в git).
+Маппинги R8 каждого выпуска — `client/android/client-kotlin/release-mappings/mapping-N.txt.gz`.
+Тесты ядра (`core/src/test/`): `NetTest` (MockWebServer), `ServicesE2ETest`, `MediaE2ETest`,
+`CallManagerTest` (два клиента на стенде `TestNetwork.kt`), `ChatServiceTest`, `CachesTest`,
+`WallpapersTest`, `FormatsTest`, `ValidationTest`, и **векторы формата**:
+`ProtocolVectorsTest` (`vectors/protocol_transcript.json` — стенограмма переписки, снятая с
+первой версии клиента: конверты и JSON состояния ratchet после каждого шага, шифры файлов) и
+`StorageVectorsTest` (`vectors/storage_v1.json` — содержимое хранилища первой версии). Упал
+тест векторов — поехал формат на проводе или на диске, а это сломает установленные копии.
+
+## Журнал версий и задачи
 
 Статус по пунктам обновляется по ходу работы — см. историю разговора с ассистентом для деталей
 каждого пункта.
 
-- [x] **Единственный путь передачи файлов — через московский сервер (сент. 2026).** Убрана
-      presigned-URL схема и весь fallback-код в клиенте: `media_upload.dart` (обе ветки),
-      `media_download_manager.dart` (`_runOne`), `api_client.dart` (удалены `presignMediaPut`
-      / `finalizeMediaUpload` / `presignMediaPartUrls` / `presignMediaGet` / `putToPresignedUrl`,
-      из `downloadEncryptedMediaResumable` убран `directUrl`). Части чанковой заливки —
-      **последовательно, одним потоком** (`partConcurrency` убран), прогресс идёт ровными
-      шагами. Нечанковая заливка — отдельный dart:io-`Dio` (`_uploadClient`) вместо Cronet,
-      чтобы `onSendProgress` не врал. Сервер (Go) не менялся — старые relay-эндпоинты уже
-      работали. Осака переведена в режим «только личный VPN», на NAS остался один
-      FRP-туннель — до Москвы. Подробности — раздел «Хранилище медиа и передача файлов».
+- [x] **Архив: Flutter-версия, до `1.0.0+42` включительно (2026-08 … 2026-09-07).** Пункты
+      этого периода описывали Flutter-клиент; полный текст — `git show 168d527:README.md`.
+      До сих пор верно и важно (сервер и протокол):
+  - Файлы — только через московский сервер, части чанковой заливки — последовательно; relay в
+    Японии и presigned-URL сняты (см. «Хранилище медиа»).
+  - Сервер: `upload_prekeys` проверяет, что `device_id` принадлежит аккаунту из токена;
+    rate-limit на `/login` (`ip|login` + по логину), `/verify-totp`,
+    `/account/recover/request`, `/devices/{id}/prekey-bundle` (10/мин на пару «кто + кого»);
+    бандл без одноразового ключа отдаётся без `one_time_prekey` (сессия — 3-DH), а не 409;
+    `GET /devices/{id}/prekey-count` для пополнения; офлайн-очередь `pending_messages`
+    чистится от записей старше 30 дней; логин — только латиница и цифры, 3–32 символа
+    (`auth.ValidateLogin`, закрывает омоглифы); `feedback.kind` (`021_feedback_kind.sql`,
+    `auto_crash` — автоотчёты об ошибках); `/calls/decline` с `reason=busy` → `call_busy`.
+  - Протокол: все заголовочные поля конверта связаны с шифротекстом через AAD; сигналы звонка
+    шифруются сессией ratchet; входящие сигналы звонка сверяются с реальным собеседником по
+    `sender_device_id`; блокировка отправки/приёма — по `device_id` собеседника (`KeyedMutex`);
+    надгробия удалённых сообщений против поздних передоставок; смена identity-ключа знакомого
+    устройства логируется как SECURITY-WARNING (не блокирует — переустановки легитимны).
+  - Google Play Data Safety: Crash logs — Collected, обязательный сбор, purpose Analytics.
 
-- [x] Баг: burst повторных доставок после реконнекта ошибочно триггерил полный сброс здоровой
-      Double Ratchet сессии (`AlreadyProcessedException` в `double_ratchet.dart` +
-      обработка в `message_router.dart`).
-- [x] `upload_prekeys.go`: не было проверки, что `device_id` в теле запроса принадлежит
-      аккаунту из токена — любой залогиненный пользователь мог испортить чужой prekey-bundle.
-- [x] Rate-limit на `/login` — теперь `ip|login` + отдельный лимит по одному логину (не блокирует
-      весь общий IP из-за одного человека).
-- [x] Rate-limit на `/verify-totp` (был вообще без лимита).
-- [x] Rate-limit на частоту запроса кода восстановления (`/account/recover/request`).
-- [x] Логин: только латиница + цифры, 3-32 символа (`auth.ValidateLogin` + клиентский
-      `utils/login_validator.dart`) — закрывает обход `reservedLogins` через кириллические омоглифы.
-- [x] Гонка "удалил сообщение, пока оно ещё в офлайн-очереди у собеседника" —
-      tombstone-механизм в `ChatStore` (`_addTombstones`/`_consumeTombstone`).
-- [x] Экран ввода кода при добавлении почты сбрасывался, если Android убивал процесс, пока
-      пользователь сворачивал приложение за письмом — теперь состояние переживает это
-      (`widgets/email_dialog.dart`, `pending_email_verification_*` в SharedPreferences).
-- [x] Пополнение one-time prekeys: новый эндпоинт `GET /devices/{id}/prekey-count`
-      (`server/internal/api/prekey_count.go`) + `services/prekey_replenisher.dart`, дергается
-      при каждом заходе на главный экран. Заодно исправлено: `KeyStore.createOneTimePrekeys`
-      раньше ЗАТИРАЛ, а не дополнял сохранённые приватные части (была бы тихая порча уже
-      выгруженных, но ещё не использованных ключей при первом же пополнении) — и приватная
-      часть одноразового prekey теперь удаляется локально сразу после использования
-      (`deleteOneTimePrekeyPair`) — раньше лежала вечно, ослабляя forward secrecy первого
-      сообщения.
-- [x] E2E-шифрование звонков — SDP/ICE/остальное содержимое сигналов звонка теперь шифруется
-      той же Double Ratchet сессией, что и обычные сообщения (`call_service.dart`
-      `_encryptCallSignal`/`_decryptCallSignal`), сервер не меняли — `call_id`/`sender_device_id`
-      остаются снаружи как и раньше, серверу они нужны для маршрутизации.
-- [x] UX звонков: авто-отказ "занято" вторым звонящим, пока уже разговариваем/дозваниваемся
-      (`call_busy`), с отдельным текстом от ручного отклонения (`call_reject`) — "абонент
-      разговаривает" vs "абонент занят" на экране звонящего (`_endWithReason` в
-      call_service.dart). Случай полностью убитого приложения закрыт нативно: если второй
-      звонок будит только Android-слой (CallRingService уже звонит по первому call_id) —
-      `CallRingService.onStartCommand` не перебивает рингтон, а шлёт второму звонящему
-      `call_busy` тем же HTTP-путём, что и кнопка «Отклонить» (`POST /calls/decline` с
-      `reason=busy` → сервер отдаёт `call_busy` вместо `call_reject`), см.
-      `CallBusyResponder.kt`.
-- [x] Заодно, попутно с шифрованием звонков: проверка `sender_device_id` у входящих
-      call_answer/call_ice/renegotiation-offer против реального текущего собеседника по звонку
-      (раньше не проверялось вообще — можно было прислать поддельный кадр напрямую на чей-то
-      device_id). И отдельно найденный и исправленный баг: `SendLock` для исходящих операций
-      был ключом `peerLogin`, а для входящих — `senderDeviceId` — то есть входящая расшифровка
-      и исходящая отправка для ОДНОГО и того же собеседника НЕ сериализовались друг против
-      друга (реальная гонка на состоянии Double Ratchet). Стандартизировано на device_id
-      везде (`chat_screen.dart`, `control_message_sender.dart`, `call_service.dart`).
-- [x] Спойлер на фото — заменил статичный блюр+затемнение+иконку на блюр + анимированную
-      мерцающую пыль (`widgets/spoiler_overlay.dart`, `SpoilerSparkleOverlay`/
-      `_SparklePainter`), без иконки/подписи поверх фото — как в Телеге, подтверждено
-      скриншотом от пользователя.
-- [x] Сообщения, упавшие ДО того, как готов конверт (сбой сети при загрузке медиа/
-      голосового на сервер, или при получении prekey-бандла для самой первой сессии с
-      собеседником — в отличие от уже готового конверта, это раньше вообще не проходило
-      через SendQueueProcessor), навсегда оставались 'failed' даже после возврата сети.
-      Добавлен `services/pending_send_retrier.dart` + `storage/pending_send_store.dart` —
-      при сбое на этом шаге (text/voice/video_note/media в `chat_screen.dart`) задача
-      сохраняется на диск (для медиа — включая путь к локальному файлу, который теперь не
-      удаляется при неудаче) и автоматически повторяется при следующем реконнекте
-      WebSocket, тем же путём, что и обычная отправка (общая логика вынесена в
-      `services/media_upload.dart` и `services/message_resend.dart`, переиспользуется и
-      ChatScreen, и ретраером). Группы файлов (`_sendGroupNetwork`) теперь тоже покрыты
-      (см. `PendingSendRetrier._retryMediaGroup` — если любой файл группы не пережил сбой,
-      сдаётся вся группа целиком, частичная отправка хуже отсутствия).
-
-- [x] Полный аудит-проход по X3DH/Double Ratchet за надёжность и безопасность (по прямому запросу
-      пользователя — "максимально безопасная, надёжная и стабильная система шифрования"):
-  - **AEAD associated data**: `ratchet_pubkey`/`message_number`/`sender_device_id` и поля X3DH-
-    инициализации (`ephemeral_pubkey`/`sender_identity_dh_pubkey`/`used_one_time_prekey`) раньше
-    лежали в конверте РЯДОМ с шифротекстом, но GCM auth tag их не защищал — подмена этих полей на
-    лету (сервером или кем угодно на пути) проходила бы незамеченной и могла тихо
-    рассинхронизировать ratchet. Теперь все они связаны с шифротекстом через AAD
-    (`crypto/message_cipher.dart` + все 9 точек вызова `encryptMessage`/`decryptMessage`
-    по всему клиенту) — подмена ломает MAC, расшифровка честно падает.
-  - **Бесконечный цикл передоставки**: сообщения без сессии и без X3DH-инициализации
-    (`no-session-and-no-handshake`) раньше НИКОГДА не подтверждались серверу — при потерянной
-    сессии с давним контактом сервер передоставлял один и тот же неразрешимый хвост на КАЖДЫЙ
-    реконнект бесконечно (см. разбор реального пользовательского лога — тысячи повторов).
-    Теперь `message_router.dart` даёт 2 минуты на гонку доставки (вдруг X3DH-инициализация
-    просто ещё в пути) и только потом подтверждает и перестаёт ждать.
-  - **Пустой пул одноразовых prekeys**: `GET /devices/{id}/prekey-bundle` раньше жёстко
-    заваливал ВЕСЬ запрос бандла 409-й ошибкой, если у получателя закончились одноразовые
-    ключи — новую переписку с ним нельзя было начать вообще. Теперь сервер просто не включает
-    `one_time_prekey` в ответ (X3DH и так уже был готов к этому на клиенте) — сессия
-    устанавливается тем же 3-DH, без лишнего DH, вместо жёсткого отказа.
-  - **Rate-limit на бандлы**: `/devices/{id}/prekey-bundle` был вообще без лимита — можно было
-    целенаправленно вычерпать чужой пул одноразовых ключей раз за разом. Добавлен лимит (10/мин
-    на пару "кто спрашивает + кого").
-  - **Диагностика подмены identity-ключа**: если для уже знакомого device_id вдруг приходит
-    ДРУГОЙ identity DH-ключ (легитимная переустановка или потенциальная подмена — сходу не
-    отличить), это теперь громко логируется отдельной строкой SECURITY-WARNING — не блокирует
-    (жёсткая блокировка сломала бы легитимные переустановки), но видно при разборе лога.
-  - **Уборка pending_messages**: у сообщений в офлайн-очереди не было TTL вообще — для
-    навсегда отключившихся устройств очередь копилась бесконечно. Добавлена суточная уборка
-    записей старше 30 дней (`api.StartPendingMessageCleanup`).
-  - Разово почищен разросшийся `debug_log.txt` у уже установленных пользователей
-    (`DebugLog.resetOnceIfNeeded`, флаг в SharedPreferences — срабатывает ровно один раз).
-- [x] **КРИТИЧНЫЙ баг транспорта, найден стресс-тестом пользователя после релиза выше**:
-      `WebSocketService._channel` присваивается СРАЗУ при открытии соединения
-      (`_openConnection()`), а само подключение (DNS+TCP+WS handshake) занимает до 8с
-      асинхронно (`channel.ready.timeout(8s)`) — всё это время `_channel != null`, хотя
-      канал ещё не готов принимать данные. `sendEnvelope`/`ackDelivery`/`sendCallSignal`
-      проверяли именно `_channel != null` (а не реальный статус) — `.sink.add()` на
-      неготовый канал НЕ бросает исключение, просто тихо проглатывает данные. Результат
-      на стресс-тесте (10 сообщений офлайн → реконнект прямо в момент холодного старта
-      приложения): текстовые сообщения зависали на статусе "отправка" ровно на 8с
-      ack-таймаута КАЖДЫЙ раз (вместо мгновенного распознавания "офлайн, в очередь"),
-      и что хуже — SendQueueProcessor._inFlight не освобождался все эти 8с, из-за чего
-      РЕАЛЬНЫЙ реконнект-триггер, случившийся раньше, чем истёк этот таймаут, находил
-      сообщения "уже в полёте" и пропускал их — так они зависали до следующего
-      реконнекта. Сигналы звонка (`sendCallSignal`, без очереди/ретрая вообще) в это же
-      окно просто пропадали безвозвратно — это и была причина "нажал ответить на
-      звонок, ничего не произошло, звонящий продолжает ждать" из первого репорта.
-      Исправлено: `isConnected` теперь проверяет ещё и `status == ConnectionStatus.
-      connected`, не только факт существования объекта канала; `sendCallSignal`
-      вдобавок даёт 5с шанс дождаться готового соединения, если оно как раз
-      переоткрывается, прежде чем сдаться молча (раньше сдавался мгновенно и тихо).
-      Это НЕ было связано с проходом по X3DH/AAD выше (тот прошёл проверку — обычные
-      сообщения/read-receipt расшифровывались в том же логе без единого сбоя) — чисто
-      транспортный баг, существовавший и раньше, просто без такого стресс-теста ни разу
-      не проявлялся так ярко.
-- [x] Статус сообщения (часики/галочка/две галочки/восклицательный знак) отделён от
-      САМОГО пузыря — раньше 'failed' у фото рисовало затемнённое превью + отдельную
-      40px красную иконку поверх (см. `_buildAttachmentBubble`), из-за чего группа фото,
-      отправленная разом, переставала визуально читаться как альбом. Теперь пузырь
-      выглядит одинаково независимо от статуса — статус виден только маленькой (13px)
-      иконкой в строке времени под пузырём (ТЗ пользователя: "все сообщения в чате, вне
-      зависимости от их статуса, всегда должны отображаться одинаково").
-  - Контекстное меню сообщения тоже теперь зависит от статуса (`message_context_menu.dart`,
-    `MessageMenuAction.cancelSend`/`.retrySend`): часики → только "Отменить отправку"
-    (`ChatScreen._cancelSend` — убирает задание из `SendQueueStore`/`PendingSendStore`,
-    удаляет локальный пузырь; активную ПРЯМО СЕЙЧАС загрузку не прерывает — нет
-    механизма отмены на середине сетевого запроса); восклицательный знак → только
-    "Повторить отправку" (`ChatScreen._retrySend` → `PendingSendRetrier.retryNow` —
-    тот же путь, что и автоматический повтор на реконнекте, просто по требованию сейчас).
-    Обычное меню (ответить/переслать/реакции и т.д.) показывается только для
-    'sent'/'read'.
-  - `InnerMessage.mediaGroup` теперь принимает опциональный `messageId` — и
-    `ChatScreen._sendGroupNetwork`, и `PendingSendRetrier._retryMediaGroup` передают туда
-    сам `groupId`, так что deliveryId группы в `SendQueueStore` совпадает с её `groupId`
-    — cancel/retry для группы находят её по ОДНОМУ и тому же ключу везде, а не только
-    в `PendingSendStore`.
-- [x] **Батч клиентских правок (2026-09-03, релиз `1.0.0+34`)** — детали в git (`600a767`) и
-      памяти ассистента:
-  - Краш «чёрный экран при старте» после сворачивания во время скачивания: `MainActivity`
-    держал `FlutterEngine` живым между Activity ради переживания звонком смахивания задачи,
-    но переиспользование частично отсоединённого движка роняло `FlutterJNI.setViewportMetrics`.
-    Теперь движок удерживается между Activity **только пока идёт звонок** (`callActiveProcessWide`
-    от `setCallActive`), иначе — обычное поведение (движок уничтожается с Activity).
-  - Чат «Заметки» тоже идёт через файловую очередь `PendingSendRetrier` (флаг `notes` в
-    задании) — та же докачка/фон/панель, но БЕЗ конверта Double Ratchet (получателя нет),
-    после заливки просто `updateMessageStatus('sent')`.
-  - Отмена одного файла из группы (`PendingSendRetrier.cancelGroupItem`) — выкидывает только
-    его, грузит остальные; отменили все → не отправляется ничего, включая подпись.
-  - Звонок: выбор устройства вывода при подключённом Bluetooth (`call_service`/`call_screen`,
-    `Helper.audiooutputs`/`selectAudioOutput`); датчик приближения теперь по
-    `_effectiveAudioRoute == 'earpiece'`, не по `speakerOn`.
-  - Presence «был в сети»: `_refreshPeerDeviceId()` при открытии чата и на реконнекте
-    (устаревший peer device_id → пустой статус), «вчера в HH:MM», плавное появление статуса.
-  - Размер файла показывается всегда на любом медиа; FGS-уведомление зависит от состояния
-    (скачивание/выгрузка/оба); новые фото в пикере — сразу (`PhotoManager.addChangeCallback`).
-- [x] ~~Ускорение передачи файлов (`1.0.0+35`–`+37`): presigned-URL + relay-VPS в Японии,
-      прямой upload/download в MinIO мимо Москвы, параллельная заливка частей.~~
-      **Откачено (сент. 2026):** relay в Японии не давал выигрыша, горлышко — маршрут
-      РФ↔Япония и аплинк NAS. Всё вернулось на единственный путь через московский сервер,
-      части грузятся последовательно. Полное описание и замеры — раздел «Хранилище медиа и
-      передача файлов» выше.
-- [x] **Батч правок `1.0.0+36`** (2026-09-04) — собрано, закоммичено, сервер задеплоен,
-      опубликовано. Проверено на устройстве: медиа-пикер, датчик приближения, иконка
-      уведомлений о сообщениях, анимации, смена языка, отправка/скачивание медиа,
-      авто-busy. Пункты ниже — тот батч:
-  - Датчик приближения: сериализация `_updateProximityScreenOff` (гонка при BT→ушной динамик
-    убрана), дебаунс `ondevicechange` 300 мс.
-  - Системные превью в списке чатов больше не замораживаются переведённой строкой: хранится
-    маркер (`call:no_answer`, `photo`, `voice`, `file:<имя>`…), перевод — в момент
-    показа (`ChatStore.previewMarker`/`decodePreview`). Меняется вместе с языком.
-  - Анимация появления/исчезновения панели закреплённого сообщения (`AnimatedSize` +
-    `AnimatedSwitcher`); переброс к закреплённому больше не «перелетает и отскакивает»
-    (оценка позиции намеренно недолётная, доводит `ensureVisible`).
-  - Иконка уведомлений: `@drawable/ic_notification` (5 плотностей, монохромный силуэт)
-    вместо `@mipmap/ic_launcher` (был пустой кружок). Для сообщений — через
-    `flutter_local_notifications` init + `default_notification_icon` в манифесте; для звонков
-    (нативные `CallRingService` / `OngoingCallNotifier` в плагине, свой модуль — своего
-    `R.drawable` нет) — через `Context.callNotificationIcon()` = `getIdentifier` по имени с
-    fallback на `applicationInfo.icon`.
-  - Локальные уведомления о сообщениях, когда приложение свёрнуто (процесс жив): общий текст
-    без превью содержимого, канал `messages`, только при `lifecycleState != resumed`.
-  - Авто-busy при полностью убитом приложении (см. выше про звонки, `CallBusyResponder.kt`).
-  - Медиа-пикер «спотыкается» при открытии + вылет: причина — `_initLiveCamera`
-    (availableCameras + `CameraController.initialize` = целый граф CameraX) запускался в
-    `initState`, конкурируя за кадры с открывающей анимацией; а `dispose()` синхронно звал
-    `_liveCamera?.dispose()`, который при закрытии шторки во время `initialize()` был no-op
-    (контроллер ещё локальный) → граф CameraX утекал и финализировался в фоне на корутине
-    `CXCP-01` → нативный SIGSEGV. Фикс: камера поднимается только ПОСЛЕ `_openSheet()` и
-    только если шторку не закрыли; `_initLiveCamera` сам закрывает контроллер, если
-    `!mounted/_disposed/_closing` к моменту завершения `initialize()`; закрытие камеры
-    (`_disposeLiveCamera`) ждёт `_cameraInitFuture` и мемоизировано.
-- [x] **Батч правок (2026-09-04, релиз `1.0.0+37`)** — собрано и опубликовано:
-  - Иконка уведомлений в звонках (был всё ещё пустой кружок — уведомления о сообщениях
-    починены в `+36`): нативные `CallRingService` / `OngoingCallNotifier` брали
-    `applicationInfo.icon`; теперь `Context.callNotificationIcon()` (`NotificationIcon.kt`) =
-    `getIdentifier("ic_notification")` с fallback (drawable в модуле приложения, у плагина
-    своего `R.drawable` нет).
-  - Логирование: `DebugLog.log` сокращён ~230 → ~130 вызовов — убран happy-path per-message /
-    per-frame трейс (WS recv/send/ack, Router incoming/decrypt-attempt/OK, SessionStore
-    get/save, ratchet, X3DH bundle/sig-ok, sending-key в chat_screen и хелперах, avatar-кэши,
-    трейс воспроизведения видео-заметок, шум клавиатуры/эмодзи в chat_screen, трейс поиска в
-    home_placeholder). Оставлены и обогащены все `catch`/ошибки/decrypt-FAILED/DROP/смены
-    состояния; Router FAILED и chat_screen send-FAILED теперь пишут первые кадры стека.
-  - `DebugLog._maxBytes` 8 МБ → 1 МБ; `_resetOnceKey` v1 → v2 (разовая очистка накопленных за
-    closed-тест логов срабатывает заново при этом обновлении).
-  - Новый глобальный сток ошибок в `main.dart`: `FlutterError.onError` +
-    `PlatformDispatcher.instance.onError` → `DebugLog` (текст ошибки + 4 кадра стека);
-    `PlatformDispatcher.onError` возвращает true (записать, но не ронять приложение из-за
-    одиночной асинхронной ошибки). Раньше в `main()` обработчика ошибок не было вообще.
-  - Тайминг-логи `MediaPicker +Nms …` убраны (медиа-пикер подтверждён рабочим).
-  - **Аппаратный AES-256-GCM для файлов** (шифрование большого файла из ~минуты в секунды):
-    - `android/.../FileCipher.kt` + канал `oshinobu/file_cipher` в MainActivity: потоковый
-      `javax.crypto` `AES/GCM/NoPadding` на своём Executor-потоке. Формат блоков БАЙТ-В-БАЙТ
-      как у `StreamingFileCipher` (4-байт BE длина, `ct||tag`, nonce = `0×4 || uint64_be(idx)`,
-      AAD = `"<idx>:<0|1>"`, завершающий пустой блок для файла, кратного 4 МБ) — старый
-      Dart-расшифровщик у собеседника читает без изменений. Кросс-проверка формата в обе
-      стороны: `test/streaming_file_cipher_interop_test.dart` (встроенный Java-порт, тот же JCA).
-    - `NativeFileCipher` (Dart) + диспетчеризация в `StreamingFileCipher.encryptFileInIsolate` /
-      `decryptFileInIsolate`: Android → нативно; иначе (iOS/desktop/тесты) или при сбое канала
-      → прежний чистый Dart в `compute`-изоляте (с логом причины).
-  - **Транспорт медиа-запросов на скачивании → Cronet** (`native_dio_adapter` + `cronet_http`,
-    `_mediaDioClient()` в `api_client.dart`; auth/WS как были). Cronet сам договаривается на
-    QUIC/HTTP-2. На iOS — URLSession. Cronet — `cronet-embedded` (`play-services-cronet` даёт
-    коллизию namespace `org.chromium.net` в AGP 8, см. `android/app/build.gradle.kts`),
-    +~1.5 МБ на ABI. Если Cronet-провайдер недоступен (AOSP-эмулятор) — `createFallbackAdapter`
-    → обычный dart:io. Заливка (`_uploadClient()`) — намеренно НЕ Cronet, чтобы `onSendProgress`
-    не врал (см. раздел «Хранилище медиа» выше).
-- [x] **Батч правок звонков (2026-09-04, релиз `1.0.0+38`)** — собрано и опубликовано:
-  - **Режим звонка телефона** (`CallRingService.startAlerting`): обычный → мелодия; виброрежим
-    → только вибрация (`Vibrator` waveform, permission `VIBRATE` в плагине); беззвучный →
-    ничего (уведомление/full-screen всё равно показываются). Канал уведомления — `setSound(null)`
-    + `enableVibration(false)`, чтобы `IMPORTANCE_HIGH` не бузил сам в беззвучном.
-  - **Синхронный таймер разговора** (`call_service`): `_connectedAt` больше не ставится
-    оптимистично у callee — обе стороны стартуют счётчик по факту соединения WebRTC
-    (`onConnectionState`/`onIceConnectionState` connected, `??=`), одному и тому же событию.
-    До соединения `call_screen._durationText()` показывает пусто.
-  - **Гудки дозвона по маршруту** (`sound_service` + `call_service._applyAudioRoute`):
-    `startRingback(speakerOn:)` + `setRingbackSpeaker()` — при смене вывода во время дозвона
-    гудки перенаправляются (перезапуск плеера); раньше `isSpeakerphoneOn:false` в AudioContext
-    жёстко сбрасывал громкую связь обратно на ухо.
-  - **Заблокированный экран = нет доступа в приложение** (`MainActivity` +
-    `pip_service` + `call_screen`): экран звонка над локскрином (`setShowWhenLocked`) больше
-    не даёт уйти в остальное приложение без разблокировки. `PopScope(canPop:false)` +
-    `_leaveCallScreen()` → `isDeviceLocked()` → `requestUnlock()` (`KeyguardManager.
-    requestDismissKeyguard`); успех → `clearShowWhenLocked` + уходим, отмена → остаёмся на
-    экране звонка. Красная кнопка (сброс) не ограничена.
-  - **КРИТИЧНЫЙ баг найден пользователем (2026-09-04), закрыт**: `setShowWhenLocked`
-    выставляется на всю `MainActivity` (одна Activity на всё Flutter-приложение), а не на
-    конкретный экран — значит, ЛЮБОЙ Flutter-виджет, оказавшийся видимым в этот момент,
-    рисуется поверх локскрина без единого введённого пароля. Защита выше (PopScope в
-    `call_screen.dart`) была только на экране РАЗГОВОРА, но не на экране ВХОДЯЩЕГО звонка
-    (`incoming_call_screen.dart`) — свайп назад с него был обычным системным pop без всякой
-    проверки и открывал самый настоящий список чатов под ним. Плюс `home_placeholder_screen.dart`
-    раньше сначала ждал сетевой `getDeviceOwnerInfo` (узнать, кто звонит) и только потом пушил
-    `IncomingCallScreen` — всё время этого запроса виден и кликабелен был сам список чатов,
-    отрисованный под ним. Фикс:
-    - `incoming_call_screen.dart` получил тот же `PopScope(canPop:false)` + `_leaveIncomingScreen()`
-      (`isDeviceLocked`/`requestUnlock`), что и `call_screen.dart` — системный «назад» с
-      экрана входящего звонка теперь тоже требует разблокировки. Кнопки «Отклонить»/«Принять»
-      зовут `Navigator.pop`/`pushReplacement` НАПРЯМУЮ (программный pop, PopScope его не видит,
-      см. комментарий в `call_screen.dart`) — этим ограничением не связаны, отклонить звонок
-      можно и с локскрина.
-    - Экран теперь принимает `peerDeviceId` вместо готовых `peerLogin`/`peerAccountId` и сам
-      резолвит, кто звонит, АСИНХРОННО уже после того, как показался (плейсхолдер
-      "неизвестный" → имя следующим кадром) — `home_placeholder_screen.dart` пушит его
-      синхронно, сразу при событии `incomingCalls`, не дожидаясь сети.
-    - **Системный щит поверх точечных патчей** (`widgets/call_lock_shield.dart`, новый,
-      оборачивает вообще всё приложение в `main.dart`, СНАРУЖИ даже `AppLockGate`): та же дыра
-      в том же виде обнаружилась бы и на пути «Ответить» из push-уведомления при полностью
-      закрытом приложении (`CallService._autoAcceptAndOpenScreen`) — холодный старт рисует
-      `HomePlaceholderScreen` первым, и только после `_resolvePeerLogin`/`acceptCall()` (оба
-      асинхронные) открывается `CallScreen`, окно экспозиции там ДЛИННЕЕ, чем в основном баге.
-      Патчить каждую такую точку по отдельности ненадёжно — новая появится с любым следующим
-      сценарием звонка. Вместо этого: `CallService.isCallUiOnTop` (новый флаг, отдельный от
-      `isCallScreenVisible` — тот только для PiP/уведомлений) выставляют true/false сами
-      `IncomingCallScreen` и `CallScreen` в `initState`/`dispose`. `CallLockShield` держит
-      подписку на него + периодически перепроверяет `PipService.isDeviceLocked()` (на резюме
-      приложения и на каждой смене этого флага) и, если телефон физически заблокирован, а НИ
-      ОДИН из двух легитимных экранов звонка не на сцене, — рисует непрозрачную заглушку поверх
-      ВСЕГО остального дерева виджетов, что бы там ни было (список чатов, открытый чат с
-      сообщениями, настройки). По умолчанию щит ВКЛЮЧЁН (как и `AppLockGate._ready`) — первый
-      кадр может оказаться тем самым кадром поверх локскрина, снимается только после честного
-      ответа `isDeviceLocked()`.
-  - **Бесконечный цикл расшифровки** (`message_router`): застрявшее первое сообщение
-    собеседника (он строил 4-DH с одноразовым ключом, который у нас уже израсходован →
-    3-DH root не совпадает) сервер передоставлял каждые ~20 сек 36+ минут — каждый раз
-    «поднял свежую сессию» → снова MAC-fail → внешний catch «Router FAILED» БЕЗ ack → повтор.
-    Жгло батарею/сеть. Фикс: пост-recovery `decryptMessage` в своём try/catch → при провале
-    через `_onDecryptFailure` (ack после порога + `session_reset`, чинит и сессию).
-  - **Вылет на голосовом** (`chat_screen` ~5413): тап по невыгруженной голосовухе →
-    `MediaCache.exists(msg.mediaId!)` при `mediaId==null` → `Null check` (глобальный
-    обработчик `+37` не дал упасть, но воспроизведение ломалось). Фикс: guard на `mediaId`.
-
-- [x] **Автоматическая отправка диагностического лога при ошибках (2026-09-05), код готов,
-      требует ручного применения миграции на сервере** — раньше пользователя приходилось
-      просить вручную прислать `debug_log.txt` (кнопки "Отзыв"/"Поделиться логом"/"Очистить
-      лог" в "О приложении"). Все три убраны из `about_screen.dart`, объединены в одно
-      автоматическое, тихое, без единого диалога:
-  - **Аудит перед включением** — прошёлся по всем 126 местам `DebugLog.log(...)` во всём
-    клиенте (grep + построчный разбор контекста интерполяции). Результат: нигде не находится
-    текст переписки, ключи/приватные части, PIN, пароли, токены — только device_id, состояния,
-    коды ошибок, счётчики, стек-фреймы, локальные cache-пути и (дважды, в `message_router.dart`
-    при рассинхроне ratchet) base64 ПУБЛИЧНЫХ DH-ключей — они и так уходят в envelope открытым
-    текстом, новой утечки нет. Подтверждает собственную заявленную гарантию `DebugLog`
-    (см. class-comment там) фактической проверкой, а не только текстом комментария.
-  - `DebugLog.error(msg)` — новый явный метод, отдельно от обычного `.log()` (breadcrumb, без
-    отправки): пишет строку И будит `CrashReporter` через `DebugLog.setErrorHook`. Разделение
-    явное, а не по ключевым словам в тексте — новый happy-path лог в будущем никогда случайно
-    не триггернёт отправку, а настоящая ошибка не потеряется из-за забытого маркера. Переведено
-    ~25 самых значимых мест (были и остаются `.log()` в остальных ~100 — обычные состояния/
-    ретраи/фоллбэки): оба глобальных перехватчика в `main.dart`, X3DH signature-fail
-    ("possible tampering"), decrypt-FAILED в `message_router`/`call_service`, SECURITY-WARNING
-    (смена identity-ключа), "permanently"/"giving up" в `pending_send_retrier`, порча на диске
-    в `avatar_cache`/`my_avatar_store`, `Router FAILED` (тот самый catch-all из разбора
-    исторического 36-минутного инцидента выше).
-  - `services/crash_reporter.dart` (новый): троттлинг раз в 30 минут (персистентно в
-    SharedPreferences — переживает перезапуск процесса посреди цикла ошибок, тот же класс
-    защиты, что уже был нужен для `Router FAILED`-цикла), шлёт максимум последние 500 КБ лога
-    (сам файл капается на 1 МБ, запас — под JSON-экранирование), пропускает отправку, если нет
-    токена сессии (лог остаётся в файле до следующей подходящей ошибки уже после входа), чистит
-    лог после успешной отправки.
-  - Сервер: та же таблица/эндпоинт `feedback`, что раньше принимала только ручные отзывы —
-    новая колонка `kind` (миграция `021_feedback_kind.sql`, дефолт `'user'` для истории),
-    автоотчёты идут с `kind='auto_crash'`. `NewFeedbackHandler` — `http.MaxBytesReader` на
-    2 МБ. Админ-утилита (`reports_feedback.go`) показывает `kind` в списке.
-  - **Google Play Data Safety обновлён (2026-09-05)** — раздел App info and performance →
-    Crash logs: Collected (без Shared), не ephemeral, сбор обязателен (тумблера отключения в
-    приложении нет), purpose = Analytics. Отправлено на ревью вместе с `1.0.0+39`, опубликовано.
-  - Миграцию `021_feedback_kind.sql` нужно применить на сервере вручную (владелец деплоит по
-    SSH) до того, как обновлённый клиент уйдёт в прод — иначе `INSERT` с `kind` упадёт на
-    несуществующей колонке.
-
-- [x] **`1.0.0+40` (2026-09-05, `e68a5fe`)** — смена relay-VPS, подробное логирование
-      таймингов в `media_upload.dart` для разбора медленной заливки; `check_project_services`
-      в админке под новую схему.
-- [x] **`1.0.0+41` (2026-09-06, `9198adb`)** — убран шумный happy-path лог из медиа-заливки и
-      Cronet-fallback.
-- [x] **`1.0.0+42` (2026-09-07, `44656c9`)** — единственный путь файлов через Москву (presigned
-      снят полностью, части последовательно) — см. первый пункт этого раздела. Последняя
-      Flutter-версия.
 - [ ] **`1.0.0+43` (2026-10-09) — первая Kotlin-сборка (`client/android/client-kotlin/`), AAB собран для
       Google Play.** Всё, что описано в разделе «Переезд на нативный Kotlin» (части 1–6), плюс
       правки владельца по оформлению (статус соединения, овальная панель вкладок, своя галерея,
@@ -938,8 +464,8 @@ build-tools 35/36), кэш Gradle; диск сам расшифровывает�
       рассылка «не в сети» — только когда уходит с экрана (сигналом или пропажей соединения
       приложения, которое было на экране: хук реестра `PresenceLeftScreenHook`, тест
       `TestPresenceOnlyWhileOnScreen`).
-- [ ] **`1.0.0+58` (2026-10-13) — AAB и APK собраны; фон чата и обои; превью стикера в паке по центру экрана.
-  Сервер: нужна миграция `025_chat_wallpapers.sql` и деплой.**
+- [x] **`1.0.0+58` (2026-10-13) — опубликовано; фон чата и обои; превью стикера в паке по центру экрана.
+  Сервер: миграция `025_chat_wallpapers.sql` применена, задеплоен.**
   - **Фон чата в настройках:** фон темы или один из 10 спокойных сплошных цветов (у каждого —
     светлый и тёмный вариант под тему). Хранится только на телефоне (`UiSettings.chatBackground`),
     после переустановки — по умолчанию.

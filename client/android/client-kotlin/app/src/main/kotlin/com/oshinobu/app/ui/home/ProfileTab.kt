@@ -71,7 +71,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 
-/** Аватар: не больше 512×512, JPEG 85% — как делал Flutter-клиент (image_picker). */
+/** Аватар: не больше 512×512, JPEG 85%. */
 private suspend fun Context.loadAvatarJpeg(uri: Uri): ByteArray = withContext(Dispatchers.IO) {
     val source = if (Build.VERSION.SDK_INT >= 28) {
         ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, uri)) { decoder, info, _ ->
@@ -180,7 +180,7 @@ fun ProfileTab() {
     }
     if (viewing) avatar?.let { PhotoViewerDialog(it) { viewing = false } }
 
-    /** Сохранение поля профиля: повторы до успеха (как во Flutter), потом — в локальную копию. */
+    /** Сохранение поля профиля: повторы до успеха, потом — в локальную копию. */
     fun save(update: suspend (String) -> Unit, apply: () -> Unit) {
         val token = core.session.token ?: return
         core.scope.launch {

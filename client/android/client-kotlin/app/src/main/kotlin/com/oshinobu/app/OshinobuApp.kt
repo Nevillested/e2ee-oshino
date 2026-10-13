@@ -24,8 +24,8 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
- * Процесс приложения: ядро ([OshinobuCore]) поверх тех же хранилищ, что
- * у Flutter-сборки, глобальный перехват падений в журнал, язык интерфейса и
+ * Процесс приложения: ядро ([OshinobuCore]) поверх хранилищ телефона
+ * (модуль :flutter-compat), глобальный перехват падений в журнал, язык интерфейса и
  * подписка на сеть устройства для WebSocket.
  */
 class OshinobuApp : Application() {
@@ -38,7 +38,7 @@ class OshinobuApp : Application() {
     lateinit var calls: CallController
         private set
 
-    /** Тёмная тема (как во Flutter — по умолчанию тёмная); меняется в настройках сразу, без перезапуска. */
+    /** Тёмная тема (по умолчанию тёмная); меняется в настройках сразу, без перезапуска. */
     val darkTheme = MutableStateFlow(true)
 
     /** Масштаб текста интерфейса (настройка "Размер шрифта"). */
@@ -109,7 +109,7 @@ class OshinobuApp : Application() {
         return createConfigurationContext(config)
     }
 
-    /** Язык из настроек приложения (как во Flutter: свой, не системный; по умолчанию en). */
+    /** Язык из настроек приложения (свой, не системный; по умолчанию en). */
     fun applyLocale(tag: String) {
         AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(tag))
     }

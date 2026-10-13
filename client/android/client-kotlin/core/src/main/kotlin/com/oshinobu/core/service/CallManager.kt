@@ -89,7 +89,7 @@ data class CallPeer(val deviceId: String, val login: String? = null, val account
 data class IncomingCall(val callId: String, val peer: CallPeer)
 
 /**
- * Звонки (порт call_service.dart): сигнальный протокол поверх зашифрованного
+ * Звонки: сигнальный протокол поверх зашифрованного
  * канала (сигналы шифруются той же сессией ratchet, что и сообщения), само
  * медиа — WebRTC за интерфейсом [RtcEngine].
  *
@@ -101,8 +101,8 @@ data class IncomingCall(val callId: String, val peer: CallPeer)
  *  - по окончании — запись звонка в чат; если сервер сказал, что собеседник
  *    недоступен, — ему уходит "пропущенный звонок".
  *
- * Вся работа идёт на одном последовательном диспетчере — как в однопоточном
- * Dart, без гонок между сигналами и действиями пользователя.
+ * Вся работа идёт на одном последовательном диспетчере — без гонок между
+ * сигналами и действиями пользователя.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CallManager(

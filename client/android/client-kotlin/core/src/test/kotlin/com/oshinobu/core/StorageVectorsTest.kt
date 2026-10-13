@@ -29,13 +29,13 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * Совместимость локального хранилища с Flutter-клиентом. Пара к
- * client/test/kotlin_storage_interop_test.dart: Kotlin-сборка ставится
- * поверх Flutter и работает прямо с его записями secure storage.
+ * Формат локального хранилища зафиксирован: storage_v1.json — содержимое
+ * secure storage, записанное первой версией клиента (ключи, сессия, история,
+ * PIN, очередь отправки). На этом формате лежат данные всех установленных
+ * копий — любая версия обязана их читать. Упал тест — формат поехал.
  */
-class StorageInteropTest {
+class StorageVectorsTest {
     private val vectorsDir = File("src/test/resources/vectors")
-    private val pretty = Json { prettyPrint = true }
 
     private suspend fun view(chats: ChatStore): JsonObject {
         val peers = chats.getKnownPeers()
@@ -46,25 +46,25 @@ class StorageInteropTest {
     }
 
     @Test
-    fun `Kotlin читает хранилище, записанное Flutter`() = runBlocking {
-        val t = Json.parseToJsonElement(File(vectorsDir, "storage_dart.json").readText()).jsonObject
+    fun `зафиксированное хранилище читается целиком`() = runBlocking {
+        val t = Json.parseToJsonElement(File(vectorsDir, "storage_v1.json").readText()).jsonObject
         val secure = InMemorySecureStore(t["secure"]!!.jsonObject.mapValues { it.value.jsonPrimitive.content })
         val chats = ChatStore(secure)
 
-        // как видит Dart, минус чат «Заметки» — Kotlin его скрывает
-        val dartView = t["view"]!!.jsonObject
-        val wantPeers = dartView["peers"]!!.jsonArray.filter {
+        // как видела первая версия, минус чат «Заметки» — он скрыт
+        val savedView = t["view"]!!.jsonObject
+        val wantPeers = savedView["peers"]!!.jsonArray.filter {
             it.jsonObject["login"]!!.jsonPrimitive.content != ChatStore.LEGACY_NOTES_LOGIN
         }
         val got = view(chats)
         assertEquals(JsonArray(wantPeers), got["peers"])
         for (p in wantPeers) {
             val login = p.jsonObject["login"]!!.jsonPrimitive.content
-            assertEquals(dartView["messages"]!!.jsonObject[login], got["messages"]!!.jsonObject[login], "история $login")
+            assertEquals(savedView["messages"]!!.jsonObject[login], got["messages"]!!.jsonObject[login], "история $login")
         }
         assertTrue(chats.getKnownPeers().none { it.peerLogin == ChatStore.LEGACY_NOTES_LOGIN })
 
-        // надгробие 'ghost' из Flutter-удаления: такое сообщение больше не добавится
+        // надгробие 'ghost' сохранённого удаления: такое сообщение больше не добавится
         chats.addMessage("bob", StoredMessage("ghost", "поздний дубль", false, 5000))
         assertTrue(chats.getMessages("bob").none { it.messageId == "ghost" })
 
@@ -85,7 +85,7 @@ class StorageInteropTest {
     }
 
     @Test
-    fun `Kotlin пишет хранилище для Flutter`() = runBlocking {
+    fun `записанное хранилище читается обратно тем же`() = runBlocking {
         val secure = InMemorySecureStore()
         val keys = KeyStore(secure)
         keys.createSignedPrekey(keys.getOrCreateIdentity().identity)
@@ -118,14 +118,14 @@ class StorageInteropTest {
         AppLockStore(secure).setPin("13579")
         SendQueueStore(secure).add("q1", "peer-device", JsonObject(mapOf("nonce" to JsonPrimitive("n"))), messageId = "k2", peerLogin = "dave")
 
-        val out = buildJsonObject {
-            put("secure", JsonObject(secure.readAll().mapValues { JsonPrimitive(it.value) }))
-            put("view", view(chats))
-            put("ratchet_json", ratchet.toJson())
-            put("pin", "13579")
-            put("device_id", "kotlin-device")
-        }
-        vectorsDir.mkdirs()
-        File(vectorsDir, "storage_kotlin.json").writeText(pretty.encodeToString(JsonObject.serializer(), out))
+        // всё то же — новыми объектами поверх тех же строк хранилища (как после перезапуска)
+        val reopened = InMemorySecureStore(secure.readAll())
+        assertEquals(view(chats), view(ChatStore(reopened)))
+        assertEquals(ratchet.toJson(), SessionStore(reopened).get("peer-device")!!.toJson())
+        assertTrue(AppLockStore(reopened).verifyPin("13579"))
+        val reKeys = KeyStore(reopened)
+        assertEquals("kotlin-device", reKeys.deviceId())
+        assertEquals(keys.loadIdentity()!!.toStore(), reKeys.loadIdentity()!!.toStore())
+        assertEquals(listOf("q1"), SendQueueStore(reopened).getAll().map { it["id"]!!.jsonPrimitive.content })
     }
 }

@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class AudioRoute { EARPIECE, SPEAKER, WIRED_HEADSET, BLUETOOTH }
 
 /**
- * Звук звонка (как в call_service.dart): режим связи, выбор выхода, гудки
+ * Звук звонка: режим связи, выбор выхода, гудки
  * исходящего, датчик приближения у уха.
  *  - нет Bluetooth: громкая связь вкл/выкл; иначе — проводные наушники,
  *    если подключены, или динамик у уха;

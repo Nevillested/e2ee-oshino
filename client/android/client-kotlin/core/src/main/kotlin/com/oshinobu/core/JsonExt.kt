@@ -10,8 +10,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 
-// Чтение полей JSON-объекта так, как это делает Dart-код Flutter-клиента
-// (`j['x'] as String?`): отсутствующее поле и null — одно и то же.
+// Чтение полей JSON-объекта: отсутствующее поле и null — одно и то же.
 
 private fun JsonObject.primitive(name: String): JsonPrimitive? = (this[name] as? JsonPrimitive)?.takeUnless { it is JsonNull }
 

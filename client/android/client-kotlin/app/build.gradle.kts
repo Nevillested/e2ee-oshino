@@ -4,7 +4,7 @@ plugins {
     id("com.android.application")
     kotlin("android")
     kotlin("plugin.compose")
-    // пуши (FCM): google-services.json — тот же проект Firebase, что у Flutter-клиента
+    // пуши (FCM): google-services.json
     id("com.google.gms.google-services")
 }
 
@@ -24,8 +24,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        // тот же applicationId, что у Flutter-сборки: ставится поверх неё и
-        // работает с её данными (см. :flutter-compat)
+        // applicationId не менять — это само приложение в Google Play
         applicationId = "com.oshinobu.oshinobu_client"
         minSdk = 24
         targetSdk = 36
@@ -102,7 +101,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.1")
     implementation("androidx.lifecycle:lifecycle-process:2.9.1")
     implementation("androidx.navigation:navigation-compose:2.9.0")
-    // звонки: тот же WebRTC, что под flutter_webrtc 1.6.0 у Flutter-клиента
+    // звонки: WebRTC
     implementation("io.github.webrtc-sdk:android:144.7559.09")
     // запись видео-кружков
     implementation("androidx.camera:camera-core:1.4.2")

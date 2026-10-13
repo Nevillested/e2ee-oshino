@@ -22,14 +22,13 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
- * [SecureStore] поверх кода flutter_secure_storage (модуль :flutter-compat) с
- * ТЕМИ ЖЕ настройками, с какими его вызывает Flutter-клиент
- * (`const FlutterSecureStorage()` без AndroidOptions → AndroidOptions.toMap()
- * по умолчанию). Все операции — на одном рабочем потоке, как в плагине.
+ * [SecureStore] поверх вендорного кода flutter_secure_storage с настройками
+ * по умолчанию, с которыми записаны данные на телефонах (менять нельзя —
+ * иначе записи не прочитаются). Все операции — на одном рабочем потоке, как в плагине.
  */
 class FlutterSecureStoreAdapter(context: Context) : SecureStore {
     private companion object {
-        /** AndroidOptions() Flutter-клиента по умолчанию (android_options.dart → toMap). */
+        /** Настройки хранилища по умолчанию (AndroidOptions библиотеки) — формат данных на телефонах. */
         val DEFAULT_OPTIONS: Map<String, Any> = mapOf(
             "encryptedSharedPreferences" to "false",
             "resetOnError" to "true",
@@ -90,7 +89,7 @@ class FlutterSecureStoreAdapter(context: Context) : SecureStore {
 }
 
 /**
- * [Prefs] поверх файла shared_preferences Flutter-клиента: имя
+ * [Prefs] в унаследованном формате: имя
  * FlutterSharedPreferences, ключи с префиксом "flutter.", int → Long,
  * double → строка с префиксом, список → JSON с префиксом (новый формат) или
  * сериализованный Java-список (старый, только чтение).
@@ -151,7 +150,7 @@ class FlutterPrefsAdapter(context: Context) : Prefs {
     override fun keys(): Set<String> = prefs.all.keys.filter { it.startsWith(PREFIX) }.map { it.removePrefix(PREFIX) }.toSet()
 }
 
-/** Каталоги path_provider: documents = app_flutter, support = files, temp = cache. */
+/** Каталоги приложения (унаследованные имена): documents = app_flutter, support = files, temp = cache. */
 fun flutterAppDirs(context: Context) = AppDirs(
     documents = context.getDir("flutter", Context.MODE_PRIVATE),
     support = context.filesDir,

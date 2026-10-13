@@ -12,7 +12,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
-/** Палитра приложения (порт AppColors Flutter-клиента): голубой акцент, тёмная и светлая темы. */
+/** Палитра приложения: голубой акцент, тёмная и светлая темы. */
 @Immutable
 data class AppColors(
     val primary: Color,

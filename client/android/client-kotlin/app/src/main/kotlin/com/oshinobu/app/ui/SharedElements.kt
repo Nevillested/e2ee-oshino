@@ -16,8 +16,7 @@ val LocalNavAnimatedScope = staticCompositionLocalOf<AnimatedVisibilityScope?> {
 
 /**
  * Аватар собеседника, который при переходе чат ↔ профиль перелетает из
- * шапки чата на место большого фото профиля и обратно (как Hero во
- * Flutter-клиенте). Вне навигации — обычный модификатор.
+ * шапки чата на место большого фото профиля и обратно. Вне навигации — обычный модификатор.
  */
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable

@@ -15,9 +15,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * Зашифровать сообщение собеседнику и поставить в надёжную очередь. Один
- * путь вместо трёх почти одинаковых во Flutter (peer_messenger.dart,
- * control_message_sender.dart, message_resend.dart):
+ * Зашифровать сообщение собеседнику и поставить в надёжную очередь — один
+ * путь для всех видов отправки:
  *  - обычное сообщение: [send] с messageId/peerLogin — по ack станет 'sent';
  *  - служебное (реакция, правка, квитанция…): silent = true, без звука/пуша.
  *
@@ -61,7 +60,7 @@ class PeerMessenger(
 
     /**
      * Сигнал звонка: тот же ratchet, что у сообщений, но конверт уходит не
-     * в очередь, а сразу по WebSocket (call_service.dart, _encryptCallSignal).
+     * в очередь, а сразу по WebSocket.
      */
     suspend fun sealCallSignal(peerDeviceId: String, payload: JsonObject): JsonObject =
         sendLock.run(peerDeviceId) { sealLocked(peerDeviceId, payload.toString()) }
@@ -124,7 +123,7 @@ class PeerMessenger(
     }
 }
 
-/** Регистрация устройства и пополнение одноразовых prekey (device_setup.dart, prekey_replenisher.dart). */
+/** Регистрация устройства и пополнение одноразовых prekey. */
 class DeviceSetup(private val api: ApiClient, private val keys: KeyStore, private val log: Logger = NoopLogger) {
     private companion object {
         const val LOW_WATERMARK = 5

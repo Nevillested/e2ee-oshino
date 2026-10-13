@@ -6,7 +6,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 
-// X3DH — порт client/lib/crypto/x3dh.dart.
+// X3DH — установка сессии по бандлу prekey собеседника.
 //
 // Identity-ключ устройства — Ed25519 (подписи); для самого DH используется
 // ОТДЕЛЬНЫЙ X25519-ключ "identity_dh", подписанный identity-ключом

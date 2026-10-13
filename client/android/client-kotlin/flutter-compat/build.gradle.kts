@@ -1,10 +1,10 @@
-// Совместимость с хранилищами Flutter-клиента на Android.
+// Хранилища приложения на Android в унаследованном формате первой версии
+// клиента (на нём лежат ключи и переписка всех установленных копий).
 //
-// src/main/java/com/it_nomads/** — исходники flutter_secure_storage 10.3.1
-// (BSD-3, см. LICENSE-flutter_secure_storage) без Flutter-обёртки
-// FlutterSecureStoragePlugin.java: тот же код, теми же настройками по
-// умолчанию, читает/пишет записи, которые оставил Flutter-клиент. Пакет и
-// имена классов НЕ менять — от них зависят имена файлов и ключей Keystore.
+// src/main/java/com/it_nomads/** — вендорные исходники flutter_secure_storage
+// 10.3.1 (BSD-3, см. LICENSE-flutter_secure_storage), без плагинной обёртки.
+// Пакет и имена классов НЕ менять — от них зависят имена файлов и ключей
+// Keystore. Самого Flutter в проекте нет.
 plugins {
     id("com.android.library")
     kotlin("android")

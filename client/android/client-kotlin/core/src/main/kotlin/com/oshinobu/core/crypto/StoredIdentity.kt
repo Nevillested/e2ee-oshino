@@ -9,11 +9,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * Долговременные ключи устройства в том виде, в каком их держит
- * Flutter-клиент в secure storage (client/lib/crypto/key_store.dart): плоский
- * набор строк "имя → base64", одноразовые prekey — JSON-список
- * {"public", "private"}. Kotlin-клиент хранит те же строки под теми же
- * именами — это и формат миграции при установке поверх Flutter.
+ * Долговременные ключи устройства в secure storage: плоский набор строк
+ * "имя → base64", одноразовые prekey — JSON-список {"public", "private"}.
+ * Имена и формат — формат хранения на телефонах (не менять без миграции).
  */
 class StoredIdentity(
     val deviceId: String?,

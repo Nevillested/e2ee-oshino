@@ -87,8 +87,7 @@ object MediaDecoding {
 }
 
 /**
- * Превью-кадр видео для пузыря отправки — JPEG в support/video_thumbs (как у
- * Flutter-клиента): не во временной папке, которую система вправе очистить.
+ * Превью-кадр видео для пузыря отправки — JPEG в support/video_thumbs: не во временной папке, которую система вправе очистить.
  */
 class AndroidVideoThumbnailer(supportDir: File) : VideoThumbnailer {
     private val dir = File(supportDir, "video_thumbs")

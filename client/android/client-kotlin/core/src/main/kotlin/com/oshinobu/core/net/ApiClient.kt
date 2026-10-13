@@ -42,10 +42,9 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-// REST-клиент — порт client/lib/api/api_client.dart: те же эндпоинты, те же
-// тела запросов, те же коды ответов. Вместо готового переведённого текста
-// ошибки бросается [ApiException] с КЛЮЧОМ локализации из Flutter-клиента
-// ('error.loginTaken' и т.п.) — переводит его уже слой интерфейса.
+// REST-клиент сервера. Вместо готового переведённого текста ошибки
+// бросается [ApiException] с КЛЮЧОМ локализации ('error.loginTaken' и т.п.) —
+// переводит его уже слой интерфейса (app: ui/Messages.kt).
 
 /**
  * [appVersionCode] — versionCode приложения: уходит в каждом запросе
@@ -238,7 +237,7 @@ class ApiClient(
         const val APP_VERSION_HEADER = "X-App-Version"
         const val HTTP_UPGRADE_REQUIRED = 426
 
-        /** Короткие "фоновые" запросы, которые Flutter ограничивал 8 с. */
+        /** Короткие "фоновые" запросы — не дольше 8 с. */
         private const val SHORT_TIMEOUT_MS = 8_000L
     }
 
@@ -705,7 +704,7 @@ class ApiClient(
         return Json.parseToJsonElement(body).jsonArray.map { it.jsonObject["part_number"]!!.jsonPrimitive.int }.toSet()
     }
 
-    /** Имя файла серверу намеренно не передаётся (как и во Flutter). */
+    /** Имя файла серверу намеренно не передаётся. */
     suspend fun completeChunkedUpload(token: String, mediaId: String, uploadId: String, recipientAccountId: String) {
         val u = url("/upload-media/$mediaId/complete").toHttpUrl().newBuilder().addQueryParameter("upload_id", uploadId).build()
         val (code, _) = call(Request.Builder().url(u).header("Authorization", "Bearer $token").post(json("recipient_account_id" to recipientAccountId)).build())

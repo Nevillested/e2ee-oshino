@@ -392,8 +392,8 @@ func flushPendingMessages(ctx context.Context, queries *db.Queries, acks *AckReg
 // Ping-интервал сервера — независимая от клиента проверка "жив ли сокет
 // по-настоящему", а не только по факту записи в него (см.
 // tryLiveDeliverOnce — там таймаут ack больше НЕ считается признаком
-// мёртвого соединения). У клиента уже есть свой pingInterval=20с (см.
-// websocket_service.dart), но полагаться только на клиентскую сторону
+// мёртвого соединения). У клиента уже есть свой ping (OkHttp
+// pingInterval в WebSocketClient.kt), но полагаться только на клиентскую сторону
 // нельзя: именно сервер должен сам обнаруживать зомби-соединения
 // получателей, которым он пытается писать, а не только своих отправителей.
 const wsPingInterval = 30 * time.Second
@@ -712,7 +712,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 				if isBlockedEitherWay(r.Context(), queries, toDeviceUUID, DeviceID) {
 					// Заблокировано в любую сторону — ни доставлять, ни ставить в
 					// очередь: обычный клиент и так не даёт набрать сообщение
-					// (см. композер-заглушку в chat_screen.dart), это подстраховка
+					// (вместо поля ввода — плашка блокировки), это подстраховка
 					// на случай изменённого клиента.
 					continue
 				}

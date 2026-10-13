@@ -90,7 +90,7 @@ class NetTest {
     }
 
     @Test
-    fun `загрузка файла — multipart как во Flutter и прогресс до 100`() = runBlocking {
+    fun `загрузка файла — multipart и прогресс до 100`() = runBlocking {
         server.enqueue(MockResponse().setBody("media-123"))
         val tmp = Files.createTempFile("enc", ".bin").toFile().apply { writeBytes(ByteArray(300_000) { it.toByte() }) }
         val progress = CopyOnWriteArrayList<Double>()
@@ -205,7 +205,7 @@ class NetTest {
             assertEquals("ack", ack["Type"]!!.jsonPrimitive.content)
             assertEquals("c-1", ack["DeliveryId"]!!.jsonPrimitive.content)
 
-            // отправка конверта — формат как во Flutter
+            // отправка конверта — формат кадра
             ws.sendEnvelope("dev-2", JsonObject(mapOf("nonce" to JsonPrimitive("n"))), "out-1", silent = true)
             val sent = fake.nextFrame()
             assertEquals("message", sent["Type"]!!.jsonPrimitive.content)

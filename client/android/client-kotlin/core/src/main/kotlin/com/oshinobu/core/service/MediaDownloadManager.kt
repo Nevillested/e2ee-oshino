@@ -37,7 +37,7 @@ import kotlinx.serialization.json.put
 import java.io.File
 import java.io.IOException
 
-/** Что скачать и как расшифровать (JSON-формат — тот же, что в очередях Flutter-клиента). */
+/** Что скачать и как расшифровать (JSON — формат очереди на диске). */
 data class DownloadSpec(
     val mediaId: String,
     val keyBase64: String,
@@ -77,7 +77,7 @@ data class DownloadSnapshot(val manual: List<DownloadRow>, val auto: List<Downlo
 class DownloadFailedException(message: String) : IOException(message)
 
 /**
- * Скачивание и расшифровка вложений (порт media_download_manager.dart).
+ * Скачивание и расшифровка вложений.
  *
  * Две очереди, каждая качает по одному файлу:
  *  - ручная — по тапу пользователя (и ожидание файла экраном [ensureDownloaded]);

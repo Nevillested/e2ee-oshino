@@ -34,7 +34,7 @@ data class PeerProfile(
     val birthday: String?,
     val hasAvatar: Boolean,
 ) {
-    /** Тот же JSON, что кладёт на диск Flutter-клиент (peer_profile_cache_<id>). */
+    /** JSON дисковой копии (temp/peer_profile_cache_<id>). */
     fun toJson() = buildJsonObject {
         put("login", login)
         put("display_name", displayName)

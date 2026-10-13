@@ -26,7 +26,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
 
-// WebSocket к серверу — порт client/lib/services/websocket_service.dart.
+// WebSocket к серверу.
 //
 // Внешние кадры сервера: {"Type", "DeliveryId", "Ciphertext", ...}.
 //  - "ack"                   — сервер принял наш конверт (DeliveryId);
@@ -113,7 +113,7 @@ class WebSocketClient(
     /**
      * Реально готов к отправке. Объект сокета появляется сразу при открытии, а
      * рукопожатие идёт до readyTimeoutMs — всё это время отправлять нельзя
-     * (во Flutter это был КРИТИЧНЫЙ баг: данные тихо терялись).
+     * (иначе данные тихо теряются).
      */
     override val isConnected: Boolean get() = synchronized(lock) { socket != null } && _status.value == ConnectionStatus.CONNECTED
 

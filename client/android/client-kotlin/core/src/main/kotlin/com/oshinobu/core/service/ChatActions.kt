@@ -37,7 +37,7 @@ class ChatActions(
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            // пуши ещё придут, но в приложении чат уже беззвучный — как во Flutter
+            // пуши ещё придут, но в приложении чат уже беззвучный
         }
     }
 

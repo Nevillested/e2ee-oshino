@@ -279,7 +279,7 @@ private fun <T> ChoiceSheet(title: String?, options: List<Pair<T, String>>, curr
 
 /**
  * Приватность: кто находит по логину и кто видит фото, день рождения и
- * "о себе". Сохранение повторяется до успеха (как во Flutter).
+ * "о себе". Сохранение повторяется до успеха.
  */
 @Composable
 fun PrivacyDialog(onClose: () -> Unit) {

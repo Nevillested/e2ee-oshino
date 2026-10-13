@@ -77,7 +77,7 @@ import com.oshinobu.core.storage.UiSettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-/** Пункты настроек открываются окнами поверх вкладки (как во Flutter-клиенте). */
+/** Пункты настроек открываются окнами поверх вкладки. */
 private enum class SettingsDialog { EMAIL, PASSWORD, PRIVACY, APP_LOCK, ABOUT, THEME, CHAT_BACKGROUND, LANGUAGE, FONT, REACTION, CLEAR_CACHE, LOGOUT, DELETE_ACCOUNT }
 
 @Composable

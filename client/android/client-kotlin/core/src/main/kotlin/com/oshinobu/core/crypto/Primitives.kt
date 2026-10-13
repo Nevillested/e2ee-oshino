@@ -11,10 +11,9 @@ import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-// Криптографические примитивы — байт-в-байт те же, что даёт Dart-пакет
-// `cryptography` во Flutter-клиенте (X25519, Ed25519, HMAC-SHA256, HKDF,
-// AES-256-GCM с 12-байтным nonce и 16-байтным тегом). Совместимость
-// проверяется векторами из настоящего Dart-кода, см. DartInteropTest.
+// Криптографические примитивы: X25519, Ed25519, HMAC-SHA256, HKDF,
+// AES-256-GCM с 12-байтным nonce и 16-байтным тегом. Формат ключей и
+// результатов зафиксирован — его сторожат векторы ProtocolVectorsTest.
 
 internal val secureRandom = SecureRandom()
 
@@ -27,8 +26,7 @@ fun unb64(s: String): ByteArray = Base64.getDecoder().decode(s)
 fun constantTimeEquals(a: ByteArray, b: ByteArray): Boolean = MessageDigest.isEqual(a, b)
 
 /**
- * Пара X25519. [privateKey] — 32 байта в том виде, в каком их хранит
- * Dart-клиент (`extractPrivateKeyBytes`); клампинг скаляра BouncyCastle
+ * Пара X25519. [privateKey] — 32 байта как есть (без клампинга); клампинг скаляра BouncyCastle
  * делает сам при каждом умножении, поэтому неклампленный и клампленный
  * вариант дают один и тот же результат.
  */
@@ -58,7 +56,7 @@ class X25519KeyPair(val privateKey: ByteArray, val publicKey: ByteArray) {
     }
 }
 
-/** Пара Ed25519. [seed] — 32-байтный приватный seed (формат Dart-клиента). */
+/** Пара Ed25519. [seed] — 32-байтный приватный seed. */
 class Ed25519KeyPair(val seed: ByteArray, val publicKey: ByteArray) {
     init {
         require(seed.size == 32 && publicKey.size == 32) { "Ed25519: ключи должны быть по 32 байта" }
@@ -97,7 +95,7 @@ fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
     return mac.doFinal(data)
 }
 
-/** HKDF-SHA256 (RFC 5869) с пустой солью — так её вызывает Dart-клиент (`nonce: []`). */
+/** HKDF-SHA256 (RFC 5869) с пустой солью. */
 fun hkdfSha256(ikm: ByteArray, info: ByteArray, length: Int, salt: ByteArray = ByteArray(0)): ByteArray {
     val prk = hmacSha256(salt, ikm)
     val out = ByteArray(length)
@@ -114,7 +112,7 @@ fun hkdfSha256(ikm: ByteArray, info: ByteArray, length: Int, salt: ByteArray = B
     return out
 }
 
-/** Результат AES-GCM в раскладке Dart-клиента: шифротекст и тег отдельно. */
+/** Результат AES-GCM: шифротекст и тег отдельно. */
 class SealedBox(val nonce: ByteArray, val ciphertext: ByteArray, val mac: ByteArray)
 
 object AesGcm {

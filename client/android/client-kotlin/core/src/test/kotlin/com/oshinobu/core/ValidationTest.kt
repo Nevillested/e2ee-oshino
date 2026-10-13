@@ -16,7 +16,7 @@ class ValidationTest {
     }
 
     @Test
-    fun `пароль — по шагам, как во Flutter`() {
+    fun `пароль — проверка по шагам`() {
         assertEquals("password.tooShort", validatePassword("Ab1!"))
         assertEquals("password.needUpper", validatePassword("abcdef1!"))
         assertEquals("password.needLower", validatePassword("ABCDEF1!"))

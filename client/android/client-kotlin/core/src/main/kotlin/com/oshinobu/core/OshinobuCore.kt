@@ -227,8 +227,8 @@ class OshinobuCore(
 
     /**
      * Сессия больше не действует (вошли с другого устройства / выход):
-     * отключиться и стереть ВСЁ локальное — ключи, сессии, переписку, как во
-     * Flutter-клиенте (KeyStore.clearAll удаляет всё secure storage).
+     * отключиться и стереть ВСЁ локальное — ключи, сессии, переписку
+     * (KeyStore.clearAll удаляет всё secure storage).
      */
     suspend fun signOutLocally() {
         _sessionActive.value = false

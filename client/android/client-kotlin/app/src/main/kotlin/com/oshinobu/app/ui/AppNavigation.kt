@@ -185,10 +185,10 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
     // слой общих элементов: аватар перелетает между шапкой чата и профилем
     SharedTransitionLayout {
     CompositionLocalProvider(LocalSwipeBack provides swipeBack, LocalSharedTransitionScope provides this) {
-    // как во Flutter: новый экран выезжает справа поверх неподвижного,
+    // новый экран выезжает справа поверх неподвижного,
     // при возврате уезжает вправо (за пальцем — при свайпе назад);
     // профиль собеседника — проявляется с увеличением (Material "shared axis
-    // scaled", как HeroZoomPageRoute во Flutter); экраны звонка — сразу
+    // scaled"); экраны звонка — сразу
     NavHost(
         nav,
         startDestination = if (launchedForCall) Routes.CALL_LAUNCH else Routes.SPLASH,
@@ -393,7 +393,7 @@ private class CircleRevealShape(private val fraction: Float) : Shape {
     }
 }
 
-/** Профиль собеседника: открытие и закрытие (как у HeroZoomPageRoute во Flutter-клиенте). */
+/** Профиль собеседника: открытие и закрытие — проявление с увеличением. */
 private const val PROFILE_OPEN_MS = 350
 private const val PROFILE_CLOSE_MS = 300
 

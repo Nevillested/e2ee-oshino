@@ -14,17 +14,15 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Локальная история переписки и список чатов — порт
- * client/lib/storage/chat_store.dart (те же ключи secure storage:
+ * Локальная история переписки и список чатов (ключи secure storage:
  * `messages:<login>`, `deleted_ids:<login>`, `known_peers`).
  *
- * Отличие от Flutter одно: чат «Заметки» (`__notes__`) убран — Kotlin-клиент
- * его не показывает и не создаёт. Сами данные не удаляются, чтобы откат на
- * Flutter-сборку их не потерял.
+ * Чат «Заметки» (`__notes__`) из первой версии клиента не показывается и не
+ * создаётся; его данные, если остались на телефоне, не трогаются.
  */
 class ChatStore(private val secure: SecureStore, private val now: () -> Long = System::currentTimeMillis) {
     companion object {
-        /** Логин чата «Заметки» во Flutter-клиенте — в Kotlin скрыт. */
+        /** Логин чата «Заметки» первой версии клиента — скрыт. */
         const val LEGACY_NOTES_LOGIN = "__notes__"
         private const val PEERS_INDEX_KEY = "known_peers"
         private const val MAX_TOMBSTONES = 500
@@ -56,7 +54,7 @@ class ChatStore(private val secure: SecureStore, private val now: () -> Long = S
             return m.text
         }
 
-        /** Маркер → локализованная строка; [tr] — перевод по ключу Flutter-локализации. */
+        /** Маркер → локализованная строка; [tr] — перевод по ключу локализации ("sticker.preview" и т.п.). */
         fun decodePreview(raw: String, tr: (String) -> String): String {
             if (!raw.startsWith(PREVIEW_MARK)) return raw
             val body = raw.removePrefix(PREVIEW_MARK)
@@ -244,7 +242,7 @@ class ChatStore(private val secure: SecureStore, private val now: () -> Long = S
             it.copy(
                 mediaId = mediaId,
                 mediaKeyBase64 = keyBase64,
-                // как copyWith во Flutter: null значит "не менять"
+                // null значит "не менять"
                 mediaNonceBase64 = nonceBase64 ?: it.mediaNonceBase64,
                 mediaMacBase64 = macBase64 ?: it.mediaMacBase64,
             )

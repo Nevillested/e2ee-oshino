@@ -7,8 +7,7 @@ import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 
-// Подписи времени, присутствия и размеров — как во Flutter-клиенте
-// (utils/time_format.dart, presence_format.dart, file_size_format.dart).
+// Подписи времени, присутствия и размеров.
 // Перевод — через [tr] (ключи локализации), часы и пояс подменяемы для тестов.
 
 private fun two(n: Int) = n.toString().padStart(2, '0')
@@ -55,7 +54,7 @@ fun formatPresence(
     }
 }
 
-/** Размер файла: байты, КБ/МБ с одним знаком, ГБ с двумя (разделитель — точка, как во Flutter). */
+/** Размер файла: байты, КБ/МБ с одним знаком, ГБ с двумя (разделитель — точка). */
 fun formatFileSize(bytes: Long, tr: (String) -> String): String = when {
     bytes < 1024 -> "$bytes ${tr("unit.bytes")}"
     bytes < 1024L * 1024 -> "${String.format(Locale.ROOT, "%.1f", bytes / 1024.0)} ${tr("unit.kb")}"

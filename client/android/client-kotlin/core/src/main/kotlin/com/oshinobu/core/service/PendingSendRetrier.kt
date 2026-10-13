@@ -43,7 +43,7 @@ enum class RetryOutcome { QUEUED, NOT_FOUND }
 
 /**
  * Очередь отправок, которым нужна загрузка файла или сессия до готового
- * конверта (порт pending_send_retrier.dart). Один рабочий цикл — файлы
+ * конверта. Один рабочий цикл — файлы
  * идут по одному. Задание лежит на диске до успеха; сетевой сбой — задание
  * 'failed' (в чате «!», повтор по кнопке); пропал исходник без возможности
  * докачки — сообщение 'failed' навсегда.
@@ -185,7 +185,7 @@ class PendingSendRetrier(
 
     private suspend fun attempt(job: PendingSendJob) {
         if (job.legacyNotes) {
-            // чата «Заметки» в Kotlin нет — задание Flutter-сборки снимаем, данные не трогаем
+            // чата «Заметки» больше нет — задание первой версии снимаем, данные не трогаем
             log.log("PendingSendRetrier: dropping legacy Notes job ${job.id}")
             store.remove(job.id)
             return

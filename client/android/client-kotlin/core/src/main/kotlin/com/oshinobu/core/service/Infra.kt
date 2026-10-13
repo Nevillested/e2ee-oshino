@@ -59,7 +59,7 @@ class AckRegistry(transport: Transport, scope: CoroutineScope) {
     }
 }
 
-/** Повтор до успеха с нарастающей паузой 1 → 30 с (retry_until_success.dart). */
+/** Повтор до успеха с нарастающей паузой 1 → 30 с. */
 suspend fun retryUntilSuccess(action: suspend () -> Unit) {
     var delayMs = 1_000L
     while (true) {

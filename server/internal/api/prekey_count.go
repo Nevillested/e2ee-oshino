@@ -15,8 +15,7 @@ type PrekeyCountResponse struct {
 }
 
 // NewGetPrekeyCountHandler — GET /devices/{device_id}/prekey-count. Клиент
-// дёргает это при каждом заходе на главный экран (см. home_placeholder_screen.dart
-// _connect()), чтобы вовремя пополнить one-time-prekeys, пока их не осталось
+// дёргает это при каждом запуске сессии (DeviceSetup.ensurePrekeysTopped), чтобы вовремя пополнить one-time-prekeys, пока их не осталось
 // 0 — раньше пополнения не было вообще, ключи загружались один раз при
 // регистрации устройства и потихоньку расходовались навсегда.
 func NewGetPrekeyCountHandler(queries *db.Queries) func(http.ResponseWriter, *http.Request) {

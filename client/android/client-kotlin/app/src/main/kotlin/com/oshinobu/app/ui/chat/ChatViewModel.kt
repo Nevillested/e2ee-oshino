@@ -569,7 +569,7 @@ class ChatViewModel(
 
     fun findMessage(id: String?): StoredMessage? = id?.let { mid -> messages.firstOrNull { it.messageId == mid } }
 
-    /** Свои отправляющиеся/упавшие — статус группы для меню (как во Flutter). */
+    /** Свои отправляющиеся/упавшие — статус группы для меню. */
     fun groupStatus(ids: List<String>): String? {
         val group = messages.filter { it.messageId in ids && it.isMine }
         return when {

@@ -8,7 +8,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import java.io.IOException
 
 /**
- * Ключи ошибок ядра (те же, что ключи локализации Flutter-клиента) → строки.
+ * Ключи ошибок ядра ([ApiException] и т.п.) → строки.
  * Явная таблица, а не поиск ресурса по имени: опечатку ловит компилятор.
  */
 @StringRes
@@ -64,7 +64,7 @@ fun Context.errorText(error: Throwable): String {
     return when {
         res != null -> {
             val status = (error as ApiException).httpStatus
-            // как во Flutter: к общим "не удалось …" дописывается код ответа
+            // к общим "не удалось …" дописывается код ответа
             if (status != null && key in WITH_STATUS) "${getString(res)} ($status)" else getString(res)
         }
         error is IOException || error is TimeoutCancellationException -> getString(R.string.error_network)

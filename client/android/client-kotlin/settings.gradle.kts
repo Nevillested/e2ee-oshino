@@ -1,7 +1,4 @@
-// Нативный Kotlin-клиент Oshinobu — постепенная замена Flutter-клиента
-// (../client). Пока не достигнут паритет функций, в Google Play продолжает
-// уходить Flutter-сборка; эта — параллельно, ставится поверх неё с тем же
-// applicationId и читает её данные (ключи, сессии, переписку).
+// Android-клиент Oshinobu (Kotlin).
 pluginManagement {
     repositories {
         google()
@@ -24,8 +21,9 @@ rootProject.name = "oshinobu-kotlin"
 // тестируется на любой машине с JDK, без Android SDK.
 include(":core")
 
-// :flutter-compat — Android: SecureStore/Prefs/AppDirs поверх тех же файлов,
-// что пишет Flutter-клиент (код flutter_secure_storage, FlutterSharedPreferences).
+// :flutter-compat — Android: SecureStore/Prefs/AppDirs. Формат файлов унаследован
+// от первой версии клиента (flutter_secure_storage, FlutterSharedPreferences) и
+// не меняется — на нём данные установленных копий; самого Flutter в проекте нет.
 include(":flutter-compat")
 
 // :app — само Android-приложение (Jetpack Compose).

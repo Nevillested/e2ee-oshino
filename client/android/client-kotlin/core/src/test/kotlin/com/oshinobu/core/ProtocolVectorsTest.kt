@@ -31,15 +31,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 /**
- * Совместимость протокола с Flutter-клиентом. Пара к
- * client/test/kotlin_interop_test.dart:
- *  - dart_transcript.json пишет НАСТОЯЩИЙ Dart-код — здесь его расшифровываем
- *    и сверяем состояние ratchet после каждого шага;
- *  - kotlin_transcript.json пишем здесь — его проверяет Dart-тест.
+ * Формат протокола на проводе и на диске зафиксирован: protocol_transcript.json —
+ * стенограмма переписки (конверты, состояния ratchet до и после каждого шага,
+ * зашифрованные вложения), снятая с первой версии клиента. Её обязана
+ * расшифровывать любая версия: этим форматом общаются установленные копии и
+ * в нём лежат сохранённые сессии. Упал тест — формат поехал.
  */
-class DartInteropTest {
+class ProtocolVectorsTest {
     private val vectorsDir = File("src/test/resources/vectors")
-    private val pretty = Json { prettyPrint = true }
 
     private fun obj(e: JsonElement?) = e!!.jsonObject
 
@@ -56,7 +55,7 @@ class DartInteropTest {
                 val me = StoredIdentity.fromStore(bobStore)!!
                 PeerCipher.startIncomingSession(env, me)!!.first
             } else {
-                // формат состояния: Dart-JSON → Kotlin → тот же JSON
+                // формат состояния: JSON → объект → тот же JSON
                 RatchetState.fromJson(before).also { assertEquals(before, it.toJson(), "$source шаг $i: JSON состояния") }
             }
 
@@ -84,7 +83,7 @@ class DartInteropTest {
             assertContentEquals(f("plain"), MediaCipher.decrypt(f("key"), f("nonce"), f("mac"), f("ciphertext")), "$source media")
         }
 
-        val tmp = Files.createTempDirectory("oshinobu_interop").toFile()
+        val tmp = Files.createTempDirectory("oshinobu_vectors").toFile()
         try {
             t["streaming"]!!.jsonArray.forEachIndexed { n, it ->
                 val v = it.jsonObject
@@ -99,13 +98,13 @@ class DartInteropTest {
     }
 
     @Test
-    fun `Kotlin расшифровывает стенограмму настоящего Dart-кода`() {
-        val t = Json.parseToJsonElement(File(vectorsDir, "dart_transcript.json").readText()).jsonObject
-        verifyTranscript(t, "dart")
+    fun `зафиксированная стенограмма расшифровывается шаг за шагом`() {
+        val t = Json.parseToJsonElement(File(vectorsDir, "protocol_transcript.json").readText()).jsonObject
+        verifyTranscript(t, "vectors")
     }
 
     @Test
-    fun `Kotlin пишет стенограмму для Dart-теста`() {
+    fun `своя стенограмма проходит ту же проверку`() {
         val bob = StoredIdentity.generate("bob-device", oneTimePrekeyCount = 2)
         val bobStore = bob.toStore()
         val bundle = bob.bundle()
@@ -175,7 +174,7 @@ class DartInteropTest {
                 put("mac", b64(enc.mac)); put("ciphertext", b64(enc.ciphertext))
             }
         }
-        val tmp = Files.createTempDirectory("oshinobu_interop").toFile()
+        val tmp = Files.createTempDirectory("oshinobu_vectors").toFile()
         val streaming = try {
             listOf(0, 100).map { size ->
                 val plain = ByteArray(size) { (it * 7).toByte() }
@@ -195,13 +194,11 @@ class DartInteropTest {
             put("media", kotlinx.serialization.json.JsonArray(media))
             put("streaming", kotlinx.serialization.json.JsonArray(streaming))
         }
-        verifyTranscript(Json.parseToJsonElement(transcript.toString()).jsonObject, "kotlin(self)")
-        vectorsDir.mkdirs()
-        File(vectorsDir, "kotlin_transcript.json").writeText(pretty.encodeToString(JsonObject.serializer(), transcript))
+        verifyTranscript(Json.parseToJsonElement(transcript.toString()).jsonObject, "self")
     }
 
     @Test
-    fun `строка AAD совпадает с Dart посимвольно`() {
+    fun `строка AAD — зафиксированный формат посимвольно`() {
         val aad = buildAad(
             mapOf(
                 "ratchet_pubkey" to JsonPrimitive("UFVC"),

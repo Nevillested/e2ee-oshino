@@ -7,12 +7,12 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
-// Шифрование тела конверта (порт client/lib/crypto/message_cipher.dart).
+// Шифрование тела конверта.
 //
 // Заголовочные поля конверта (какой ключ ratchet, номер сообщения, чей это
 // X3DH) лежат рядом с шифротекстом открыто, но связаны с ним через AAD
-// AES-GCM: подмена любого из них ломает MAC. Строка AAD должна совпадать с
-// Dart-клиентом посимвольно: "name=value" через "|", в фиксированном
+// AES-GCM: подмена любого из них ломает MAC. Строка AAD — зафиксированный
+// формат, посимвольно: "name=value" через "|", в фиксированном
 // порядке; отсутствующее поле и null дают одинаковое "null", число — без
 // кавычек и дробной части.
 

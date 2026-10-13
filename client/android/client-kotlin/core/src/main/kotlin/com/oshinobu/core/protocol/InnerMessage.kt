@@ -14,10 +14,9 @@ import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 import java.util.UUID
 
-// Открытый текст внутри зашифрованного конверта — порт
-// client/lib/crypto/message_envelope.dart. [body] — строка (для 'text' —
-// сам текст, для остальных типов — JSON-строка с полями типа), ровно как в
-// Dart: собеседник на Flutter декодирует её тем же кодом.
+// Открытый текст внутри зашифрованного конверта. [body] — строка (для
+// 'text' — сам текст, для остальных типов — JSON-строка с полями типа).
+// Это формат на проводе: его читают все установленные версии клиента.
 
 object MessageType {
     const val TEXT = "text"

@@ -10,10 +10,9 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-// Double Ratchet — порт client/lib/crypto/double_ratchet.dart один в один:
-// те же info-строки HKDF, те же маркеры HMAC цепочки, тот же JSON состояния
-// (Kotlin-клиент при установке поверх Flutter читает уже сохранённые им
-// сессии, а Flutter-собеседник должен расшифровывать то, что шлёт Kotlin).
+// Double Ratchet. Info-строки HKDF, маркеры HMAC цепочки и JSON состояния —
+// зафиксированный формат (сессии сохранены на телефонах, собеседники на
+// других версиях должны расшифровывать), его сторожит ProtocolVectorsTest.
 
 private const val MAX_SKIPPED_KEYS = 100 // защита от чрезмерного расхода памяти/диска
 private val INFO_INIT = "oshinobu-init".toByteArray()
@@ -131,7 +130,7 @@ class RatchetState(
         envelope["message_number"]!!.jsonPrimitive.int,
     )
 
-    /** Тот же JSON, что пишет Dart-клиент (`RatchetState.toJson`). */
+    /** JSON состояния — формат хранения (не менять без миграции). */
     fun toJson(): JsonObject = buildJsonObject {
         put("root_key", b64(rootKey))
         put("sending_chain_key", sendingChainKey?.let { b64(it) })
@@ -172,7 +171,7 @@ class RatchetState(
             return RatchetState(
                 rootKey = bytes("root_key")!!,
                 // публичная часть хранится рядом — берём её, а не пересчитываем,
-                // ровно как Dart (SimpleKeyPairData с явным publicKey)
+                // публичный ключ хранится явно, рядом с приватным
                 sendingRatchetKeyPair = X25519KeyPair(bytes("sending_ratchet_private")!!, bytes("sending_ratchet_public")!!),
                 sendingChainKey = bytes("sending_chain_key"),
                 receivingChainKey = bytes("receiving_chain_key"),

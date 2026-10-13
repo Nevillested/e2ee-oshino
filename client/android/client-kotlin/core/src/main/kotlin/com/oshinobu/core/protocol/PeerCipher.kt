@@ -14,9 +14,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-// Сборка и вскрытие конверта — чистая криптографическая часть того, что во
-// Flutter делают services/peer_messenger.dart (исходящее) и
-// services/message_router.dart (входящее). Хранилище, сеть, повторы и
+// Сборка и вскрытие конверта — чистая криптографическая часть отправки
+// (PeerMessenger) и приёма (MessageRouter). Хранилище, сеть, повторы и
 // самолечение сессии сюда НЕ входят — это уровень сервисов.
 //
 // Конверт на проводе: { nonce, ciphertext, mac, ratchet_pubkey,
@@ -36,7 +35,7 @@ object PeerCipher {
 
     /**
      * Шифрует [inner] следующим ключом [state] (state при этом продвигается —
-     * сохранить его до отправки, как делает Dart-клиент).
+     * сохранить его до отправки).
      */
     fun seal(state: RatchetState, inner: InnerMessage, myDeviceId: String, initHeader: Map<String, JsonElement>? = null): JsonObject =
         sealText(state, inner.encode(), myDeviceId, initHeader)

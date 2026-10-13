@@ -55,7 +55,7 @@ data class IncomingDelete(val peerLogin: String, val targetIds: List<String>)
 data class DeviceOwnerRef(val accountId: String, val login: String)
 
 /**
- * Единая точка входа для всех входящих конвертов (порт message_router.dart):
+ * Единая точка входа для всех входящих конвертов:
  * расшифровка, самолечение сессии, разбор по типу, ack серверу.
  *
  * Правила подтверждения (ack) — сердце надёжности:

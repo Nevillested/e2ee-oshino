@@ -14,8 +14,8 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-// то же значение, что и клиентский _maxAttachmentSizeBytes
-// (chat_screen.dart) и nginx client_max_body_size — здесь нужен НЕ
+// то же значение, что и клиентский MAX_ATTACHMENT_BYTES
+// (core/.../service/ChatService.kt) и nginx client_max_body_size — здесь нужен НЕ
 // столько для клиента (он и так режет раньше), сколько подстраховкой на
 // случай, если запрос когда-нибудь придёт в обход текущего nginx (см.
 // обсуждение resilience/relay) — без этого сервер молча лил бы файл любого

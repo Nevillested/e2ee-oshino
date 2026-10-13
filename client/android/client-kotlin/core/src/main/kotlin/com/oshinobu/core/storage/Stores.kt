@@ -3,18 +3,19 @@ package com.oshinobu.core.storage
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
-// Хранилища ключ-значение, в которых Flutter-клиент держит всё состояние.
+// Хранилища ключ-значение, в которых приложение держит всё состояние.
 //
-// Kotlin-клиент НЕ мигрирует данные, а работает прямо с теми же
-// хранилищами в том же формате — тогда и установка поверх Flutter, и откат
-// обратно на Flutter-сборку ничего не теряют:
-//  - [SecureStore] — flutter_secure_storage (на Android — его же Java-код с
-//    теми же настройками по умолчанию, см. модуль :app);
-//  - [Prefs] — shared_preferences (файл FlutterSharedPreferences, ключи с
-//    префиксом "flutter.", int хранится как Long, список — JSON с префиксом);
-//  - [AppDirs] — каталоги path_provider.
+// ФОРМАТ ХРАНЕНИЯ УНАСЛЕДОВАН от первой версии клиента (Flutter) и менять
+// его нельзя: на нём лежат ключи шифрования и переписка всех установленных
+// копий. Отсюда и "flutter" в именах файлов и модуля :flutter-compat — это
+// названия форматов на диске, а не зависимость от Flutter (его в проекте нет):
+//  - [SecureStore] — зашифрованное хранилище в формате flutter_secure_storage
+//    (на Android — вендорный Java-код этой библиотеки, модуль :flutter-compat);
+//  - [Prefs] — файл FlutterSharedPreferences, ключи с префиксом "flutter.",
+//    int хранится как Long, список — JSON с префиксом;
+//  - [AppDirs] — каталоги приложения.
 
-/** Зашифрованное хранилище строк (flutter_secure_storage). */
+/** Зашифрованное хранилище строк. */
 interface SecureStore {
     suspend fun read(key: String): String?
     suspend fun write(key: String, value: String)
@@ -23,7 +24,7 @@ interface SecureStore {
     suspend fun deleteAll()
 }
 
-/** Незашифрованные настройки (shared_preferences). Ключи — БЕЗ префикса "flutter.". */
+/** Незашифрованные настройки. Ключи — БЕЗ префикса "flutter." (его добавляет реализация). */
 interface Prefs {
     fun getString(key: String): String?
     fun getLong(key: String): Long?
@@ -40,10 +41,8 @@ interface Prefs {
 }
 
 /**
- * Каталоги path_provider на Android:
- * documents = getApplicationDocumentsDirectory() = app_flutter,
- * support = getApplicationSupportDirectory() = files,
- * temp = getTemporaryDirectory() = cache.
+ * Каталоги приложения на Android (имена — унаследованный формат):
+ * documents = app_flutter, support = files, temp = cache.
  */
 class AppDirs(val documents: File, val support: File, val temp: File)
 

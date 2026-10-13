@@ -40,7 +40,7 @@ object FileActions {
     }
 
     /**
-     * Копия в "Загрузки/Oshinobu" (как во Flutter-клиенте); одноимённый файл
+     * Копия в "Загрузки/Oshinobu"; одноимённый файл
      * не затирается — система или мы добавляем " (1)". Возвращает видимый путь.
      */
     suspend fun saveToDownloads(context: Context, source: File, name: String): String = withContext(Dispatchers.IO) {

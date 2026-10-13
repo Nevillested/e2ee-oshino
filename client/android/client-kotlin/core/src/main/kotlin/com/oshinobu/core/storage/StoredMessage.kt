@@ -9,9 +9,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-// Сообщение в локальной истории чата — порт StoredMessage из
-// client/lib/storage/chat_store.dart. JSON-ключи и умолчания совпадают
-// посимвольно: эту же историю читает и пишет Flutter-сборка.
+// Сообщение в локальной истории чата. JSON-ключи и умолчания — формат
+// хранения на телефонах (см. storage/Stores.kt): не менять без миграции.
 
 object MessageStatus {
     const val SENDING = "sending"

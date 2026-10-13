@@ -18,11 +18,11 @@ import javax.crypto.spec.SecretKeySpec
 
 // Шифрование вложений.
 //
-// Мелкие файлы (≤ 20 МБ) — целиком одним AES-256-GCM (порт
-// client/lib/crypto/media_cipher.dart): ключ/nonce/mac едут в конверте.
+// Мелкие файлы (≤ 20 МБ) — целиком одним AES-256-GCM: ключ/nonce/mac едут
+// в конверте.
 //
-// Большие — потоково блоками по 4 МБ (порт StreamingFileCipher.dart и
-// android/.../FileCipher.kt, формат байт-в-байт):
+// Большие — потоково блоками по 4 МБ (формат зафиксирован — файлы на
+// сервере и у собеседников других версий):
 //   блок:  [4 байта BE = len(ciphertext+tag)] [ciphertext] [tag(16)]
 //   nonce  = 0x00000000 || uint64_be(index)
 //   AAD    = UTF-8("<index>:<0|1>"), 1 = последний блок; файл, кратный

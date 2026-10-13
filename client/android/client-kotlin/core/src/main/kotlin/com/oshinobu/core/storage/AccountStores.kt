@@ -30,10 +30,10 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
 
-// Остальные хранилища Flutter-клиента — те же ключи, тот же формат значений
-// (см. одноимённые классы в client/lib/storage и client/lib/services).
+// Остальные хранилища приложения. Ключи и формат значений — формат хранения
+// на телефонах (см. storage/Stores.kt): не менять без миграции.
 
-/** Токен и логин — shared_preferences (session.dart). */
+/** Токен и логин — в [Prefs]. */
 class Session(private val prefs: Prefs) {
     var token: String?
         get() = prefs.getString("auth_token")
@@ -51,7 +51,7 @@ class Session(private val prefs: Prefs) {
 /** Identity-ключ устройства (подписи) и подписанный им X25519-ключ для DH. */
 class DeviceIdentity(val identity: Ed25519KeyPair, val identityDh: X25519KeyPair, val identityDhSignature: ByteArray)
 
-/** Долговременные ключи устройства (key_store.dart) — отдельными строками secure storage. */
+/** Долговременные ключи устройства — отдельными строками secure storage. */
 class KeyStore(private val secure: SecureStore) {
     private val lock = Mutex()
 
@@ -127,7 +127,7 @@ class KeyStore(private val secure: SecureStore) {
         }
     }
 
-    /** Как и во Flutter — стирает ВСЁ secure storage (выход из аккаунта). */
+    /** Стирает ВСЁ secure storage (выход из аккаунта). */
     suspend fun clearAll() = secure.deleteAll()
 }
 
@@ -151,8 +151,7 @@ class SessionStore(private val secure: SecureStore) {
      * X3DH-поля исходящей сессии, которые прикладываются к КАЖДОМУ сообщению,
      * пока собеседник не ответил (как в Signal): если первое сообщение
      * потерялось — например, сигнал звонка, который не стоит в очереди, —
-     * собеседник поднимет сессию по любому следующему. Ключ новый, Flutter-
-     * клиент его не читает (он прикладывает поля только к первому сообщению).
+     * собеседник поднимет сессию по любому следующему.
      */
     suspend fun pendingInit(deviceId: String): Map<String, JsonElement>? =
         secure.read(initKey(deviceId))?.let { Json.parseToJsonElement(it).jsonObject }
@@ -196,7 +195,7 @@ open class JsonQueueStore(private val secure: SecureStore, private val key: Stri
     }
 }
 
-/** Готовые конверты, ждущие ack сервера (send_queue_store.dart). */
+/** Готовые конверты, ждущие ack сервера. */
 class SendQueueStore(secure: SecureStore) : JsonQueueStore(secure, "send_queue") {
     suspend fun add(id: String, toDeviceId: String, envelope: JsonObject, silent: Boolean = false, messageId: String? = null, peerLogin: String? = null) =
         put(
@@ -211,10 +210,7 @@ class SendQueueStore(secure: SecureStore) : JsonQueueStore(secure, "send_queue")
         )
 }
 
-/**
- * Отправки, упавшие ДО готового конверта (pending_send_store.dart): формат
- * задания — тот же JSON, что пишет PendingSendRetrier во Flutter.
- */
+/** Отправки, упавшие ДО готового конверта (задания — [PendingSendJob]). */
 class PendingSendStore(secure: SecureStore, private val dirs: AppDirs) : JsonQueueStore(secure, "pending_send_queue") {
     /** Типизированные задания; неизвестные (из будущей версии) пропускаются. */
     suspend fun jobs(): List<PendingSendJob> = getAll().mapNotNull { PendingSendJob.fromJson(it) }
@@ -294,7 +290,7 @@ class DownloadQueueStore(private val secure: SecureStore) {
 
 /** Файлы медиа на диске: расшифрованный кэш и недокачанные хвосты. */
 class MediaFiles(private val dirs: AppDirs) {
-    /** Расшифрованный файл (media_cache.dart — temp/media_cache_<id>). */
+    /** Расшифрованный файл (temp/media_cache_<id>). */
     fun cacheFile(mediaId: String) = File(dirs.temp, "media_cache_$mediaId")
 
     /** Недокачанный зашифрованный хвост (support/partial_downloads/<id>.part). */
@@ -318,7 +314,7 @@ data class AppLockSettings(
     val pinLength: Int = 4,
 )
 
-/** Блокировка приложения PIN-кодом (app_lock_store.dart): hash = hex(SHA-256(utf8(pin) || salt)). */
+/** Блокировка приложения PIN-кодом: hash = hex(SHA-256(utf8(pin) || salt)). */
 class AppLockStore(private val secure: SecureStore) {
     private companion object {
         const val ENABLED = "app_lock_enabled"
@@ -392,7 +388,7 @@ class AppLockStore(private val secure: SecureStore) {
 }
 
 /**
- * Код подтверждения почты отправлен, но ещё не введён (email_dialog.dart):
+ * Код подтверждения почты отправлен, но ещё не введён:
  * 25 минут окно сразу открывается на шаге ввода кода, даже после перезапуска.
  */
 class PendingEmailVerification(private val prefs: Prefs, private val now: () -> Long = System::currentTimeMillis) {
@@ -423,7 +419,7 @@ class PendingEmailVerification(private val prefs: Prefs, private val now: () -> 
     }
 }
 
-/** Мелкие настройки интерфейса — там же, где их держит Flutter. */
+/** Мелкие настройки интерфейса (тема, язык, шрифт, фон чата…). */
 class UiSettings(private val secure: SecureStore, private val prefs: Prefs) {
     companion object {
         val TEXT_SCALE_STEPS = listOf(0.85, 0.9, 1.0, 1.1, 1.2, 1.3)
@@ -462,8 +458,8 @@ class UiSettings(private val secure: SecureStore, private val prefs: Prefs) {
 
     /**
      * Где пользователь остановился в чате: сообщение у нижнего края и сдвиг
-     * в пикселях; null — был в самом низу. (Пиксельный offset Flutter-клиента,
-     * "chat_scroll_pos:", к ленивому списку неприменим и не читается.)
+     * в пикселях; null — был в самом низу. (Старый ключ "chat_scroll_pos:" —
+     * пиксельный offset первой версии — к ленивому списку неприменим и не читается.)
      */
     fun chatScrollAnchor(peerLogin: String): Pair<String, Int>? =
         prefs.getString("chat_scroll_anchor:$peerLogin")?.let { v ->
@@ -495,7 +491,7 @@ class UiSettings(private val secure: SecureStore, private val prefs: Prefs) {
     fun setOverlayPermissionAsked() = prefs.setBool("overlay_permission_asked", true)
 }
 
-/** Кэш своего профиля на диске (my_profile_store.dart — documents/my_profile_cache.json). */
+/** Кэш своего профиля на диске (documents/my_profile_cache.json). */
 data class MyProfile(
     val login: String,
     val displayName: String? = null,

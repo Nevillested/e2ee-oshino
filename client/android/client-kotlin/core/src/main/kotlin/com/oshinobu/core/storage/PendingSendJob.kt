@@ -13,9 +13,8 @@ import kotlinx.serialization.json.put
 
 /**
  * Отправка, упавшая (или ещё не начатая) ДО готового конверта — файл надо
- * загрузить, либо для текста не было сессии/бандла. Формат JSON — тот же,
- * что пишет Flutter-клиент в `pending_send_queue` (chat_screen.dart,
- * pending_send_retrier.dart): задания переживают переход между сборками.
+ * загрузить, либо для текста не было сессии/бандла. Лежит JSON-ом в
+ * `pending_send_queue` и переживает перезапуск и обновление приложения.
  */
 sealed class PendingSendJob {
     abstract val id: String
@@ -23,7 +22,7 @@ sealed class PendingSendJob {
     abstract val peerLogin: String
     abstract val peerDeviceId: String
 
-    /** Задания чата «Заметки» из Flutter-сборки — в Kotlin не выполняются. */
+    /** Задания чата «Заметки» первой версии клиента — не выполняются. */
     abstract val legacyNotes: Boolean
 
     /** id сообщений в истории, чей статус зависит от этого задания. */
