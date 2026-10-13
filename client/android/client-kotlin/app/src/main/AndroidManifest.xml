@@ -34,12 +34,15 @@
     <!-- сохранение файлов в "Загрузки" до Android 10 (дальше — MediaStore без разрешения) -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
+    <!-- allowBackup=false: после переустановки — с чистого листа (ключи, переписка,
+         настройки телефона вроде фона чата); с сервера возвращается только то, что там хранится -->
     <application
         android:name=".OshinobuApp"
         android:label="Oshinobu"
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.Oshinobu"
-        android:enableOnBackInvokedCallback="true">
+        android:enableOnBackInvokedCallback="true"
+        android:allowBackup="false">
 
         <activity
             android:name=".MainActivity"

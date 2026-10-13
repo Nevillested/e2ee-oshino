@@ -434,4 +434,11 @@
     <string name="sticker_err_server">Ошибка сервера, попробуйте позже</string>
     <string name="error_stickersFailed">Не удалось связаться с сервером стикеров</string>
     <string name="chat_forwardFailed">Не удалось переслать вложение</string>
+    <string name="chat_wallpaperAction">Фон чата</string>
+    <string name="chat_wallpaperRemove">Убрать фон</string>
+    <string name="chat_wallpaperSet">Установить как фон чата</string>
+    <string name="chat_wallpaperAlsoFor">Установить также у</string>
+    <string name="error_wallpaperFailed">Не удалось установить фон чата</string>
+    <string name="settings_chatBackground">Фон чата</string>
+    <string name="chatBackground_hint">Для чатов без своего фона. Хранится только на этом телефоне.</string>
 </resources>

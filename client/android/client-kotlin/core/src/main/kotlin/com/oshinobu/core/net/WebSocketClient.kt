@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit
 //  - "presence"/"typing"     — присутствие собеседника;
 //  - "block_status_changed"  — кто-то (раз)блокировал;
 //  - "profile_updated"       — {AccountId, Field};
+//  - "wallpaper_changed"     — {AccountId}: собеседник поставил обои и нам;
 //  - "call_*"                — сигнал звонка; ack шлём СРАЗУ, сам сигнал —
 //                              в callSignals (Ciphertext → JSON + "type");
 //  - остальное с Ciphertext  — зашифрованный конверт сообщения; DeliveryId
@@ -81,6 +82,7 @@ class WebSocketClient(
     private val _presence = events<JsonObject>()
     private val _blockStatus = events<Unit>()
     private val _profileChanges = events<ProfileChange>()
+    private val _wallpaperChanges = events<String>()
     private val _acks = events<String>()
     private val _sessionInvalidated = events<Unit>()
 
@@ -89,6 +91,9 @@ class WebSocketClient(
     val presenceEvents: SharedFlow<JsonObject> = _presence.asSharedFlow()
     val blockStatusEvents: SharedFlow<Unit> = _blockStatus.asSharedFlow()
     val profileChanges: SharedFlow<ProfileChange> = _profileChanges.asSharedFlow()
+
+    /** account_id собеседника, который поменял обои нашего с ним чата. */
+    val wallpaperChanges: SharedFlow<String> = _wallpaperChanges.asSharedFlow()
     override val acks: SharedFlow<String> = _acks.asSharedFlow()
     val sessionInvalidated: SharedFlow<Unit> = _sessionInvalidated.asSharedFlow()
 
@@ -275,6 +280,11 @@ class WebSocketClient(
                 val field = outer.str("Field")
                 log("WS recv profile_updated account=$accountId field=$field")
                 if (accountId != null && field != null) _profileChanges.tryEmit(ProfileChange(accountId, field))
+            }
+            type == "wallpaper_changed" -> {
+                val accountId = outer.str("AccountId")
+                log("WS recv wallpaper_changed account=$accountId")
+                accountId?.let { _wallpaperChanges.tryEmit(it) }
             }
             type != null && type.startsWith("call_") -> {
                 // сигналы звонка подтверждаем сразу — их обработка не идемпотентна

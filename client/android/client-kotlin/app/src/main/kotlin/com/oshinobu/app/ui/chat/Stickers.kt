@@ -6,6 +6,7 @@ import android.graphics.drawable.AnimatedImageDrawable
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.util.LruCache
+import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.annotation.RequiresApi
@@ -90,9 +91,16 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import com.airbnb.lottie.LottieComposition
 import com.airbnb.lottie.LottieCompositionFactory
 import com.airbnb.lottie.compose.LottieAnimation
@@ -370,10 +378,13 @@ private fun Modifier.stickerTouch(key: Any, onTap: () -> Unit, onPreviewAt: (Off
 /**
  * Увеличенный стикер поверх чата на время долгого нажатия: появляется
  * "пружиной" из маленького, при переключении на другой стикер — сменяется
- * с коротким "хлопком".
+ * с коротким "хлопком". [ownWindow] — из шита стикерпака: шит — своё окно и
+ * обрезает всё по своим краям, поэтому превью — в отдельном окне на весь
+ * экран (по центру экрана, а не шита); касаний оно не принимает — протяжку
+ * по сетке ведёт шит.
  */
 @Composable
-fun StickerPreviewOverlay(sticker: StickerInfo?) {
+fun StickerPreviewOverlay(sticker: StickerInfo?, ownWindow: Boolean = false) {
     var shown by remember { mutableStateOf<StickerInfo?>(null) }
     if (sticker != null) shown = sticker
     // старт — "невидимо": иначе первое появление не анимируется
@@ -381,6 +392,32 @@ fun StickerPreviewOverlay(sticker: StickerInfo?) {
     visibility.targetState = sticker != null
     val dim by animateFloatAsState(if (sticker != null) 0.45f else 0f, tween(180), label = "previewDim")
     if (!visibility.currentState && !visibility.targetState && dim == 0f) return
+    if (ownWindow) {
+        Popup(popupPositionProvider = CenteredInWindow, properties = PreviewWindowProperties) {
+            StickerPreviewContent(shown, visibility, dim)
+        }
+    } else {
+        StickerPreviewContent(shown, visibility, dim)
+    }
+}
+
+/** Окно превью: по центру окна-хозяина (у шита — весь экран). */
+private object CenteredInWindow : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize) =
+        IntOffset((windowSize.width - popupContentSize.width) / 2, (windowSize.height - popupContentSize.height) / 2)
+}
+
+/** Без фокуса и касаний (палец остаётся у сетки шита), без обрезки по экрану. */
+private val PreviewWindowProperties = PopupProperties(
+    flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+    dismissOnBackPress = false,
+    dismissOnClickOutside = false,
+    usePlatformDefaultWidth = false,
+)
+
+@Composable
+private fun StickerPreviewContent(shown: StickerInfo?, visibility: MutableTransitionState<Boolean>, dim: Float) {
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = dim)), contentAlignment = Alignment.Center) {
         AnimatedVisibility(
             visibleState = visibility,

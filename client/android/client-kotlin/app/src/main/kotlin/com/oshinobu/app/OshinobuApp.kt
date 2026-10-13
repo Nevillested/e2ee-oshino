@@ -44,6 +44,9 @@ class OshinobuApp : Application() {
     /** Масштаб текста интерфейса (настройка "Размер шрифта"). */
     val textScale = MutableStateFlow(1.0)
 
+    /** Фон чатов без своих обоев (настройка "Фон чата"): номер цвета; null — фон темы. */
+    val chatBackground = MutableStateFlow<Int?>(null)
+
     override fun onCreate() {
         super.onCreate()
         routerHost = AndroidRouterHost(this)
@@ -66,6 +69,7 @@ class OshinobuApp : Application() {
         CrashDiagnostics.install(this)
         applyLocale(core.settings.locale())
         textScale.value = core.settings.textScale()
+        chatBackground.value = core.settings.chatBackground()
         core.scope.launch { darkTheme.value = core.settings.theme() != "light" }
         watchNetwork()
         calls = CallController(this, core).also { it.start() }
@@ -81,6 +85,11 @@ class OshinobuApp : Application() {
     fun setTextScale(scale: Double) {
         textScale.value = scale
         core.settings.setTextScale(scale)
+    }
+
+    fun setChatBackground(index: Int?) {
+        chatBackground.value = index
+        core.settings.setChatBackground(index)
     }
 
     fun setLanguage(tag: String) {

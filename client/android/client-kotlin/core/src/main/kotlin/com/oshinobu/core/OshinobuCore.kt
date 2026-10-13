@@ -26,6 +26,7 @@ import com.oshinobu.core.service.RouterHost
 import com.oshinobu.core.service.RtcEngine
 import com.oshinobu.core.service.SendQueueProcessor
 import com.oshinobu.core.service.Stickers
+import com.oshinobu.core.service.Wallpapers
 import com.oshinobu.core.service.UploadCancellations
 import com.oshinobu.core.storage.AppDirs
 import com.oshinobu.core.storage.AppLockStore
@@ -109,6 +110,7 @@ class OshinobuCore(
     val avatars = Avatars(api, session, dirs, scope, logger)
     val myAccount = MyAccount(api, session, dirs, logger)
     val stickers = Stickers(api, session, secure, dirs, logger)
+    val wallpapers = Wallpapers(api, session, dirs, logger)
     val crashes = CrashStore(dirs)
     val crashReporter = CrashReporter(logger, crashes, api, session, prefs, scope)
     val chatActions = ChatActions(api, session, chats, messenger, router, cleanup) {
@@ -128,6 +130,8 @@ class OshinobuCore(
 
     init {
         crashReporter.install()
+        // обои — с диска сразу, чтобы первый же открытый чат был со своим фоном
+        scope.launch { wallpapers.load() }
         // падение, записанное в прошлый раз, — при каждом подключении к серверу, пока не дойдёт
         scope.launch { ws.status.collect { if (it == ConnectionStatus.CONNECTED) crashReporter.sendPendingCrash() } }
     }
@@ -171,7 +175,7 @@ class OshinobuCore(
     /**
      * Состояние, которое живёт на сервере: мьюты и блокировки (сейчас и по
      * событию block_status_changed), профили/аватары собеседников (сброс по
-     * profile_updated), свой профиль.
+     * profile_updated), свой профиль, стикеры, обои чатов (и по wallpaper_changed).
      */
     private fun startServerSync(token: String) {
         if (!serverSyncStarted.compareAndSet(false, true)) return
@@ -179,7 +183,10 @@ class OshinobuCore(
         scope.launch { syncBlockedContacts(token) }
         scope.launch { myAccount.load() }
         scope.launch { stickers.sync() }
+        // обои — при каждом подключении: пока были не в сети, собеседник мог поставить новые
+        scope.launch { ws.status.collect { if (it == ConnectionStatus.CONNECTED) wallpapers.sync() } }
         scope.launch { ws.blockStatusEvents.collect { syncBlockedContacts(token) } }
+        scope.launch { ws.wallpaperChanges.collect { wallpapers.sync() } }
         scope.launch {
             ws.profileChanges.collect { change ->
                 logger.log("Profile changed account=${change.accountId} field=${change.field} — refreshing")
@@ -232,5 +239,6 @@ class OshinobuCore(
         keys.clearAll()
         myAccount.reset()
         stickers.reset()
+        wallpapers.reset()
     }
 }

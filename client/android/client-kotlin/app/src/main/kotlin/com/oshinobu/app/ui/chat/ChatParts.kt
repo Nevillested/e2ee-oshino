@@ -53,7 +53,9 @@ import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.HideImage
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -324,6 +326,10 @@ fun ChatHeader(
     onCall: (() -> Unit)?,
     onSearch: () -> Unit,
     onResetSession: () -> Unit,
+    /** null — фон не поставить (аккаунт удалён). */
+    onPickWallpaper: (() -> Unit)?,
+    /** null — своих обоев у чата нет. */
+    onRemoveWallpaper: (() -> Unit)?,
 ) {
     val context = LocalContext.current
     val colors = LocalAppColors.current
@@ -378,6 +384,20 @@ fun ChatHeader(
                             leadingIcon = { Icon(Icons.Filled.Search, null, tint = colors.textMuted) },
                             onClick = { menuOpen = false; onSearch() },
                         )
+                        if (onPickWallpaper != null) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_wallpaperAction), color = colors.textPrimary) },
+                                leadingIcon = { Icon(Icons.Outlined.Wallpaper, null, tint = colors.textMuted) },
+                                onClick = { menuOpen = false; onPickWallpaper() },
+                            )
+                        }
+                        if (onRemoveWallpaper != null) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_wallpaperRemove), color = colors.textPrimary) },
+                                leadingIcon = { Icon(Icons.Outlined.HideImage, null, tint = colors.textMuted) },
+                                onClick = { menuOpen = false; onRemoveWallpaper() },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.chat_resetSessionAction), color = colors.textPrimary) },
                             leadingIcon = { Icon(Icons.Filled.LockReset, null, tint = colors.textMuted) },

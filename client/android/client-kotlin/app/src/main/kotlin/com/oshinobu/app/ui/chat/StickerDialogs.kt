@@ -189,7 +189,7 @@ fun StickerPackSheet(stickerId: String, onSend: ((StickerInfo) -> Unit)?, onDism
                     }
                 }
             }
-            StickerPreviewOverlay(preview)
+            StickerPreviewOverlay(preview, ownWindow = true)
         }
     }
 

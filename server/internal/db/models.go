@@ -38,6 +38,13 @@ type ChatMute struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type ChatWallpaper struct {
+	AccountID     pgtype.UUID
+	PeerAccountID pgtype.UUID
+	Image         []byte
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type Contact struct {
 	AccountID     pgtype.UUID
 	PeerAccountID pgtype.UUID

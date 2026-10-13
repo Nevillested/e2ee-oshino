@@ -45,6 +45,7 @@ fun errorStringRes(key: String): Int? = when (key) {
     "error.uploadFailed" -> R.string.error_uploadFailed
     "error.userLookupFailed" -> R.string.error_userLookupFailed
     "error.userNotFound" -> R.string.error_userNotFound
+    "error.wallpaperFailed" -> R.string.error_wallpaperFailed
     "error.wrongCredentials" -> R.string.error_wrongCredentials
     "error.wrongTotpCode" -> R.string.error_wrongTotpCode
     "login.invalid" -> R.string.login_invalid

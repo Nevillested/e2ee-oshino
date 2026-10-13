@@ -5,6 +5,9 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -38,6 +41,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -65,6 +69,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -83,6 +88,7 @@ import com.oshinobu.core.service.ForwardItem
 import com.oshinobu.core.storage.MessageStatus
 import com.oshinobu.core.storage.StoredMessage
 import kotlin.math.abs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
@@ -198,6 +204,10 @@ fun ChatScreen(
     var stickerPreview by remember { mutableStateOf<StickerInfo?>(null) }
     var stickerPackFor by remember { mutableStateOf<String?>(null) }
     var stickerUpload by remember { mutableStateOf(false) }
+    val wallpapers by app.core.wallpapers.all.collectAsState()
+    var wallpaperDraft by remember { mutableStateOf<WallpaperDraft?>(null) }
+    var wallpaperForPeer by remember { mutableStateOf(true) }
+    var wallpaperBusy by remember { mutableStateOf(false) }
     var flashId by remember { mutableStateOf<String?>(null) }
     var flashToken by remember { mutableIntStateOf(0) }
     var swipeReplyId by remember { mutableStateOf<String?>(null) }
@@ -282,16 +292,68 @@ fun ChatScreen(
         }
     }
 
+    val wallpaperFailed = stringResource(R.string.error_wallpaperFailed)
+    val keyboard = LocalSoftwareKeyboardController.current
+    val wallpaperPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            wallpaperDraft = try {
+                context.loadWallpaperDraft(uri)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                app.core.logger.error("Wallpaper: picked image unreadable: $e")
+                Toast.makeText(context, wallpaperFailed, Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            wallpaperForPeer = true
+            // превью — на весь чат: клавиатуры не мешают
+            keyboard?.hide()
+            emojiKeyboard.closeEmoji()
+        }
+    }
+
+    fun setWallpaper(peerAccountId: String, draft: WallpaperDraft, forPeer: Boolean) {
+        wallpaperBusy = true
+        scope.launch {
+            try {
+                app.core.wallpapers.set(peerAccountId, draft.jpeg, forPeer)
+                wallpaperDraft = null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                app.core.logger.error("Wallpaper: set failed: $e")
+                Toast.makeText(context, wallpaperFailed, Toast.LENGTH_SHORT).show()
+            } finally {
+                wallpaperBusy = false
+            }
+        }
+    }
+
+    fun removeWallpaper(peerAccountId: String) {
+        scope.launch {
+            try {
+                app.core.wallpapers.remove(peerAccountId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                app.core.logger.error("Wallpaper: remove failed: $e")
+                Toast.makeText(context, wallpaperFailed, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     fun handleBack() {
         when {
             menu != null -> menu = null
+            wallpaperDraft != null -> if (!wallpaperBusy) wallpaperDraft = null
             vm.selectionMode -> vm.clearSelection()
             vm.searchQuery != null -> vm.closeSearch()
             emojiKeyboard.emojiMode -> emojiKeyboard.closeEmoji()
             else -> onBack()
         }
     }
-    BackHandler(enabled = vm.selectionMode || vm.searchQuery != null || emojiKeyboard.emojiMode, onBack = ::handleBack)
+    BackHandler(enabled = vm.selectionMode || vm.searchQuery != null || emojiKeyboard.emojiMode || wallpaperDraft != null, onBack = ::handleBack)
 
     fun openMenu(group: List<StoredMessage>, anchor: Offset) {
         val rep = group.rep()
@@ -382,7 +444,7 @@ fun ChatScreen(
     val saveFile = rememberSaveToDownloads { msg -> vm.mediaFile(msg, userInitiated = true) }
 
     Box(
-        Modifier.fillMaxSize().background(colors.background)
+        Modifier.fillMaxSize()
             .onGloballyPositioned { rootCoords[0] = it }
             // Протяжка выбора — здесь, над всем экраном, а не в строке: строка, с
             // которой начали, при автопрокрутке уходит за край и перестаёт получать
@@ -409,6 +471,8 @@ fun ChatScreen(
                 }
             },
     ) {
+        ChatBackdrop(vm.peer.accountId?.let { wallpapers[it] }, wallpaperDraft?.image, Modifier.matchParentSize())
+
         // ---------------- лента ----------------
         if (vm.searchQuery != null && searchAsList) {
             SearchResultsList(
@@ -537,6 +601,10 @@ fun ChatScreen(
                         },
                         onSearch = vm::openSearch,
                         onResetSession = { confirmReset = true },
+                        onPickWallpaper = if (vm.peerDeleted || vm.peer.accountId == null) null else {
+                            { wallpaperPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                        },
+                        onRemoveWallpaper = vm.peer.accountId?.takeIf { it in wallpapers }?.let { id -> { removeWallpaper(id) } },
                     )
                 }
             }
@@ -618,6 +686,23 @@ fun ChatScreen(
                     inputFocus.requestFocus()
                 },
                 onForward = { onForward(forwardItems) },
+            )
+        }
+
+        // выбранная картинка — фоном всего чата, снизу — "Установить как фон чата"
+        val draft = wallpaperDraft
+        val draftPeer = vm.peer.accountId
+        if (draft != null && draftPeer != null) {
+            WallpaperPreviewBar(
+                peerAccountId = draftPeer,
+                peerName = peerName,
+                canSetForPeer = !composerBlocked,
+                forPeer = wallpaperForPeer,
+                onForPeerChange = { wallpaperForPeer = it },
+                busy = wallpaperBusy,
+                onSet = { setWallpaper(draftPeer, draft, wallpaperForPeer && !composerBlocked) },
+                onCancel = { wallpaperDraft = null },
+                modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
 

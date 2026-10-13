@@ -18,6 +18,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -580,6 +581,48 @@ class ApiClient(
         if (code == 200) obj(body).strings("peer_account_ids") else emptyList()
     } catch (_: Exception) {
         emptyList()
+    }
+
+    // ---------------- обои чатов ----------------
+
+    /** Обои чатов: account_id собеседника → версия (время смены, мс); null — ошибка сети. */
+    suspend fun getChatWallpapers(token: String): Map<String, Long>? = try {
+        val (code, body) = callShort(req("/chats/wallpapers", token).get().build())
+        if (code == 200) {
+            obj(body).objects("wallpapers").mapNotNull { w ->
+                val id = w.str("peer_account_id") ?: return@mapNotNull null
+                id to ((w["version"] as? JsonPrimitive)?.longOrNull ?: 0L)
+            }.toMap()
+        } else {
+            null
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    /** JPEG обоев чата; null — обоев нет. */
+    suspend fun getChatWallpaper(token: String, peerAccountId: String): ByteArray? =
+        exec(media, req("/chats/wallpapers/$peerAccountId", token).get().build()).use {
+            when (it.code) {
+                200 -> it.body!!.bytes().takeIf { bytes -> bytes.isNotEmpty() } ?: fail("error.wallpaperFailed", 200)
+                404 -> null
+                else -> fail("error.wallpaperFailed", it.code)
+            }
+        }
+
+    /** Поставить обои чату ([forPeer] — и собеседнику); возвращает версию. */
+    suspend fun setChatWallpaper(token: String, peerAccountId: String, jpegBytes: ByteArray, forPeer: Boolean): Long {
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("for_peer", if (forPeer) "1" else "0")
+            .addFormDataPart("file", "wallpaper.jpg", jpegBytes.toRequestBody("image/jpeg".toMediaType()))
+            .build()
+        val (code, text) = exec(media, req("/chats/wallpapers/$peerAccountId", token).put(body).build()).use { it.code to (it.body?.string() ?: "") }
+        if (code != 200) fail("error.wallpaperFailed", code)
+        return (obj(text)["version"] as? JsonPrimitive)?.longOrNull ?: 0L
+    }
+
+    suspend fun deleteChatWallpaper(token: String, peerAccountId: String) {
+        if (call(req("/chats/wallpapers/$peerAccountId", token).delete().build()).first != 200) fail("error.wallpaperFailed")
     }
 
     suspend fun blockContact(token: String, peerAccountId: String) = postPeer(token, "/contacts/block", peerAccountId, "error.blockFailed")

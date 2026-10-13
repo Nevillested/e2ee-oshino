@@ -477,6 +477,16 @@ class UiSettings(private val secure: SecureStore, private val prefs: Prefs) {
         else prefs.setString("chat_scroll_anchor:$peerLogin", "${anchor.first}|${anchor.second}")
     }
 
+    /**
+     * Фон чатов без своих обоев: номер цвета из палитры приложения; null —
+     * фон темы. Только на этом телефоне — с сервером не синхронизируется.
+     */
+    fun chatBackground(): Int? = prefs.getLong("chat_background_color")?.toInt()
+
+    fun setChatBackground(index: Int?) {
+        if (index == null) prefs.remove("chat_background_color") else prefs.setLong("chat_background_color", index.toLong())
+    }
+
     fun keyboardHeight(fallback: Double = 280.0): Double = prefs.getDouble("keyboard_height_v1") ?: fallback
     fun setKeyboardHeight(height: Double) = prefs.setDouble("keyboard_height_v1", height)
 
