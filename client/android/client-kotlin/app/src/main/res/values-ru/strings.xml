@@ -433,4 +433,5 @@
     <string name="sticker_err_convertTooLarge">%1$s: после перекодирования больше %2$d КБ — упростите анимацию</string>
     <string name="sticker_err_server">Ошибка сервера, попробуйте позже</string>
     <string name="error_stickersFailed">Не удалось связаться с сервером стикеров</string>
+    <string name="chat_forwardFailed">Не удалось переслать вложение</string>
 </resources>

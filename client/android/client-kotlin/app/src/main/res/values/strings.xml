@@ -433,4 +433,5 @@
     <string name="sticker_err_convertTooLarge">%1$s: larger than %2$d KB after conversion — simplify the animation</string>
     <string name="sticker_err_server">Server error, try again later</string>
     <string name="error_stickersFailed">Couldn\'t reach the sticker server</string>
+    <string name="chat_forwardFailed">Couldn\'t forward the attachment</string>
 </resources>

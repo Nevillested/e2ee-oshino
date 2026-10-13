@@ -14,10 +14,18 @@ import java.io.File
 import java.util.Collections
 import java.util.UUID
 
-/** Что пересылается: текст или стикер (по id). */
+/** Что пересылается: текст, стикер (по id) или вложения. */
 sealed interface ForwardItem {
     data class Text(val text: String) : ForwardItem
     data class Sticker(val stickerId: String) : ForwardItem
+
+    /**
+     * Вложения из переписки с [sourcePeerLogin]: одно (фото, видео, файл,
+     * голосовое, кружок) или альбом с подписью [caption]. Уходят заново
+     * загруженными, с новым ключом: на сервере файл привязан к получателю, а
+     * общий файл на двоих выдал бы серверу цепочку пересылок.
+     */
+    data class Media(val sourcePeerLogin: String, val messages: List<StoredMessage>, val caption: String?) : ForwardItem
 }
 
 /** Собеседник открытого чата. [deviceId] обновляется, если он переустановил приложение. */
@@ -87,10 +95,15 @@ class ChatService(
         )
     }
 
-    /** Пересылка: несколько сообщений разом — все пузыри появляются одним движением. */
+    /**
+     * Пересылка текстов и стикеров: все пузыри появляются одним движением.
+     * Вложения здесь пропускаются — их пересылает приложение: нужен файл с
+     * устройства (из кэша или докачанный), а это уже не ядро.
+     */
     suspend fun sendForwarded(peer: ChatPeer, items: List<ForwardItem>) {
-        val inners = items.map { item ->
+        val inners = items.mapNotNull { item ->
             when (item) {
+                is ForwardItem.Media -> null
                 is ForwardItem.Text -> InnerMessage.text(item.text).also {
                     chats.addMessage(peer.login, StoredMessage(it.messageId, it.body, true, it.sentAt, status = MessageStatus.SENDING), accountId = peer.accountId)
                 }

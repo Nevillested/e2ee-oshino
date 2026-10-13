@@ -12,9 +12,10 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.oshinobu.app.AndroidRouterHost
+import com.oshinobu.app.media.AndroidVideoThumbnailer
 import com.oshinobu.core.OshinobuCore
-import com.oshinobu.core.net.StickerInfo
 import com.oshinobu.core.net.ConnectionStatus
+import com.oshinobu.core.net.StickerInfo
 import com.oshinobu.core.optBool
 import com.oshinobu.core.optLong
 import com.oshinobu.core.optString
@@ -26,6 +27,9 @@ import com.oshinobu.core.service.RetryOutcome
 import com.oshinobu.core.service.VideoThumbnailer
 import com.oshinobu.core.storage.MessageStatus
 import com.oshinobu.core.storage.StoredMessage
+import java.io.File
+import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -34,10 +38,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
-import java.io.File
 
-/** Сообщение как пересылаемое: стикер — по id, остальное — текстом. */
-fun StoredMessage.toForwardItem(): ForwardItem = stickerId?.let(ForwardItem::Sticker) ?: ForwardItem.Text(text)
 
 /** Длительность анимации "рассыпания" удаляемого сообщения. */
 const val DISSOLVE_MS = 700L
@@ -48,6 +49,7 @@ sealed interface ChatNotice {
     data object RetryFailedPermanently : ChatNotice
     data object SessionResetDone : ChatNotice
     data class FilesTooLarge(val count: Int, val firstSize: Long) : ChatNotice
+    data object ForwardFailed : ChatNotice
 }
 
 /**
@@ -67,6 +69,7 @@ class ChatViewModel(
     private val labels: MediaLabels,
 ) : ViewModel() {
     private val media = MediaResolver(core, login, labels)
+    private val thumbnailer = AndroidVideoThumbnailer(core.dirs.support)
 
     var peer by mutableStateOf(ChatPeer(login, accountId, deviceId))
         private set
@@ -321,7 +324,7 @@ class ChatViewModel(
             !forward.isNullOrEmpty() -> {
                 input.clearText()
                 forwarding = null
-                viewModelScope.launch { core.chatService.sendForwarded(peer, forward + listOfNotNull(text.takeIf { it.isNotEmpty() }?.let(ForwardItem::Text))) }
+                sendForwarded(forward + listOfNotNull(text.takeIf { it.isNotEmpty() }?.let(ForwardItem::Text)))
             }
             text.isNotEmpty() -> {
                 input.clearText()
@@ -330,6 +333,78 @@ class ChatViewModel(
                 viewModelScope.launch { core.chatService.sendText(peer, text, reply, reply?.let(labels::quote)) }
             }
         }
+    }
+
+    /**
+     * Пересылка по порядку: тексты и стикеры — пачками, вложения — заново
+     * загруженными (файл из кэша или докачивается). Идёт в общей области
+     * ядра: уход из чата, пока вложение докачивается, пересылку не обрывает.
+     */
+    private fun sendForwarded(items: List<ForwardItem>) {
+        val target = peer
+        core.scope.launch {
+            val batch = ArrayList<ForwardItem>()
+            for (item in items + null) {
+                if (item != null && item !is ForwardItem.Media) {
+                    batch += item
+                    continue
+                }
+                if (batch.isNotEmpty()) {
+                    core.chatService.sendForwarded(target, batch.toList())
+                    batch.clear()
+                }
+                if (item is ForwardItem.Media) forwardMedia(target, item)
+            }
+        }
+    }
+
+    private suspend fun forwardMedia(target: ChatPeer, item: ForwardItem.Media) {
+        val source = MediaResolver(core, item.sourcePeerLogin, labels)
+        try {
+            val recorded = item.messages.singleOrNull()?.takeIf { it.isVoice || it.isVideoNote }
+            if (recorded != null) {
+                // запись отправка забирает себе (переносит и удаляет) — отдаём копию
+                val copy = File(core.dirs.temp, "fwd_${UUID.randomUUID()}.${if (recorded.isVideoNote) "mp4" else "m4a"}")
+                source.file(recorded, userInitiated = true).copyTo(copy, overwrite = true)
+                core.chatService.sendRecorded(target, copy, recorded.durationMs ?: 0, recorded.isVideoNote, thumbnailer)
+                return
+            }
+            val files = item.messages.map { m ->
+                val name = m.fileName ?: if (m.isVideo) "video.mp4" else "photo.jpg"
+                val copy = core.pendingSends.newPersistedFile(name.substringAfterLast('.', "bin"))
+                source.file(m, userInitiated = true).copyTo(copy, overwrite = true)
+                OutgoingFile(copy, isFile = m.isFile, isVideo = m.isVideo, isSpoiler = m.isSpoiler, name = name)
+            }
+            val rejected = core.chatService.sendMedia(target, files, item.caption.orEmpty(), thumbnailer)
+            if (rejected.isNotEmpty()) _notices.tryEmit(ChatNotice.FilesTooLarge(rejected.size, rejected.first().file.length()))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _notices.tryEmit(ChatNotice.ForwardFailed)
+        }
+    }
+
+    /**
+     * Сообщения как пересылаемые, в их порядке: альбом (общий groupId) и
+     * одиночное вложение — одним [ForwardItem.Media] с подписью, текст и
+     * стикер — как есть; звонки и нерасшифрованные — не пересылаются.
+     */
+    fun forwardItemsOf(source: List<StoredMessage>): List<ForwardItem> {
+        val result = ArrayList<ForwardItem>()
+        var i = 0
+        while (i < source.size) {
+            val gid = source[i].groupId
+            val group = if (gid == null) listOf(source[i++]) else buildList { while (i < source.size && source[i].groupId == gid) add(source[i++]) }
+            val media = group.filter { it.isMedia }
+            if (media.isNotEmpty()) {
+                result += ForwardItem.Media(peer.login, media, group.firstOrNull { !it.isMedia }?.text)
+                continue
+            }
+            group.filter { !it.isCallLog && !it.isUndecryptable }.forEach { m ->
+                result += m.stickerId?.let(ForwardItem::Sticker) ?: ForwardItem.Text(m.text)
+            }
+        }
+        return result
     }
 
     /** Стикер из панели — сразу отдельным сообщением (с ответом, если он начат). */
@@ -468,9 +543,8 @@ class ChatViewModel(
     /** Тексты выделенных сообщений (без медиа, стикеров и звонков) — для копирования. */
     fun selectedTexts(): List<String> = messages.filter { it.messageId in selected && !it.isMedia && !it.isSticker && !it.isCallLog && !it.isUndecryptable }.map { it.text }
 
-    /** Выделенное для пересылки: тексты и стикеры. */
-    fun selectedForwardItems(): List<ForwardItem> =
-        messages.filter { it.messageId in selected && !it.isMedia && !it.isCallLog && !it.isUndecryptable }.map { it.toForwardItem() }
+    /** Выделенное для пересылки: тексты, стикеры и вложения. */
+    fun selectedForwardItems(): List<ForwardItem> = forwardItemsOf(messages.filter { it.messageId in selected })
 
     // ---------------- поиск ----------------
 

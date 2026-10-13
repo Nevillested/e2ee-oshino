@@ -13,6 +13,8 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -80,12 +82,12 @@ import com.oshinobu.core.net.StickerInfo
 import com.oshinobu.core.service.ForwardItem
 import com.oshinobu.core.storage.MessageStatus
 import com.oshinobu.core.storage.StoredMessage
+import kotlin.math.abs
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.math.abs
 
 /** Подписи вложений для панели передач — в языке интерфейса на момент открытия чата. */
 data class MediaLabels(val photo: String, val video: String, val file: String, val voice: String, val videoNote: String, val sticker: String) {
@@ -221,6 +223,7 @@ fun ChatScreen(
                 ChatNotice.RetryFailedPermanently -> context.getString(R.string.chat_retryFailedPermanently)
                 ChatNotice.SessionResetDone -> context.getString(R.string.chat_resetSessionDone)
                 is ChatNotice.FilesTooLarge -> context.getString(R.string.chat_fileTooLarge)
+                ChatNotice.ForwardFailed -> context.getString(R.string.chat_forwardFailed)
             }
             Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
         }
@@ -352,7 +355,7 @@ fun ChatScreen(
             }
             MessageAction.PIN -> vm.setPinned(msg, true)
             MessageAction.UNPIN -> vm.setPinned(msg, false)
-            MessageAction.FORWARD -> onForward(listOf(msg.toForwardItem()))
+            MessageAction.FORWARD -> onForward(vm.forwardItemsOf(vm.messages.filter { it.messageId in t.groupIds }))
             MessageAction.EDIT -> {
                 vm.startEdit(msg)
                 inputFocus.requestFocus()
@@ -562,22 +565,6 @@ fun ChatScreen(
                     onToggleList = { searchAsList = !searchAsList },
                 )
             } else {
-                AnimatedVisibility(vm.selectionMode, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                    val selectedGroups = groups.filter { g -> g.any { it.messageId in vm.selected } }
-                    val forwardItems = vm.selectedForwardItems()
-                    SelectionActions(
-                        // ответить можно только на одно сообщение
-                        canReply = selectedGroups.size == 1 && !composerBlocked,
-                        canForward = forwardItems.isNotEmpty(),
-                        onReply = {
-                            val target = selectedGroups.singleOrNull()?.rep() ?: return@SelectionActions
-                            vm.clearSelection()
-                            vm.startReply(target)
-                            inputFocus.requestFocus()
-                        },
-                        onForward = { onForward(forwardItems) },
-                    )
-                }
                 if (!composerBlocked) ComposerBanner(vm, context)
                 Composer(
                     vm = vm,
@@ -607,6 +594,30 @@ fun ChatScreen(
                         onAddPack = { stickerUpload = true },
                     )
                 },
+            )
+        }
+
+        // Режим выбора: «Ответить»/«Переслать» — поверх ленты, над полем ввода;
+        // в высоту поля не входят, поэтому ленту не сдвигают.
+        AnimatedVisibility(
+            vm.selectionMode && vm.searchQuery == null,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = with(density) { composerHeightPx.toDp() }),
+            enter = fadeIn(tween(160)) + slideInVertically(tween(200)) { it / 2 },
+            exit = fadeOut(tween(140)) + slideOutVertically(tween(160)) { it / 2 },
+        ) {
+            val selectedGroups = groups.filter { g -> g.any { it.messageId in vm.selected } }
+            val forwardItems = vm.selectedForwardItems()
+            SelectionActions(
+                // ответить можно только на одно сообщение
+                canReply = selectedGroups.size == 1 && !composerBlocked,
+                canForward = forwardItems.isNotEmpty(),
+                onReply = {
+                    val target = selectedGroups.singleOrNull()?.rep() ?: return@SelectionActions
+                    vm.clearSelection()
+                    vm.startReply(target)
+                    inputFocus.requestFocus()
+                },
+                onForward = { onForward(forwardItems) },
             )
         }
 
