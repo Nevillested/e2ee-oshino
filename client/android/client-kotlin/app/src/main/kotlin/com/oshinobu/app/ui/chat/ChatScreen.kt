@@ -17,6 +17,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -43,6 +44,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
@@ -201,6 +203,9 @@ fun ChatScreen(
     var composerHeightPx by remember { mutableIntStateOf(0) }
     var headerHeightPx by remember { mutableIntStateOf(0) }
     val rootCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    // протяжка выбора после долгого нажатия: где палец (координаты экрана чата) и последняя строка под ним
+    var dragSelectPos by remember { mutableStateOf<Offset?>(null) }
+    val dragLastIds = remember { arrayOfNulls<List<String>>(1) }
     val rowBounds = remember { HashMap<String, Rect>() }
     val listState = rememberLazyListState()
     val groups = remember(vm.messages) { groupMessages(vm.messages).asReversed() }
@@ -292,6 +297,50 @@ fun ChatScreen(
         menu = MenuTarget(rep, ids, anchor, vm.groupStatus(ids))
     }
 
+    /** Выбор или снятие выбора — с коротким откликом вибрацией. */
+    fun toggleSelection(ids: List<String>) {
+        vm.toggleSelected(ids)
+        haptics.performHapticFeedback(HapticFeedbackType.VirtualKey)
+    }
+
+    /** id сообщений строки под точкой экрана; только строки на экране — у ушедших за край границы устарели. */
+    fun groupIdsAt(pos: Offset): List<String>? {
+        val visible = listState.layoutInfo.visibleItemsInfo.map { it.key }.toSet()
+        val hit = rowBounds.entries.firstOrNull { it.key in visible && pos.y >= it.value.top && pos.y < it.value.bottom }?.key
+        return hit?.let { key -> latestGroups.firstOrNull { it.key() == key }?.map { it.messageId } }
+    }
+
+    /** Палец протяжкой зашёл на новую строку — переключить её выбор. */
+    fun dragSelectAt(pos: Offset) {
+        val ids = groupIdsAt(pos) ?: return
+        if (ids != dragLastIds[0]) {
+            dragLastIds[0] = ids
+            toggleSelection(ids)
+        }
+    }
+
+    // Автопрокрутка при протяжке выбора: палец у верхнего края ленты — листаем к
+    // более старым (выше), у нижнего — к новым; чем ближе к краю, тем быстрее.
+    // После каждого сдвига под неподвижным пальцем оказывается новая строка.
+    LaunchedEffect(dragSelectPos != null) {
+        if (dragSelectPos == null) return@LaunchedEffect
+        val edge = with(density) { 72.dp.toPx() }
+        val maxStep = with(density) { 14.dp.toPx() }
+        while (true) {
+            val pos = dragSelectPos ?: break
+            val top = headerHeightPx.toFloat()
+            val bottom = (rootCoords[0]?.size?.height ?: 0).toFloat() - composerHeightPx
+            val step = when {
+                pos.y < top + edge -> maxStep * ((top + edge - pos.y) / edge).coerceIn(0f, 1f)
+                pos.y > bottom - edge -> -maxStep * ((pos.y - (bottom - edge)) / edge).coerceIn(0f, 1f)
+                else -> 0f
+            }
+            // лента перевёрнута (новые внизу): положительный сдвиг — к более старым
+            if (step != 0f && listState.scrollBy(step) != 0f) dragSelectAt(pos)
+            withFrameNanos { }
+        }
+    }
+
     fun onMenuAction(t: MenuTarget, action: MessageAction) {
         menu = null
         val msg = t.msg
@@ -308,7 +357,10 @@ fun ChatScreen(
                 vm.startEdit(msg)
                 inputFocus.requestFocus()
             }
-            MessageAction.SELECT -> vm.toggleSelected(t.groupIds)
+            MessageAction.SELECT -> {
+                vm.toggleSelected(t.groupIds)
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            }
             MessageAction.DELETE -> deleteIds = t.groupIds
             MessageAction.REPORT -> reportTarget = msg
             MessageAction.CANCEL_SEND -> vm.cancelSend(t.groupIds)
@@ -328,7 +380,31 @@ fun ChatScreen(
 
     Box(
         Modifier.fillMaxSize().background(colors.background)
-            .onGloballyPositioned { rootCoords[0] = it },
+            .onGloballyPositioned { rootCoords[0] = it }
+            // Протяжка выбора — здесь, над всем экраном, а не в строке: строка, с
+            // которой начали, при автопрокрутке уходит за край и перестаёт получать
+            // касания. Пока протяжка идёт, касание целиком наше — лента не листается пальцем.
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    while (true) {
+                        val ev = awaitPointerEvent(PointerEventPass.Initial)
+                        if (dragSelectPos == null) {
+                            if (ev.changes.none { it.pressed }) break
+                            continue
+                        }
+                        ev.changes.forEach { it.consume() }
+                        val ch = ev.changes.first()
+                        if (!ch.pressed) {
+                            dragSelectPos = null
+                            dragLastIds[0] = null
+                            break
+                        }
+                        dragSelectPos = ch.position
+                        dragSelectAt(ch.position)
+                    }
+                }
+            },
     ) {
         // ---------------- лента ----------------
         if (vm.searchQuery != null && searchAsList) {
@@ -373,17 +449,17 @@ fun ChatScreen(
                                 gestures = RowGestures(
                                     swipeReplyEnabled = !vm.selectionMode && !composerBlocked,
                                     onTap = { anchor ->
-                                        if (vm.selectionMode) vm.toggleSelected(group.map { it.messageId }) else openMenu(group, anchor)
+                                        if (vm.selectionMode) toggleSelection(group.map { it.messageId }) else openMenu(group, anchor)
                                     },
                                     onDoubleTap = { if (!vm.selectionMode) vm.applyDefaultReaction(rep) },
-                                    onLongPress = { vm.toggleSelected(group.map { it.messageId }) },
-                                    onDragSelect = { pos ->
-                                        // только строки, которые сейчас на экране: у ушедших за край границы устарели
-                                        val visible = listState.layoutInfo.visibleItemsInfo.map { it.key }.toSet()
-                                        val hit = rowBounds.entries.firstOrNull { it.key in visible && pos.y >= it.value.top && pos.y < it.value.bottom }?.key
-                                        hit?.let { key -> latestGroups.firstOrNull { it.key() == key }?.map { it.messageId } }
+                                    onLongPress = { pos ->
+                                        // вход в режим выбора (или выбор ещё одной строки) — и дальше протяжка
+                                        val ids = group.map { it.messageId }
+                                        vm.toggleSelected(ids)
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        dragLastIds[0] = ids
+                                        dragSelectPos = pos
                                     },
-                                    toggleIds = vm::toggleSelected,
                                     onSwipeReply = { dx ->
                                         swipeReplyId = rep.messageId
                                         swipeReplyDx = dx
@@ -486,6 +562,22 @@ fun ChatScreen(
                     onToggleList = { searchAsList = !searchAsList },
                 )
             } else {
+                AnimatedVisibility(vm.selectionMode, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    val selectedGroups = groups.filter { g -> g.any { it.messageId in vm.selected } }
+                    val forwardItems = vm.selectedForwardItems()
+                    SelectionActions(
+                        // ответить можно только на одно сообщение
+                        canReply = selectedGroups.size == 1 && !composerBlocked,
+                        canForward = forwardItems.isNotEmpty(),
+                        onReply = {
+                            val target = selectedGroups.singleOrNull()?.rep() ?: return@SelectionActions
+                            vm.clearSelection()
+                            vm.startReply(target)
+                            inputFocus.requestFocus()
+                        },
+                        onForward = { onForward(forwardItems) },
+                    )
+                }
                 if (!composerBlocked) ComposerBanner(vm, context)
                 Composer(
                     vm = vm,
@@ -589,10 +681,8 @@ class RowGestures(
     val swipeReplyEnabled: Boolean,
     val onTap: (anchor: Offset) -> Unit,
     val onDoubleTap: () -> Unit,
-    val onLongPress: () -> Unit,
-    /** Протяжка после долгого тапа: под пальцем (координаты экрана чата) — какие id переключить. */
-    val onDragSelect: (Offset) -> List<String>?,
-    val toggleIds: (List<String>) -> Unit,
+    /** Долгий тап: где палец (координаты экрана чата). Дальнейшую протяжку ведёт экран чата. */
+    val onLongPress: (Offset) -> Unit,
     val onSwipeReply: (dx: Float) -> Unit,
     val onSwipeReplyFire: () -> Unit,
     val onSwipeEnd: () -> Unit,
@@ -695,21 +785,8 @@ private fun MessageRow(
                                 }
                             }
                         }
-                        Phase.LONG -> {
-                            g.onLongPress()
-                            var lastIds: List<String>? = group.map { it.messageId }
-                            while (true) {
-                                val ev = awaitPointerEvent(PointerEventPass.Initial)
-                                val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
-                                ch.consume()
-                                if (!ch.pressed) break
-                                val ids = g.onDragSelect(toRoot(ch.position))
-                                if (ids != null && ids != lastIds) {
-                                    lastIds = ids
-                                    g.toggleIds(ids)
-                                }
-                            }
-                        }
+                        // остаток касания (протяжку) забирает экран чата — см. pointerInput корня
+                        Phase.LONG -> g.onLongPress(toRoot(down.position))
                         Phase.HSWIPE -> {
                             val maxOffset = screenWidthPx * 0.10f
                             var fired = false

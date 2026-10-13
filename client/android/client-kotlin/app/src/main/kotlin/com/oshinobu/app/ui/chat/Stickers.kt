@@ -9,15 +9,19 @@ import android.util.LruCache
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,6 +47,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -66,14 +71,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -313,11 +324,13 @@ fun PanelSticker(sticker: StickerInfo, modifier: Modifier = Modifier) {
 private enum class Touch { TAP, CANCEL }
 
 /**
- * Тап — [onTap]; долгое нажатие — увеличенный стикер ([onPreview]), пока
- * палец держится; отпустили — превью пропадает, ничего не отправляется.
- * Сдвиг пальца до долгого нажатия — прокрутка сетки, не тап.
+ * Тап — [onTap]; долгое нажатие — увеличенное превью, пока палец держится:
+ * [onPreviewAt] получает, где палец (координаты этой ячейки), при каждом
+ * сдвиге — так превью переключается на стикер под пальцем; отпустили — null,
+ * превью пропадает, ничего не отправляется. Сдвиг пальца до долгого
+ * нажатия — прокрутка сетки, не тап.
  */
-private fun Modifier.stickerTouch(key: Any, onTap: () -> Unit, onPreview: (Boolean) -> Unit): Modifier = pointerInput(key) {
+private fun Modifier.stickerTouch(key: Any, onTap: () -> Unit, onPreviewAt: (Offset?) -> Unit): Modifier = pointerInput(key) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
         val outcome = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
@@ -337,36 +350,61 @@ private fun Modifier.stickerTouch(key: Any, onTap: () -> Unit, onPreview: (Boole
             Touch.TAP -> onTap()
             Touch.CANCEL -> Unit
             null -> {
-                onPreview(true)
+                onPreviewAt(down.position)
                 try {
                     while (true) {
                         val ev = awaitPointerEvent()
                         ev.changes.forEach { it.consume() } // сетка под превью не прокручивается
-                        if (ev.changes.none { it.pressed }) break
+                        val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!ch.pressed) break
+                        onPreviewAt(ch.position)
                     }
                 } finally {
-                    onPreview(false)
+                    onPreviewAt(null)
                 }
             }
         }
     }
 }
 
-/** Увеличенный стикер поверх чата на время долгого нажатия. */
+/**
+ * Увеличенный стикер поверх чата на время долгого нажатия: появляется
+ * "пружиной" из маленького, при переключении на другой стикер — сменяется
+ * с коротким "хлопком".
+ */
 @Composable
 fun StickerPreviewOverlay(sticker: StickerInfo?) {
     var shown by remember { mutableStateOf<StickerInfo?>(null) }
     if (sticker != null) shown = sticker
-    AnimatedVisibility(sticker != null, enter = fadeIn(tween(160)), exit = fadeOut(tween(160))) {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
-            AnimatedVisibility(sticker != null, enter = scaleIn(tween(180), initialScale = 0.6f), exit = scaleOut(tween(140), targetScale = 0.8f)) {
-                shown?.let { PanelSticker(it, Modifier.size(240.dp)) }
-            }
+    // старт — "невидимо": иначе первое появление не анимируется
+    val visibility = remember { MutableTransitionState(false) }
+    visibility.targetState = sticker != null
+    val dim by animateFloatAsState(if (sticker != null) 0.45f else 0f, tween(180), label = "previewDim")
+    if (!visibility.currentState && !visibility.targetState && dim == 0f) return
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = dim)), contentAlignment = Alignment.Center) {
+        AnimatedVisibility(
+            visibleState = visibility,
+            enter = scaleIn(spring(dampingRatio = 0.55f, stiffness = 420f), initialScale = 0.35f) + fadeIn(tween(120)),
+            exit = scaleOut(tween(150), targetScale = 0.6f) + fadeOut(tween(150)),
+        ) {
+            AnimatedContent(
+                targetState = shown,
+                contentKey = { it?.id },
+                transitionSpec = {
+                    (scaleIn(spring(dampingRatio = 0.6f, stiffness = 600f), initialScale = 0.8f) + fadeIn(tween(110))) togetherWith
+                        fadeOut(tween(80))
+                },
+                label = "previewSticker",
+            ) { s -> s?.let { PanelSticker(it, Modifier.size(240.dp)) } }
         }
     }
 }
 
-/** Сетка стикеров: тап — [onSend], долгое нажатие — превью. */
+/**
+ * Сетка стикеров: тап — [onSend], долгое нажатие — превью; не отрывая
+ * пальца, можно вести им по сетке — превью переключается на стикер под
+ * пальцем (с лёгкой вибрацией на каждое переключение).
+ */
 @Composable
 fun StickerGrid(
     items: List<StickerInfo>,
@@ -376,15 +414,58 @@ fun StickerGrid(
     contentPadding: PaddingValues = PaddingValues(8.dp),
 ) {
     val send by rememberUpdatedState(onSend)
-    LazyVerticalGrid(GridCells.Fixed(5), modifier, contentPadding = contentPadding) {
+    val haptics = LocalHapticFeedback.current
+    val gridState = rememberLazyGridState()
+    val gridCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    // границы ячеек в координатах сетки — чтобы понять, над каким стикером палец
+    val cellBounds = remember { HashMap<String, Rect>() }
+    var previewed by remember { mutableStateOf<StickerInfo?>(null) }
+
+    fun showPreview(next: StickerInfo?) {
+        if (next?.id == previewed?.id) return
+        if (next != null) {
+            haptics.performHapticFeedback(if (previewed == null) HapticFeedbackType.LongPress else HapticFeedbackType.SegmentTick)
+        }
+        previewed = next
+        onPreview(next)
+    }
+
+    fun stickerAt(point: Offset): StickerInfo? {
+        val visible = gridState.layoutInfo.visibleItemsInfo.map { it.key }.toSet()
+        val id = cellBounds.entries.firstOrNull { it.key in visible && it.value.contains(point) }?.key ?: return null
+        return items.firstOrNull { it.id == id }
+    }
+
+    LazyVerticalGrid(
+        GridCells.Fixed(5),
+        modifier.onGloballyPositioned { gridCoords[0] = it },
+        state = gridState,
+        contentPadding = contentPadding,
+    ) {
         items(items, key = { it.id }) { sticker ->
+            val cell = remember { arrayOfNulls<LayoutCoordinates>(1) }
             PanelSticker(
                 sticker,
-                Modifier.aspectRatio(1f).padding(4.dp).stickerTouch(
-                    sticker.id,
-                    onTap = { send?.invoke(sticker) },
-                    onPreview = { on -> onPreview(if (on) sticker else null) },
-                ),
+                Modifier.aspectRatio(1f).padding(4.dp)
+                    .onGloballyPositioned { c ->
+                        cell[0] = c
+                        gridCoords[0]?.let { g -> cellBounds[sticker.id] = g.localBoundingBoxOf(c) }
+                    }
+                    .stickerTouch(
+                        sticker.id,
+                        onTap = { send?.invoke(sticker) },
+                        onPreviewAt = { local ->
+                            if (local == null) {
+                                showPreview(null)
+                            } else {
+                                val g = gridCoords[0]
+                                val c = cell[0]
+                                val point = if (g != null && c != null) g.localPositionOf(c, local) else null
+                                // между ячейками (в отступах) — остаётся текущий
+                                showPreview(point?.let(::stickerAt) ?: previewed ?: sticker)
+                            }
+                        },
+                    ),
             )
         }
     }

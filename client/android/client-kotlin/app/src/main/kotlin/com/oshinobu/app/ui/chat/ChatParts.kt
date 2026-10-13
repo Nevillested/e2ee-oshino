@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -38,6 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.outlined.Forward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -60,6 +62,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -72,7 +75,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -92,8 +97,8 @@ import com.oshinobu.core.format.formatChatTime
 import com.oshinobu.core.format.formatPresence
 import com.oshinobu.core.storage.MessageStatus
 import com.oshinobu.core.storage.StoredMessage
-import kotlinx.coroutines.launch
 import java.io.File
+import kotlinx.coroutines.launch
 
 // ---------------- пузыри ----------------
 
@@ -292,7 +297,7 @@ private fun ReactionMetaRow(msg: StoredMessage, justReacted: Boolean, modifier: 
 @Composable
 private fun HeaderPill(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val colors = LocalAppColors.current
-    Box(modifier.shadow(4.dp, RoundedCornerShape(50)).background(colors.surface, RoundedCornerShape(50))) { content() }
+    Box(modifier.shadow(4.dp, RoundedCornerShape(50)).background(colors.surface, RoundedCornerShape(50)), contentAlignment = Alignment.Center) { content() }
 }
 
 @Composable
@@ -323,8 +328,13 @@ fun ChatHeader(
     val context = LocalContext.current
     val colors = LocalAppColors.current
     var menuOpen by remember { mutableStateOf(false) }
+    // Боковые "таблетки" — той же высоты, что и центральная: у той высота растёт,
+    // когда подгружается статус присутствия ("был(а) в сети").
+    val density = LocalDensity.current
+    var centerHeightPx by remember { mutableIntStateOf(0) }
+    val sideHeight = with(density) { centerHeightPx.toDp() }
     Row(Modifier.statusBarsPadding().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        HeaderPill {
+        HeaderPill(Modifier.heightIn(min = sideHeight)) {
             Row {
                 PillIcon(Icons.AutoMirrored.Filled.ArrowBack, onClick = onBack)
                 PillIcon(Icons.Filled.SwapVert, onClick = onOpenTransfers)
@@ -332,7 +342,7 @@ fun ChatHeader(
         }
         Spacer(Modifier.width(8.dp))
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            HeaderPill {
+            HeaderPill(Modifier.onSizeChanged { centerHeightPx = it.height }) {
                 Row(
                     Modifier.clip(RoundedCornerShape(50)).clickable(enabled = !vm.peerDeleted, onClick = onOpenProfile)
                         .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -357,7 +367,7 @@ fun ChatHeader(
             }
         }
         Spacer(Modifier.width(8.dp))
-        HeaderPill {
+        HeaderPill(Modifier.heightIn(min = sideHeight)) {
             Row {
                 PillIcon(Icons.Outlined.Call, enabled = onCall != null) { onCall?.invoke() }
                 Box {
@@ -377,6 +387,43 @@ fun ChatHeader(
                 }
             }
         }
+    }
+}
+
+/**
+ * Над полем ввода в режиме выбора — два пузыря: «Ответить» (только когда
+ * выбрано одно сообщение — ответ бывает лишь на одно) и «Переслать».
+ */
+@Composable
+fun SelectionActions(canReply: Boolean, canForward: Boolean, onReply: () -> Unit, onForward: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AnimatedVisibility(
+            canReply,
+            enter = expandHorizontally(expandFrom = Alignment.End) + fadeIn(),
+            exit = shrinkHorizontally(shrinkTowards = Alignment.End) + fadeOut(),
+        ) {
+            ActionPill(Icons.AutoMirrored.Filled.Reply, stringResource(R.string.action_reply), enabled = true, onClick = onReply)
+        }
+        ActionPill(Icons.AutoMirrored.Outlined.Forward, stringResource(R.string.action_forward), enabled = canForward, onClick = onForward)
+    }
+}
+
+@Composable
+private fun ActionPill(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String, enabled: Boolean, onClick: () -> Unit) {
+    val colors = LocalAppColors.current
+    val tint = if (enabled) colors.primary else colors.textMuted.copy(alpha = 0.5f)
+    Row(
+        Modifier.shadow(4.dp, RoundedCornerShape(50)).clip(RoundedCornerShape(50)).background(colors.surface)
+            .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 18.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(text, color = if (enabled) colors.textPrimary else colors.textMuted, fontWeight = FontWeight.Medium)
     }
 }
 
