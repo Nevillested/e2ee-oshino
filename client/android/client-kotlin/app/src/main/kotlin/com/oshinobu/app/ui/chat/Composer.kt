@@ -34,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Forward
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.outlined.StickyNote2
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Keyboard
@@ -106,6 +107,8 @@ fun Composer(
     recorder: ChatRecorder,
     blockedText: String?,
     emojiMode: Boolean,
+    /** Панель откроется на стикерах — и кнопка у поля показывает стикеры, а не эмодзи. */
+    stickersPanel: Boolean,
     focusRequester: FocusRequester,
     onToggleEmoji: () -> Unit,
     /** Тап по полю ввода (уходим с панели эмодзи на клавиатуру). */
@@ -139,9 +142,12 @@ fun Composer(
             Box {
                 Row(Modifier.graphicsLayer { alpha = if (recording) 0f else 1f }, verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onToggleEmoji, modifier = Modifier.size(40.dp)) {
-                        AnimatedContent(emojiMode, label = "emojiIcon") { e ->
-                            Icon(if (e) Icons.Filled.Keyboard else Icons.Outlined.EmojiEmotions, null, tint = colors.textMuted)
+                        val icon = when {
+                            emojiMode -> Icons.Filled.Keyboard
+                            stickersPanel -> Icons.AutoMirrored.Outlined.StickyNote2
+                            else -> Icons.Outlined.EmojiEmotions
                         }
+                        AnimatedContent(icon, label = "emojiIcon") { Icon(it, null, tint = colors.textMuted) }
                     }
                     Spacer(Modifier.width(2.dp))
                     Box(Modifier.weight(1f).padding(vertical = 14.dp)) {

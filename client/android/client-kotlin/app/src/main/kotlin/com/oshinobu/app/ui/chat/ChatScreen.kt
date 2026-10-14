@@ -222,7 +222,7 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val groups = remember(vm.messages) { groupMessages(vm.messages).asReversed() }
     val latestGroups by rememberUpdatedState(groups)
-    val emojiKeyboard = rememberEmojiKeyboardState()
+    val emojiKeyboard = rememberEmojiKeyboardState(withStickers = true)
     val inputFocus = emojiKeyboard.focusRequester
 
     LaunchedEffect(Unit) { vm.reactionPulses.collect { context.reactionHaptic() } }
@@ -644,6 +644,7 @@ fun ChatScreen(
                         else -> null
                     },
                     emojiMode = emojiKeyboard.emojiMode,
+                    stickersPanel = emojiKeyboard.stickersPage && vm.searchQuery == null,
                     focusRequester = inputFocus,
                     onToggleEmoji = emojiKeyboard::toggle,
                     onTextTapped = emojiKeyboard::onFieldFocused,

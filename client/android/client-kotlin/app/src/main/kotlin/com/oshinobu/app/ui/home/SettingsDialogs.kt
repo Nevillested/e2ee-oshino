@@ -185,7 +185,7 @@ private fun AddEmailDialog(onClose: () -> Unit) {
             } else {
                 Text("${stringResource(R.string.email_codeSentTo)} $pending", color = colors.textMuted, fontSize = 13.sp)
                 Spacer(Modifier.height(12.dp))
-                AuthTextField(code, { code = it }, stringResource(R.string.recovery_codeHint), keyboardType = KeyboardType.Number)
+                AuthTextField(code, { code = it }, stringResource(R.string.recovery_codeHint), lettersCode = true)
             }
             ErrorLine(form.error)
         }

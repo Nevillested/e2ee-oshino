@@ -307,7 +307,7 @@ fun RecoveryCodeScreen(login: String, onBack: () -> Unit, onVerified: (code: Str
     val form = rememberFormState()
     var code by rememberSaveable { mutableStateOf("") }
     FormScreen(stringResource(R.string.recovery_codeTitle), onBack) {
-        AuthTextField(code, { code = it }, stringResource(R.string.recovery_codeHint), keyboardType = KeyboardType.Password)
+        AuthTextField(code, { code = it }, stringResource(R.string.recovery_codeHint), lettersCode = true)
         ErrorLine(form.error)
         Gap(24)
         PrimaryButton(stringResource(R.string.recovery_confirmCode), loading = form.loading, enabled = code.isNotBlank(), onClick = {

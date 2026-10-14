@@ -57,6 +57,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -125,6 +126,8 @@ fun AuthTextField(
     modifier: Modifier = Modifier,
     keyboardType: KeyboardType = KeyboardType.Text,
     password: Boolean = false,
+    /** Код из письма (буквы и цифры): обычная клавиатура, заглавные, без автозамены. */
+    lettersCode: Boolean = false,
 ) {
     val colors = LocalAppColors.current
     var hidden by remember { mutableStateOf(true) }
@@ -135,7 +138,15 @@ fun AuthTextField(
         singleLine = true,
         modifier = modifier.fillMaxWidth(),
         shape = CardShape,
-        keyboardOptions = KeyboardOptions(keyboardType = if (password) KeyboardType.Password else keyboardType),
+        keyboardOptions = when {
+            password -> KeyboardOptions(keyboardType = KeyboardType.Password)
+            lettersCode -> KeyboardOptions(
+                capitalization = KeyboardCapitalization.Characters,
+                autoCorrectEnabled = false,
+                keyboardType = KeyboardType.Ascii,
+            )
+            else -> KeyboardOptions(keyboardType = keyboardType)
+        },
         visualTransformation = if (password && hidden) PasswordVisualTransformation() else VisualTransformation.None,
         trailingIcon = if (password) {
             {

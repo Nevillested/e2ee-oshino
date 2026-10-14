@@ -611,17 +611,25 @@ private fun PackTab(selected: Boolean, onClick: () -> Unit, onLongClick: (() -> 
  * Панель на месте клавиатуры, той же высоты, со скруглёнными верхними
  * углами. С [stickers] внизу по центру — овал "Эмодзи | Стикеры":
  * стикеры въезжают справа, эмодзи уходят влево, и обратно.
+ * Открытая вкладка — [stickersPage] (её помнит состояние клавиатуры), смена — [onPage].
  */
 @Composable
-fun EmojiPanel(height: Dp, onEmoji: (String) -> Unit, stickers: (@Composable (bottomPadding: Dp) -> Unit)? = null) {
+fun EmojiPanel(
+    height: Dp,
+    onEmoji: (String) -> Unit,
+    stickers: (@Composable (bottomPadding: Dp) -> Unit)? = null,
+    stickersPage: Boolean = false,
+    onPage: (stickers: Boolean) -> Unit = {},
+) {
     val colors = LocalAppColors.current
     Box(Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)).background(colors.surface)) {
         if (stickers == null) {
             EmojiPicker(onEmoji)
             return@Box
         }
-        var page by remember { mutableIntStateOf(0) }
-        var stickersOpened by remember { mutableStateOf(false) }
+        // вкладка живёт в состоянии клавиатуры: панель открывается на последней
+        val page = if (stickersPage) 1 else 0
+        var stickersOpened by remember { mutableStateOf(stickersPage) }
         val shift by animateFloatAsState(page.toFloat(), tween(280, easing = FastOutSlowInEasing), label = "panelShift")
         val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         val reserve = navBottom + 56.dp
@@ -637,7 +645,7 @@ fun EmojiPanel(height: Dp, onEmoji: (String) -> Unit, stickers: (@Composable (bo
             page,
             onSelect = {
                 if (it == 1) stickersOpened = true
-                page = it
+                onPage(it == 1)
             },
             Modifier.align(Alignment.BottomCenter).padding(bottom = navBottom + 8.dp),
         )

@@ -21,6 +21,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -416,8 +417,9 @@ private fun SplashScreen(onSignedOut: () -> Unit, onSignedIn: () -> Unit) {
         withTimeoutOrNull(SPLASH_LOOP_WAIT_MS) { snapshotFlow { loopsDone }.first { it >= 1 && it > atReady } }
         if (result) onSignedIn() else onSignedOut()
     }
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        AppLoadingIndicator(size = 64.dp, onLoopsDone = { loopsDone = it })
+    // кошка — во всю ширину с полями по 10% слева и справа (в альбомной — не выше 80% экрана)
+    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        AppLoadingIndicator(size = minOf(maxWidth, maxHeight) * 0.8f, onLoopsDone = { loopsDone = it })
     }
 }
 

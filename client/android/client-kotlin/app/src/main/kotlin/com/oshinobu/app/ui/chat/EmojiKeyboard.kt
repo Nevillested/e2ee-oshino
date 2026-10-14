@@ -50,12 +50,28 @@ class EmojiKeyboardState internal constructor(
     private val keyboard: SoftwareKeyboardController?,
     private val focusManager: FocusManager,
     initialKeyboardHeightPx: Int,
+    initialStickersPage: Boolean,
+    private val saveStickersPage: (Boolean) -> Unit,
 ) {
     /** Поле ввода: им фокусируемся при возврате к клавиатуре. */
     val focusRequester = FocusRequester()
 
     var emojiMode by mutableStateOf(false)
         private set
+
+    /**
+     * Вкладка панели — стикеры, а не эмодзи: запоминается при перелистывании,
+     * с неё панель и открывается, и её иконка — на кнопке у поля, пока открыта
+     * клавиатура. Только в переписке (у подписи к медиа стикеров нет).
+     */
+    var stickersPage by mutableStateOf(initialStickersPage)
+        private set
+
+    fun selectPage(stickers: Boolean) {
+        if (stickers == stickersPage) return
+        stickersPage = stickers
+        saveStickersPage(stickers)
+    }
 
     /** Высота клавиатуры (запоминается между запусками): панель эмодзи той же высоты. */
     var keyboardHeightPx by mutableIntStateOf(initialKeyboardHeightPx)
@@ -97,13 +113,18 @@ class EmojiKeyboardState internal constructor(
 
 @OptIn(FlowPreview::class)
 @Composable
-fun rememberEmojiKeyboardState(): EmojiKeyboardState {
+fun rememberEmojiKeyboardState(withStickers: Boolean = false): EmojiKeyboardState {
     val app = LocalContext.current.app
     val density = LocalDensity.current
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val state = remember {
-        EmojiKeyboardState(keyboard, focusManager, with(density) { app.core.settings.keyboardHeight().dp.roundToPx() })
+        val settings = app.core.settings
+        EmojiKeyboardState(
+            keyboard, focusManager, with(density) { settings.keyboardHeight().dp.roundToPx() },
+            initialStickersPage = withStickers && settings.stickersPanelLast(),
+            saveStickersPage = { if (withStickers) settings.setStickersPanelLast(it) },
+        )
     }
     val imeInsets = WindowInsets.ime
     LaunchedEffect(Unit) {
@@ -164,7 +185,13 @@ fun EmojiKeyboardArea(
         if (emojiShown) {
             // построена заранее, но видна только в режиме эмодзи
             Box(Modifier.graphicsLayer { alpha = if (state.reserve.value > 0f) 1f else 0f }) {
-                EmojiPanel(height = with(density) { state.keyboardHeightPx.toDp() }, onEmoji = onEmoji, stickers = stickers)
+                EmojiPanel(
+                    height = with(density) { state.keyboardHeightPx.toDp() },
+                    onEmoji = onEmoji,
+                    stickers = stickers,
+                    stickersPage = state.stickersPage,
+                    onPage = state::selectPage,
+                )
             }
         }
     }

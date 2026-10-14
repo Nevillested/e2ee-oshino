@@ -483,6 +483,11 @@ class UiSettings(private val secure: SecureStore, private val prefs: Prefs) {
         if (index == null) prefs.remove("chat_background_color") else prefs.setLong("chat_background_color", index.toLong())
     }
 
+    /** Последней в панели под полем ввода открывали вкладку стикеров (а не эмодзи). */
+    fun stickersPanelLast(): Boolean = prefs.getBool("emoji_panel_stickers") ?: false
+
+    fun setStickersPanelLast(stickers: Boolean) = prefs.setBool("emoji_panel_stickers", stickers)
+
     fun keyboardHeight(fallback: Double = 280.0): Double = prefs.getDouble("keyboard_height_v1") ?: fallback
     fun setKeyboardHeight(height: Double) = prefs.setDouble("keyboard_height_v1", height)
 
