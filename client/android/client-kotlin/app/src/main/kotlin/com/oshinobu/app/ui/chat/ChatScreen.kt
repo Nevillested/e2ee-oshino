@@ -317,7 +317,7 @@ fun ChatScreen(
         wallpaperBusy = true
         scope.launch {
             try {
-                app.core.wallpapers.set(peerAccountId, draft.jpeg, forPeer)
+                app.core.wallpapers.set(peerAccountId, draft.croppedJpeg(), forPeer)
                 wallpaperDraft = null
             } catch (e: CancellationException) {
                 throw e
@@ -471,7 +471,7 @@ fun ChatScreen(
                 }
             },
     ) {
-        ChatBackdrop(vm.peer.accountId?.let { wallpapers[it] }, wallpaperDraft?.image, Modifier.matchParentSize())
+        ChatBackdrop(vm.peer.accountId?.let { wallpapers[it] }, wallpaperDraft, Modifier.matchParentSize())
 
         // ---------------- лента ----------------
         if (vm.searchQuery != null && searchAsList) {
@@ -694,6 +694,8 @@ fun ChatScreen(
         val draft = wallpaperDraft
         val draftPeer = vm.peer.accountId
         if (draft != null && draftPeer != null) {
+            // пальцы двигают и масштабируют картинку, а не листают ленту
+            WallpaperGestures(draft, Modifier.matchParentSize())
             WallpaperPreviewBar(
                 peerAccountId = draftPeer,
                 peerName = peerName,

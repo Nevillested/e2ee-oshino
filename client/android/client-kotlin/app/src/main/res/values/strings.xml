@@ -441,4 +441,5 @@
     <string name="error_wallpaperFailed">Couldn\'t set the chat background</string>
     <string name="settings_chatBackground">Chat background</string>
     <string name="chatBackground_hint">Used in chats without their own background. Stored on this phone only.</string>
+    <string name="chat_wallpaperHint">Move and zoom the picture with your fingers</string>
 </resources>

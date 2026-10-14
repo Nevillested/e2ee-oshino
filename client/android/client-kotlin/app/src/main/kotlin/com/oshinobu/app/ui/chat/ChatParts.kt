@@ -486,12 +486,15 @@ fun SearchHeader(query: String, onQuery: (String) -> Unit, onClose: () -> Unit) 
     }
 }
 
-/** Баннер закреплённого сообщения — тап переносит к нему. */
+/** Закреплённое сообщение — пузырём под шапкой; тап переносит к нему. */
 @Composable
 fun PinnedBanner(text: String, onClick: () -> Unit) {
     val colors = LocalAppColors.current
+    // пузырь с теми же полями, что у кнопок шапки (12 dp от краёв экрана)
     Row(
-        Modifier.fillMaxWidth().background(colors.surface).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp),
+        Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp).fillMaxWidth()
+            .shadow(4.dp, RoundedCornerShape(50)).clip(RoundedCornerShape(50)).background(colors.surface)
+            .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Icons.Filled.PushPin, null, tint = colors.primary, modifier = Modifier.size(16.dp))

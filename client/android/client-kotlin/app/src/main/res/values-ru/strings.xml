@@ -441,4 +441,5 @@
     <string name="error_wallpaperFailed">Не удалось установить фон чата</string>
     <string name="settings_chatBackground">Фон чата</string>
     <string name="chatBackground_hint">Для чатов без своего фона. Хранится только на этом телефоне.</string>
+    <string name="chat_wallpaperHint">Двигайте и масштабируйте картинку пальцами</string>
 </resources>

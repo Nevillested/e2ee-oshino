@@ -113,10 +113,17 @@ class PendingSendRetrier(
     /** «Отменить отправку» всего задания: прервать загрузку и убрать пузыри. */
     suspend fun cancelJob(id: String) {
         val job = store.job(id) ?: return
+        // сначала — из очереди: рабочий цикл, очнувшись после отмены текущего файла,
+        // не должен успеть взяться за следующий файл той же группы
+        store.remove(id)
         job.messageIds.forEach { cancellations.cancel(it) }
         cleanup.cancelOutgoing(job.peerLogin, job.messageIds)
-        store.remove(id)
         changed()
+    }
+
+    /** Задание отменили, пока шла загрузка — конверт не отправляем. */
+    private suspend fun ensureNotCancelled(job: PendingSendJob) {
+        if (store.job(job.id) == null) throw UploadCancelledException(job.id)
     }
 
     /** Отменить один файл из группы — остальные грузятся дальше; отменили все — не уходит ничего, даже подпись. */
@@ -249,6 +256,7 @@ class PendingSendRetrier(
         val (deviceId, accountId) = target(job, job.peerAccountId)
         val ref = upload(job, job.id, source, job.size, accountId) { reportProgress(job.id, it) }
         val inner = if (job.videoNote) InnerMessage.videoNote(ref, job.durationMs, messageId = job.id) else InnerMessage.voice(ref, job.durationMs, messageId = job.id)
+        ensureNotCancelled(job)
         messenger.send(deviceId, inner, peerLogin = job.peerLogin)
         File(job.filePath).delete() // своя копия записи
     }
@@ -262,6 +270,7 @@ class PendingSendRetrier(
             ref, item.fileName, isFile = item.isFile, isVideo = item.isVideo, spoiler = item.isSpoiler,
             messageId = job.id, replyToMessageId = job.replyToId, replyToPreview = job.replyToPreview,
         )
+        ensureNotCancelled(job)
         messenger.send(deviceId, inner, peerLogin = job.peerLogin)
         if (item.persisted) File(item.filePath).delete()
     }
@@ -282,6 +291,7 @@ class PendingSendRetrier(
                 log.log("PendingSendRetrier group ${job.id}: item ${item.messageId} cancelled mid-upload")
             }
         }
+        ensureNotCancelled(job)
         if (uploaded.isEmpty()) {
             job.textMessageId?.let { cleanup.cancelOutgoing(job.peerLogin, listOf(it)) }
             return

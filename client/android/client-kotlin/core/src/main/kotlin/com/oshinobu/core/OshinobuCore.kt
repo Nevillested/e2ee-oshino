@@ -47,12 +47,13 @@ import com.oshinobu.core.storage.SessionStore
 import com.oshinobu.core.storage.UiSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.supervisorScope
 
 /**
  * Всё ядро клиента, собранное и связанное: хранилища, сеть, сервисы.
@@ -158,6 +159,13 @@ class OshinobuCore(
         deviceSetup.ensurePrekeysTopped(token, deviceId)
     }
 
+    /** Основная сеть телефона сменилась на другую (Wi-Fi ↔ мобильная). */
+    fun onNetworkSwitched() {
+        logger.log("Network switched — dropping connections, reconnecting")
+        api.dropConnections()
+        ws.onNetworkSwitched()
+    }
+
     private val _sessionActive = MutableStateFlow(false)
 
     /** Сессия запущена ([startSession]) и не завершена — можно регистрировать пуш-токен и т.п. */
@@ -170,29 +178,44 @@ class OshinobuCore(
         return api.registerPushToken(token, deviceId, fcmToken)
     }
 
-    private val serverSyncStarted = AtomicBoolean(false)
+    /** Синхронизация текущей сессии; null — не запущена (ещё не входили или вышли). */
+    private var serverSync: Job? = null
+    private val serverSyncLock = Any()
 
     /**
      * Состояние, которое живёт на сервере: мьюты и блокировки (сейчас и по
      * событию block_status_changed), профили/аватары собеседников (сброс по
      * profile_updated), свой профиль, стикеры, обои чатов (и по wallpaper_changed).
+     * Одна на сессию: выход её отменяет ([signOutLocally]), следующий вход
+     * запускает заново — со своим токеном.
      */
-    private fun startServerSync(token: String) {
-        if (!serverSyncStarted.compareAndSet(false, true)) return
-        scope.launch { syncMutedChats(token) }
-        scope.launch { syncBlockedContacts(token) }
-        scope.launch { myAccount.load() }
-        scope.launch { stickers.sync() }
-        // обои — при каждом подключении: пока были не в сети, собеседник мог поставить новые
-        scope.launch { ws.status.collect { if (it == ConnectionStatus.CONNECTED) wallpapers.sync() } }
-        scope.launch { ws.blockStatusEvents.collect { syncBlockedContacts(token) } }
-        scope.launch { ws.wallpaperChanges.collect { wallpapers.sync() } }
-        scope.launch {
-            ws.profileChanges.collect { change ->
-                logger.log("Profile changed account=${change.accountId} field=${change.field} — refreshing")
-                if (change.field == "avatar") avatars.invalidate(change.accountId) else peerProfiles.invalidate(change.accountId)
+    private fun startServerSync(token: String) = synchronized(serverSyncLock) {
+        if (serverSync?.isActive == true) return
+        // supervisorScope: сбой одной синхронизации не отменяет остальные
+        serverSync = scope.launch {
+            supervisorScope {
+                launch { syncMutedChats(token) }
+                launch { syncBlockedContacts(token) }
+                launch { myAccount.load() }
+                launch { stickers.sync() }
+                // обои — при каждом подключении: пока были не в сети, собеседник мог поставить новые
+                launch { ws.status.collect { if (it == ConnectionStatus.CONNECTED) wallpapers.sync() } }
+                launch { ws.blockStatusEvents.collect { syncBlockedContacts(token) } }
+                launch { ws.wallpaperChanges.collect { wallpapers.sync() } }
+                launch {
+                    ws.profileChanges.collect { change ->
+                        logger.log("Profile changed account=${change.accountId} field=${change.field} — refreshing")
+                        if (change.field == "avatar") avatars.invalidate(change.accountId) else peerProfiles.invalidate(change.accountId)
+                    }
+                }
             }
         }
+    }
+
+    private fun stopServerSync() = synchronized(serverSyncLock) {
+        serverSync?.cancel()
+        serverSync = null
+        lastBlocked = null
     }
 
     private suspend fun syncMutedChats(token: String) = chats.syncMutedFromServer(api.getMutedChats(token).toSet())
@@ -232,6 +255,7 @@ class OshinobuCore(
      */
     suspend fun signOutLocally() {
         _sessionActive.value = false
+        stopServerSync()
         ws.disconnect()
         session.token = null
         session.login = null

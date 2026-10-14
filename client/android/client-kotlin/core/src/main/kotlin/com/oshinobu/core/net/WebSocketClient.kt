@@ -148,6 +148,12 @@ class WebSocketClient(
         if (wasOffline) forceReconnect()
     }
 
+    /** Основная сеть сменилась на другую (Wi-Fi ↔ мобильная) — старый сокет мёртв, переподключаемся сразу. */
+    fun onNetworkSwitched() {
+        synchronized(lock) { hadNetwork = true }
+        forceReconnect()
+    }
+
     fun onNetworkLost() {
         synchronized(lock) { hadNetwork = false }
         setStatus(ConnectionStatus.WAITING_FOR_NETWORK)

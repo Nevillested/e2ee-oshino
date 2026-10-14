@@ -205,6 +205,19 @@ class ApiClient(
     private val http: OkHttpClient = versioned(http)
     private val media: OkHttpClient = versioned(media)
 
+    /**
+     * Сменилась сеть (Wi-Fi ↔ мобильная): соединения старой сети мертвы, но
+     * сами об этом не узнают до таймаута. Обрываем идущие запросы (загрузки
+     * повторят шаг уже по новой сети) и выбрасываем пул, чтобы новые запросы
+     * не сели на мёртвый сокет.
+     */
+    fun dropConnections() {
+        for (client in listOf(http, media)) {
+            client.dispatcher.cancelAll()
+            client.connectionPool.evictAll()
+        }
+    }
+
     private fun parseAppVersion(body: String): AppVersionInfo? {
         val o = obj(body)
         val code = (o["version_code"] as? JsonPrimitive)?.intOrNull ?: return null
@@ -228,10 +241,12 @@ class ApiClient(
             .writeTimeout(30, TimeUnit.SECONDS)
             .build()
 
+        // запись: минута без единого отправленного байта — соединение мёртвое (сменилась
+        // сеть), а не медленное; ответ после загрузки сервер может готовить долго
         fun defaultMediaClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.MINUTES)
-            .writeTimeout(5, TimeUnit.MINUTES)
+            .writeTimeout(1, TimeUnit.MINUTES)
             .build()
 
         const val APP_VERSION_HEADER = "X-App-Version"

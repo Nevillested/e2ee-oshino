@@ -114,12 +114,26 @@ class OshinobuApp : Application() {
         AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(tag))
     }
 
-    /** Сеть появилась/пропала — WebSocket переподключается сразу, а не по таймеру. */
+    /**
+     * Сеть появилась/пропала/сменилась — WebSocket переподключается сразу, а не по
+     * таймеру. Смена основной сети (Wi-Fi → мобильная) приходит одним onAvailable
+     * новой сети, без onLost старой, — её ловим по смене самой сети.
+     */
     private fun watchNetwork() {
         val cm = getSystemService(ConnectivityManager::class.java)
         cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = core.ws.onNetworkAvailable()
-            override fun onLost(network: Network) = core.ws.onNetworkLost()
+            private var current: Network? = null
+
+            override fun onAvailable(network: Network) {
+                val previous = current
+                current = network
+                if (previous != null && previous != network) core.onNetworkSwitched() else core.ws.onNetworkAvailable()
+            }
+
+            override fun onLost(network: Network) {
+                if (network == current) current = null
+                core.ws.onNetworkLost()
+            }
         })
     }
 }

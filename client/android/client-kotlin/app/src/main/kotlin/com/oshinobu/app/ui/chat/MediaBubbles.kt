@@ -16,6 +16,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -441,11 +442,20 @@ fun MediaGrid(
     }
     val spacing = 3.dp
     val columns = if (media.size >= 3) 3 else 2
-    val tile = ((maxWidth - spacing * (columns - 1)) / columns).coerceIn(70.dp, 130.dp)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(spacing), verticalArrangement = Arrangement.spacedBy(spacing), maxItemsInEachRow = columns) {
-        media.forEach { m ->
-            Box(Modifier.clip(RoundedCornerShape(10.dp))) {
-                AttachmentBubble(vm, m, tile, m.messageId in revealed, { onReveal(m.messageId) }, onOpenViewer, onOpenFile, onSaveFile)
+    // ширина — фактическая (после полей пузыря), плитка — в целых пикселях с округлением
+    // вниз: иначе на некоторых плотностях экрана ряд из трёх выходил на пиксель шире места,
+    // и третья плитка уезжала на новую строку
+    val widthLimit = maxWidth
+    BoxWithConstraints {
+        val density = LocalDensity.current
+        val available = minOf(constraints.maxWidth, with(density) { widthLimit.roundToPx() })
+        val tilePx = (available - with(density) { spacing.roundToPx() } * (columns - 1)) / columns
+        val tile = with(density) { tilePx.toDp() }.coerceIn(70.dp, 130.dp)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(spacing), verticalArrangement = Arrangement.spacedBy(spacing), maxItemsInEachRow = columns) {
+            media.forEach { m ->
+                Box(Modifier.clip(RoundedCornerShape(10.dp))) {
+                    AttachmentBubble(vm, m, tile, m.messageId in revealed, { onReveal(m.messageId) }, onOpenViewer, onOpenFile, onSaveFile)
+                }
             }
         }
     }

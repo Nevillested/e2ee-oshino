@@ -73,8 +73,9 @@ class MediaUploader(
         val encrypted = MediaCipher.encrypt(plain)
         chats.updateProcessingStep(peerLogin, messageId, UploadStep.UPLOADING)
         val temp = File(dirs.temp, "enc_$messageId.bin").apply { writeBytes(encrypted.ciphertext) }
+        // сбой сети (в т.ч. оборванный при смене сети запрос) — повтор с начала файла
         val mediaId = try {
-            api.uploadEncryptedMediaFile(token, temp, recipient, onProgress)
+            retryStep("whole") { api.uploadEncryptedMediaFile(token, temp, recipient, onProgress) }
         } finally {
             temp.delete()
         }
@@ -145,7 +146,7 @@ class MediaUploader(
         ByteArray(length).also { raf.readFully(it) }
     }
 
-    /** Один сетевой шаг чанковой загрузки: до [stepAttempts] попыток с нарастающей паузой. */
+    /** Один сетевой шаг загрузки: до [stepAttempts] попыток с нарастающей паузой. */
     private suspend fun <T> retryStep(label: String, step: suspend () -> T): T {
         var delayMs = firstRetryDelayMs
         var attempt = 1
