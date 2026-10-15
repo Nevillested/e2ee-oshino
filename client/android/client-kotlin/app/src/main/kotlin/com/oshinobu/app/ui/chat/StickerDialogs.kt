@@ -11,7 +11,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -31,6 +34,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -164,26 +168,35 @@ fun StickerPackSheet(stickerId: String, onSend: ((StickerInfo) -> Unit)?, onDism
                         onPreview = { preview = it },
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                     )
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        if (p.installed) {
-                            SecondaryButton(stringResource(R.string.sticker_remove), enabled = !busy, onClick = {
-                                act {
-                                    stickers.uninstall(p.id)
-                                    pack = p.copy(installed = false)
-                                }
-                            })
-                        } else {
-                            PrimaryButton(stringResource(R.string.sticker_add), loading = busy, onClick = {
-                                act {
-                                    stickers.install(p)
-                                    pack = p.copy(installed = true)
-                                }
-                            })
+                    val toggleInstalled: () -> Unit = {
+                        act {
+                            if (p.installed) stickers.uninstall(p.id) else stickers.install(p)
+                            pack = p.copy(installed = !p.installed)
                         }
-                        if (p.isOwner) {
-                            Spacer(Modifier.height(4.dp))
-                            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                DialogButton(stringResource(R.string.sticker_deleteForever), color = ErrorRed) { if (!busy) confirmDelete = true }
+                    }
+                    val toggleLabel = stringResource(if (p.installed) R.string.sticker_remove else R.string.sticker_add)
+                    if (p.isOwner) {
+                        // свой пак: две кнопки рядом — добавить/убрать и удалить навсегда (рамки, без заливки)
+                        Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            SecondaryButton(toggleLabel, toggleInstalled, Modifier.weight(1f), enabled = !busy)
+                            OutlinedButton(
+                                onClick = { if (!busy) confirmDelete = true },
+                                modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+                                shape = CardShape,
+                                border = BorderStroke(1.dp, ErrorRed),
+                            ) {
+                                Text(
+                                    stringResource(R.string.sticker_deleteForever), color = ErrorRed, fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    } else {
+                        Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            if (p.installed) {
+                                SecondaryButton(toggleLabel, toggleInstalled, enabled = !busy)
+                            } else {
+                                PrimaryButton(toggleLabel, toggleInstalled, loading = busy)
                             }
                         }
                     }

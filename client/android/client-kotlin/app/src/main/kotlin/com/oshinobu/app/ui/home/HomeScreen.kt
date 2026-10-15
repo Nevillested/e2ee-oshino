@@ -226,11 +226,6 @@ fun HomeScreen(
                     Tab.PROFILE -> TopAppBar(title = {}, colors = barColors())
                 }
                 OngoingCallBanner(peerLogin = null, onOpen = onOpenCall)
-                // играет голосовое или видеосообщение из чата: панель сдвигает список вниз,
-                // крестик — остановить и убрать
-                AnimatedVisibility(playback.activeId != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                    MediaControlBar(playback)
-                }
             }
         },
     ) { padding ->
@@ -264,7 +259,19 @@ fun HomeScreen(
                 label = "tabs",
             ) { current ->
                 when (current) {
-                    Tab.CHATS -> ChatList(onOpenChat)
+                    Tab.CHATS -> Column(Modifier.fillMaxSize()) {
+                        // играет голосовое или видеосообщение из чата: панель над списком. Список и
+                        // панель — в одной колонке, поэтому меняются в такт: панель уезжает вверх и
+                        // сжимается, а список поднимается за ней. Крестик — остановить и убрать.
+                        AnimatedVisibility(
+                            playback.activeId != null,
+                            enter = expandVertically(tween(MEDIA_BAR_MS), expandFrom = Alignment.Bottom) + fadeIn(tween(MEDIA_BAR_MS)),
+                            exit = shrinkVertically(tween(MEDIA_BAR_MS), shrinkTowards = Alignment.Bottom) + fadeOut(tween(MEDIA_BAR_MS)),
+                        ) {
+                            MediaControlBar(playback)
+                        }
+                        Box(Modifier.weight(1f)) { ChatList(onOpenChat) }
+                    }
                     Tab.SETTINGS -> SettingsTab(onSignedOut = onSignedOut, onOpenTheme = onOpenTheme)
                     Tab.PROFILE -> ProfileTab()
                 }
@@ -281,7 +288,7 @@ fun HomeScreen(
                 )
             }
             HomeTabs(tab, ::selectTab, Modifier.align(Alignment.BottomCenter))
-            FloatingVideoNote(playback)
+            if (tab == Tab.CHATS) FloatingVideoNote(playback)
         }
     }
 }
@@ -717,3 +724,6 @@ private fun RequestNotificationPermissions() {
         )
     }
 }
+
+/** Появление и уход панели плеера над списком чатов. */
+private const val MEDIA_BAR_MS = 260

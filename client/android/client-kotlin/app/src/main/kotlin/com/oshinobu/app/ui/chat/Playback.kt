@@ -313,8 +313,10 @@ fun VideoNotePlayer(
     }
 
     Box(
+        // тап забираем всегда — даже пока видео грузится или отправляется (тогда он ничего
+        // не делает): иначе он проваливался в строку сообщения и открывал меню
         Modifier.size(size).clip(shape).background(Color.Black)
-            .clickable(enabled = !load.loading && statusOverlay == null) { toggle() },
+            .clickable { if (!load.loading && statusOverlay == null) toggle() },
     ) {
         thumb?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
         if (active) VideoNoteSurface(coordinator, Modifier.fillMaxSize())

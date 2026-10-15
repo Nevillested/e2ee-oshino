@@ -18,50 +18,58 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import kotlin.random.Random
 
 /**
  * Пузырь, который при удалении рассыпается на осколки: в момент удаления
- * снимок содержимого режется на мелкие квадраты, и они разлетаются вверх с
- * затуханием — волной слева направо. Место в ленте сохраняется до конца
- * анимации ([DISSOLVE_MS]), затем сообщение исчезает.
+ * содержимое замораживается (больше не перерисовывается) и режется на мелкие
+ * квадраты, они разлетаются вверх, сжимаясь в точку, — волной слева направо.
+ * Место в ленте сохраняется до конца анимации ([DISSOLVE_MS]), затем
+ * сообщение исчезает.
+ *
+ * Осколки рисуются прямо из записанного слоя, без снимка-картинки: снимок
+ * (toImageBitmap) на части устройств выходил пустым — сообщение пропадало
+ * сразу, без анимации.
  */
 @Composable
 fun Dissolvable(dissolving: Boolean, content: @Composable () -> Unit) {
     val layer = rememberGraphicsLayer()
-    var snapshot by remember { mutableStateOf<ImageBitmap?>(null) }
+    var frozen by remember { mutableStateOf(false) }
     val progress = remember { Animatable(0f) }
     LaunchedEffect(dissolving) {
-        if (dissolving && snapshot == null) {
-            snapshot = layer.toImageBitmap()
+        if (dissolving && !frozen) {
+            frozen = true
             progress.animateTo(1f, tween((DISSOLVE_MS - 60).toInt(), easing = LinearEasing))
         }
     }
     Box(
         Modifier.drawWithContent {
-            val shot = snapshot
-            if (shot == null) {
+            if (!frozen) {
                 layer.record { this@drawWithContent.drawContent() }
                 drawLayer(layer)
             } else {
-                drawShatter(shot, progress.value)
+                drawShatter(layer, progress.value)
             }
         },
     ) { content() }
 }
 
-private const val SHARD_PX = 7
+private const val SHARD_PX = 10
 
-private fun DrawScope.drawShatter(image: ImageBitmap, t: Float) {
-    val cols = (image.width + SHARD_PX - 1) / SHARD_PX
-    val rows = (image.height + SHARD_PX - 1) / SHARD_PX
+private fun DrawScope.drawShatter(layer: GraphicsLayer, t: Float) {
+    val width = size.width.toInt()
+    val height = size.height.toInt()
+    val cols = (width + SHARD_PX - 1) / SHARD_PX
+    val rows = (height + SHARD_PX - 1) / SHARD_PX
     for (r in 0 until rows) {
         for (c in 0 until cols) {
             val rnd = Random(r * 7919 + c)
@@ -69,28 +77,27 @@ private fun DrawScope.drawShatter(image: ImageBitmap, t: Float) {
             val start = c.toFloat() / cols * 0.45f + rnd.nextFloat() * 0.1f
             val local = ((t - start) / (1f - start)).coerceIn(0f, 1f)
             if (local >= 1f) continue
-            val w = minOf(SHARD_PX, image.width - c * SHARD_PX)
-            val h = minOf(SHARD_PX, image.height - r * SHARD_PX)
-            val vx = (rnd.nextFloat() - 0.3f) * 160f
-            val vy = -(40f + rnd.nextFloat() * 140f)
+            val w = minOf(SHARD_PX, width - c * SHARD_PX).toFloat()
+            val h = minOf(SHARD_PX, height - r * SHARD_PX).toFloat()
             val eased = FastOutSlowInEasing.transform(local)
-            val dx = c * SHARD_PX + vx * eased
-            val dy = r * SHARD_PX + vy * eased
-            drawImage(
-                image,
-                srcOffset = IntOffset(c * SHARD_PX, r * SHARD_PX),
-                srcSize = IntSize(w, h),
-                dstOffset = IntOffset(dx.toInt(), dy.toInt()),
-                dstSize = IntSize(w, h),
-                alpha = 1f - local,
-            )
+            val dx = (rnd.nextFloat() - 0.3f) * 160f * eased
+            val dy = -(40f + rnd.nextFloat() * 140f) * eased
+            // осколок сжимается к своему центру — вместо затухания
+            val keep = 1f - local
+            val cx = c * SHARD_PX + w / 2 + dx
+            val cy = r * SHARD_PX + h / 2 + dy
+            clipRect(cx - w * keep / 2, cy - h * keep / 2, cx + w * keep / 2, cy + h * keep / 2) {
+                translate(dx, dy) { drawLayer(layer) }
+            }
         }
     }
 }
 
 /** Разовая подсветка строки во всю ширину — после перехода к сообщению по цитате или закрепу. */
 fun Modifier.jumpFlash(alpha: Float, color: Color): Modifier =
-    if (alpha <= 0f) this else drawBehind { drawRect(color.copy(alpha = alpha)) }
+    if (alpha <= 0f) this else drawBehind {
+        drawRoundRect(color.copy(alpha = alpha), cornerRadius = CornerRadius(14.dp.toPx()))
+    }
 
 /** Пульсация пузыря — совпадение поиска, на котором сейчас стоим. */
 @Composable

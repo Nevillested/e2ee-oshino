@@ -516,6 +516,7 @@ fun ChatScreen(
                                 onBounds = { rowBounds[group.key()] = it },
                                 gestures = RowGestures(
                                     swipeReplyEnabled = !vm.selectionMode && !composerBlocked,
+                                    isListScrolling = { listState.isScrollInProgress },
                                     onTap = { anchor ->
                                         if (vm.selectionMode) toggleSelection(group.map { it.messageId }) else openMenu(group, anchor)
                                     },
@@ -615,7 +616,11 @@ fun ChatScreen(
                 }
             }
             OngoingCallBanner(peerLogin = target.login, onOpen = onOpenCall)
-            AnimatedVisibility(playback.activeId != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+            // панель плеера — только если играет сообщение из этого чата
+            AnimatedVisibility(
+                playback.activeId != null && vm.messages.any { it.messageId == playback.activeId },
+                enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut(),
+            ) {
                 MediaControlBar(playback)
             }
             AnimatedVisibility(vm.pinnedId != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
@@ -785,6 +790,8 @@ fun ChatScreen(
 /** Колбэки жестов строки сообщения. */
 class RowGestures(
     val swipeReplyEnabled: Boolean,
+    /** Лента прокручивается (в т.ч. по инерции) — тап, который её останавливает, не считается. */
+    val isListScrolling: () -> Boolean,
     val onTap: (anchor: Offset) -> Unit,
     val onDoubleTap: () -> Unit,
     /** Долгий тап: где палец (координаты экрана чата). Дальнейшую протяжку ведёт экран чата. */
@@ -869,11 +876,13 @@ private fun MessageRow(
                 val slop = viewConfiguration.touchSlop
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    // лента ещё ехала — этот тап только её останавливает, меню не открываем
+                    val stoppedScroll = g.isListScrolling()
                     val swipeStart = arrayOf(down.position)
                     val phase = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) { classify(down, slop, swipeStart) } ?: Phase.LONG
                     when (phase) {
                         Phase.CANCEL -> Unit
-                        Phase.UP -> {
+                        Phase.UP -> if (!stoppedScroll) {
                             if (currentSelectionMode) {
                                 g.onTap(toRoot(down.position))
                             } else {

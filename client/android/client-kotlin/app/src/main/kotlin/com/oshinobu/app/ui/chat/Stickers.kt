@@ -393,8 +393,11 @@ fun StickerPreviewOverlay(sticker: StickerInfo?, ownWindow: Boolean = false) {
     val dim by animateFloatAsState(if (sticker != null) 0.45f else 0f, tween(180), label = "previewDim")
     if (!visibility.currentState && !visibility.targetState && dim == 0f) return
     if (ownWindow) {
+        // затемнение — здесь, на всём шите (вместе с кнопками внизу): окно превью у части
+        // телефонов не заходит в нижнюю часть экрана; в окне — только сам стикер
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = dim)))
         Popup(popupPositionProvider = CenteredInWindow, properties = PreviewWindowProperties) {
-            StickerPreviewContent(shown, visibility, dim)
+            StickerPreviewContent(shown, visibility, dim = 0f)
         }
     } else {
         StickerPreviewContent(shown, visibility, dim)
