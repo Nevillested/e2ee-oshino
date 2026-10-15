@@ -252,8 +252,20 @@ class ChatStore(private val secure: SecureStore, private val now: () -> Long = S
     suspend fun setReaction(peerLogin: String, messageId: String, isMine: Boolean, emoji: String?) =
         replace(peerLogin, messageId) { if (isMine) it.copy(myReaction = emoji) else it.copy(peerReaction = emoji) }
 
-    suspend fun editMessageText(peerLogin: String, messageId: String, newText: String) =
+    /** Правка текста; правят последнее сообщение — меняется и превью в списке чатов. */
+    suspend fun editMessageText(peerLogin: String, messageId: String, newText: String) {
         replace(peerLogin, messageId) { it.copy(text = newText, edited = true) }
+        val last = getMessages(peerLogin).maxByOrNull { it.timestamp } ?: return
+        if (last.messageId != messageId) return
+        withPeersLock {
+            val peers = readPeers()
+            val p = peers.firstOrNull { it.peerLogin == peerLogin } ?: return@withPeersLock
+            val preview = previewMarker(last)
+            if (p.lastMessage == preview) return@withPeersLock
+            p.lastMessage = preview
+            writePeers(peers)
+        }
+    }
 
     /** Собеседник прочитал наши сообщения [messageIds]. */
     suspend fun markMessagesRead(peerLogin: String, messageIds: List<String>) {
@@ -304,7 +316,11 @@ class ChatStore(private val secure: SecureStore, private val now: () -> Long = S
         }
     }
 
-    /** Удаляет локально и ставит "надгробия" (на случай, если удаляемое ещё в пути). */
+    /**
+     * Удаляет локально и ставит "надгробия" (на случай, если удаляемое ещё в
+     * пути). Удалили закреплённое — закреп снимается здесь же: не только по
+     * отдельному "открепить" от собеседника, которое могло и не дойти.
+     */
     suspend fun deleteMessages(peerLogin: String, messageIds: List<String>) {
         if (messageIds.isEmpty()) return
         val ids = messageIds.toSet()
@@ -322,6 +338,7 @@ class ChatStore(private val secure: SecureStore, private val now: () -> Long = S
                 notifyChanged()
                 return@withPeersLock
             }
+            if (p.pinnedMessageId in ids) p.pinnedMessageId = null
             if (remaining.isEmpty()) {
                 p.lastMessage = ""
                 p.lastTimestamp = 0

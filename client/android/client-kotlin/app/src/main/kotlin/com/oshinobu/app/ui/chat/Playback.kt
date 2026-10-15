@@ -4,8 +4,13 @@ import android.graphics.SurfaceTexture
 import android.media.MediaPlayer
 import android.view.Surface
 import android.view.TextureView
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -387,37 +392,45 @@ fun VideoNoteSurface(coordinator: PlaybackCoordinator, modifier: Modifier = Modi
  */
 @Composable
 fun FloatingVideoNote(coordinator: PlaybackCoordinator, modifier: Modifier = Modifier) {
-    if (coordinator.activeId == null || !coordinator.isVideo) return
     val density = LocalDensity.current
+    val visible = coordinator.activeId != null && coordinator.isVideo
     BoxWithConstraints(modifier.fillMaxSize()) {
         val size = 132.dp
         val margin = with(density) { 12.dp.toPx() }
         val sizePx = with(density) { size.toPx() }
         val maxX = (constraints.maxWidth - sizePx - margin).coerceAtLeast(margin)
         val maxY = (constraints.maxHeight - sizePx - margin).coerceAtLeast(margin)
-        // сначала — справа сверху
+        // сначала — справа сверху; куда перетащили — там и остаётся, пока экран жив
         var offset by remember { mutableStateOf(Offset(maxX, margin)) }
-        Box(
-            Modifier
-                .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
-                .size(size)
-                .shadow(8.dp, RoundedCornerShape(18.dp))
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color.Black)
-                .pointerInput(maxX, maxY) {
-                    detectDragGestures { change, drag ->
-                        change.consume()
-                        offset = Offset((offset.x + drag.x).coerceIn(margin, maxX), (offset.y + drag.y).coerceIn(margin, maxY))
-                    }
-                }
-                .clickable { coordinator.togglePlayPause() },
+        // появляется и исчезает — уменьшаясь и затухая: и по крестику, и когда видео кончилось само
+        AnimatedVisibility(
+            visible,
+            modifier = Modifier.offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) },
+            enter = scaleIn(tween(220), initialScale = 0.6f) + fadeIn(tween(220)),
+            exit = scaleOut(tween(260), targetScale = 0.6f) + fadeOut(tween(260)),
         ) {
-            VideoNoteSurface(coordinator, Modifier.fillMaxSize())
-            if (!coordinator.isPlaying) {
-                Box(
-                    Modifier.align(Alignment.Center).size(40.dp).background(Color.Black.copy(alpha = 0.45f), CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
+            Box(
+                Modifier
+                    .size(size)
+                    .shadow(8.dp, RoundedCornerShape(18.dp))
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color.Black)
+                    .pointerInput(maxX, maxY) {
+                        detectDragGestures { change, drag ->
+                            change.consume()
+                            offset = Offset((offset.x + drag.x).coerceIn(margin, maxX), (offset.y + drag.y).coerceIn(margin, maxY))
+                        }
+                    }
+                    .clickable { coordinator.togglePlayPause() },
+            ) {
+                // пока окошко уходит, плеера уже нет — остаётся последний кадр
+                VideoNoteSurface(coordinator, Modifier.fillMaxSize())
+                if (visible && !coordinator.isPlaying) {
+                    Box(
+                        Modifier.align(Alignment.Center).size(40.dp).background(Color.Black.copy(alpha = 0.45f), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
+                }
             }
         }
     }

@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -67,7 +68,6 @@ import com.oshinobu.core.storage.MessageStatus
 import com.oshinobu.core.storage.StoredMessage
 
 val BubbleShape = RoundedCornerShape(14.dp)
-private val ReplyAccent = Color(0xFFFFC04D)
 
 fun AppColors.bubble(isMine: Boolean): Color = if (isMine) bubbleMine else surface
 fun AppColors.bubbleText(isMine: Boolean): Color = if (isMine) onBubbleMine else textPrimary
@@ -189,6 +189,14 @@ fun ReplyPreview(msg: StoredMessage, original: StoredMessage?, peerName: String,
     val preview = msg.replyToPreview ?: return
     val colors = LocalAppColors.current
     val muted = colors.bubbleMuted(msg.isMine)
+    // имя — от темы: на своём пузыре — его текст, на чужом — акцент (в светлой теме — заметно
+    // темнее: голубое на светло-сером фоне цитаты не читается). Был один жёлтый на всех —
+    // пропадал на белом и на жёлтом
+    val nameColor = when {
+        msg.isMine -> colors.onBubbleMine
+        colors.isDark -> colors.primary
+        else -> lerp(colors.primaryDark, colors.textPrimary, 0.45f)
+    }
     Column(
         Modifier
             .padding(bottom = 6.dp)
@@ -200,7 +208,7 @@ fun ReplyPreview(msg: StoredMessage, original: StoredMessage?, peerName: String,
         if (original != null) {
             Text(
                 if (original.isMine) stringResource(R.string.chat_replyYou) else peerName,
-                color = ReplyAccent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = nameColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
         Text(

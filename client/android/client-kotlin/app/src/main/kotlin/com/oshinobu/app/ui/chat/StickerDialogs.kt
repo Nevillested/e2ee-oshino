@@ -97,7 +97,8 @@ fun StickerPackSheet(stickerId: String, onSend: ((StickerInfo) -> Unit)?, onDism
     val colors = LocalAppColors.current
     val stickers = context.app.core.stickers
     val scope = rememberCoroutineScope()
-    var pack by remember { mutableStateOf<StickerPackInfo?>(null) }
+    // известный пак — сразу (без загрузки); свежий с сервера подтягивается следом
+    var pack by remember { mutableStateOf(stickers.knownPackOf(stickerId)) }
     var deleted by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -111,7 +112,8 @@ fun StickerPackSheet(stickerId: String, onSend: ((StickerInfo) -> Unit)?, onDism
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            failed = true
+            // нет сети — остаёмся на известном паке, если он есть
+            if (pack == null) failed = true
             return@LaunchedEffect
         }
         if (p == null || p.deleted) {

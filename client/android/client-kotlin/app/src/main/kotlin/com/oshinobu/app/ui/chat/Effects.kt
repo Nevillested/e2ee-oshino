@@ -115,7 +115,7 @@ fun flashAlpha(token: Int): Float {
     LaunchedEffect(token) {
         if (token == 0) return@LaunchedEffect
         anim.snapTo(0.35f)
-        anim.animateTo(0f, tween(1100))
+        anim.animateTo(0f, tween(2200))
     }
     return anim.value
 }

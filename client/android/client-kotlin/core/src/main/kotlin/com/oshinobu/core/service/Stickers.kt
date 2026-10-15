@@ -146,6 +146,17 @@ class Stickers(
     // ---------------- паки ----------------
 
     /** Пак стикера из переписки — свежий, с сервера (установлен ли, автор ли); null — нет такого. */
+    /**
+     * Пак стикера, уже известный устройству (установлен или открывался) — без
+     * запроса к серверу; "установлен" — по списку установленных. null — не знаем.
+     */
+    fun knownPackOf(stickerId: String): StickerPackInfo? {
+        val installed = _installed.value
+        installed.firstOrNull { pack -> pack.stickers.any { it.id == stickerId } }?.let { return it.copy(installed = true) }
+        val pack = packOfSticker[stickerId] ?: return null
+        return pack.copy(installed = installed.any { it.id == pack.id })
+    }
+
     suspend fun fetchPackOf(stickerId: String): StickerPackInfo? =
         api.getStickerPackBySticker(token(), stickerId)?.also(::remember)
 
