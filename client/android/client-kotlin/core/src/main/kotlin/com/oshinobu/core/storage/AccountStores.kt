@@ -426,9 +426,19 @@ class UiSettings(private val secure: SecureStore, private val prefs: Prefs) {
         const val DEFAULT_REACTION = "👍"
     }
 
-    /** Ключ темы приложения ("dark" — тёмно-синяя, "light" — белая, …); null — не выбирали. */
-    suspend fun theme(): String? = secure.read("app_theme_mode")
-    suspend fun setTheme(id: String) = secure.write("app_theme_mode", id)
+    /**
+     * Ключ темы приложения ("dark" — тёмно-синяя, "light" — белая, …); null — не
+     * выбирали. Копия в [Prefs] читается сразу, без ожидания — первый кадр
+     * (заставка) уже в своей теме; основная запись — в secure storage, как раньше.
+     */
+    fun themeNow(): String? = prefs.getString("app_theme")
+
+    suspend fun theme(): String? = themeNow() ?: secure.read("app_theme_mode")?.also { prefs.setString("app_theme", it) }
+
+    suspend fun setTheme(id: String) {
+        prefs.setString("app_theme", id)
+        secure.write("app_theme_mode", id)
+    }
 
     /** "ru" | "en" (по умолчанию en). */
     fun locale(): String = if (prefs.getString("app_locale") == "ru") "ru" else "en"

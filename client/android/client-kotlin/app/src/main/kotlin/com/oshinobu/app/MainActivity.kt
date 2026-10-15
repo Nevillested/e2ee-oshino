@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
@@ -24,6 +25,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.core.app.NotificationManagerCompat
@@ -113,6 +115,8 @@ class MainActivity : AppCompatActivity(), CallWindow {
         handleCallIntent(intent)
         setContent {
             val theme by app.theme.collectAsState()
+            // фон окна — фон темы: он виден до первого кадра и под прозрачными экранами
+            LaunchedEffect(theme) { window.setBackgroundDrawable(ColorDrawable(theme.background.toArgb())) }
             // значки статус-бара и навигации — под тему приложения, а не под системную
             LaunchedEffect(theme.isDark) {
                 val style = if (theme.isDark) {

@@ -67,7 +67,10 @@ class OshinobuApp : Application() {
         CrashDiagnostics.install(this)
         applyLocale(core.settings.locale())
         textScale.value = core.settings.textScale()
-        core.scope.launch { theme.value = AppColors.byId(core.settings.theme()) }
+        // копия ключа темы читается сразу; нет её (выбирали до +62) — дочитываем из secure storage
+        val cachedTheme = core.settings.themeNow()
+        if (cachedTheme != null) theme.value = AppColors.byId(cachedTheme)
+        else core.scope.launch { theme.value = AppColors.byId(core.settings.theme()) }
         watchNetwork()
         calls = CallController(this, core).also { it.start() }
         PushService.registerOnSessionStart(core)

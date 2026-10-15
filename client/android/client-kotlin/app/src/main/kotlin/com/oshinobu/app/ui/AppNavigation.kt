@@ -302,7 +302,11 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
             val fraction by transition.animateFloat(
                 transitionSpec = { tween(HOME_REVEAL_MS, easing = FastOutSlowInEasing) },
                 label = "homeReveal",
-            ) { state -> if (state == EnterExitState.Visible || !reveal) 1f else 0f }
+            ) { state ->
+                // круг — только на появление; при уходе (открыли чат) экран остаётся целым,
+                // иначе раскрытие проигрывалось задом наперёд
+                if (reveal && state == EnterExitState.PreEnter) 0f else 1f
+            }
             Box(
                 Modifier.graphicsLayer {
                     if (fraction < 1f) {
@@ -422,7 +426,7 @@ private fun SplashScreen(onSignedOut: () -> Unit, onSignedIn: () -> Unit) {
         if (result) onSignedIn() else onSignedOut()
     }
     // кошка — во всю ширину с полями по 10% слева и справа (в альбомной — не выше 80% экрана)
-    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(LocalAppColors.current.background), contentAlignment = Alignment.Center) {
         AppLoadingIndicator(size = minOf(maxWidth, maxHeight) * 0.8f, onLoopsDone = { loopsDone = it })
     }
 }
