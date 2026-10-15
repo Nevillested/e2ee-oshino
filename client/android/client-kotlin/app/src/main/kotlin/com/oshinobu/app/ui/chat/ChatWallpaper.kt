@@ -28,7 +28,6 @@ import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -47,7 +46,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -67,26 +65,6 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
-
-/**
- * Цвета настройки "Фон чата": спокойные, у каждого — светлый и тёмный
- * вариант (под тему), чтобы пузыри и подписи читались одинаково.
- */
-val ChatBackgroundColors = listOf(
-    Color(0xFFDCE8F4) to Color(0xFF1A2734), // небо
-    Color(0xFFDDEEE3) to Color(0xFF1A2C24), // мята
-    Color(0xFFD8ECEC) to Color(0xFF172D2E), // бирюза
-    Color(0xFFE3E8D6) to Color(0xFF232A1E), // шалфей
-    Color(0xFFF1E9D8) to Color(0xFF2C281F), // песок
-    Color(0xFFF5E1D5) to Color(0xFF31231E), // персик
-    Color(0xFFF2DDE3) to Color(0xFF302029), // роза
-    Color(0xFFE5DFF2) to Color(0xFF252137), // лаванда
-    Color(0xFFD9E0F0) to Color(0xFF1B2135), // сумерки
-    Color(0xFFE3E6EA) to Color(0xFF202327), // графит
-)
-
-fun chatBackgroundColor(index: Int?, dark: Boolean): Color? =
-    index?.let { ChatBackgroundColors.getOrNull(it) }?.let { if (dark) it.second else it.first }
 
 /** Длинная сторона обоев: хватает на экран любого телефона, а JPEG — сотни КБ. */
 private const val WALLPAPER_MAX_SIDE = 1920
@@ -216,14 +194,13 @@ private fun rememberWallpaperBitmap(wallpaper: Wallpaper?): ImageBitmap? {
 
 /**
  * Фон чата: [draft] (выбранная, ещё не установленная картинка, в своём
- * кадре) → обои чата → цвет из настроек → фон темы.
+ * кадре) → обои чата → фон переписки темы.
  */
 @Composable
 fun ChatBackdrop(wallpaper: Wallpaper?, draft: WallpaperDraft?, modifier: Modifier = Modifier) {
     val colors = LocalAppColors.current
-    val colorIndex by LocalContext.current.app.chatBackground.collectAsState()
     val image = if (draft == null) rememberWallpaperBitmap(wallpaper) else null
-    Box(modifier.background(chatBackgroundColor(colorIndex, colors.isDark) ?: colors.background)) {
+    Box(modifier.background(colors.chatBackground)) {
         when {
             draft != null -> Box(
                 Modifier.fillMaxSize().clipToBounds().onSizeChanged { draft.viewport = it }.drawBehind {

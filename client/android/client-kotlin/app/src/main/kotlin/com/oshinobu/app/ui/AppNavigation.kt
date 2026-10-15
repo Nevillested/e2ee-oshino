@@ -80,6 +80,7 @@ import com.oshinobu.app.ui.chat.MediaViewerScreen
 import com.oshinobu.app.ui.chat.PeerProfileScreen
 import com.oshinobu.app.ui.home.ChatTarget
 import com.oshinobu.app.ui.home.HomeScreen
+import com.oshinobu.app.ui.home.ThemeScreen
 import com.oshinobu.app.ui.theme.LocalAppColors
 import com.oshinobu.core.OshinobuCore
 import com.oshinobu.core.service.CallPeer
@@ -110,6 +111,7 @@ object Routes {
     const val FORWARD = "forward"
     const val MEDIA = "media/{login}/{messageId}"
     const val PEER_PROFILE = "peer/{accountId}/{login}"
+    const val THEME = "theme"
     const val CALL = "call"
     const val INCOMING_CALL = "incoming-call"
 
@@ -314,9 +316,11 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
                     onOpenChat = { nav.navigate(Routes.chat(it)) },
                     onOpenTransfers = { nav.navigate(Routes.TRANSFERS) },
                     onOpenCall = openCall,
+                    onOpenTheme = { nav.navigate(Routes.THEME) },
                 )
             }
         }
+        composable(Routes.THEME) { ThemeScreen(onBack = { nav.popBackStack() }) }
         composable(
             Routes.CHAT,
             listOf(

@@ -195,7 +195,7 @@ private fun AttachLauncher(anchor: Offset, onResult: (AttachChoice?) -> Unit) {
                         }
                         .clip(CircleShape).background(colors.primary).clickable { close(choice) },
                     contentAlignment = Alignment.Center,
-                ) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(22.dp)) }
+                ) { Icon(icon, null, tint = colors.onPrimary, modifier = Modifier.size(22.dp)) }
             }
         }
     }

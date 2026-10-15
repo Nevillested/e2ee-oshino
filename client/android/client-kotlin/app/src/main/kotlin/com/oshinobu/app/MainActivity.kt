@@ -14,10 +14,12 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Rational
 import android.view.WindowManager
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -110,11 +112,20 @@ class MainActivity : AppCompatActivity(), CallWindow {
         val autoAccept = intent.getBooleanExtra(CallIntents.EXTRA_AUTO_ACCEPT, false)
         handleCallIntent(intent)
         setContent {
-            val dark by app.darkTheme.collectAsState()
+            val theme by app.theme.collectAsState()
+            // значки статус-бара и навигации — под тему приложения, а не под системную
+            LaunchedEffect(theme.isDark) {
+                val style = if (theme.isDark) {
+                    SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                } else {
+                    SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                }
+                enableEdgeToEdge(style, style)
+            }
             val textScale by app.textScale.collectAsState()
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * textScale.toFloat())) {
-                OshinobuTheme(dark = dark) {
+                OshinobuTheme(theme) {
                     if (inPip) PipCallView() else UpdateGate { AppLockGate { AppNavigation(callScreenRequests, launchedForCall, autoAccept) } }
                 }
             }

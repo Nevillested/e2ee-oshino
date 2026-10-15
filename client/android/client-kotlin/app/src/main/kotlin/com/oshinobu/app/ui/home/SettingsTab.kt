@@ -2,14 +2,12 @@ package com.oshinobu.app.ui.home
 
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,12 +18,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.TextFields
@@ -37,13 +33,10 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PhonelinkLock
 import androidx.compose.material.icons.outlined.PrivacyTip
-import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,7 +49,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -66,8 +58,6 @@ import androidx.compose.ui.unit.sp
 import com.oshinobu.app.R
 import com.oshinobu.app.app
 import com.oshinobu.app.ui.ErrorRed
-import com.oshinobu.app.ui.chat.ChatBackgroundColors
-import com.oshinobu.app.ui.chat.chatBackgroundColor
 import com.oshinobu.app.ui.emoji.allEmojis
 import com.oshinobu.app.ui.theme.CardShape
 import com.oshinobu.app.ui.theme.LocalAppColors
@@ -78,18 +68,17 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** Пункты настроек открываются окнами поверх вкладки. */
-private enum class SettingsDialog { EMAIL, PASSWORD, PRIVACY, APP_LOCK, ABOUT, THEME, CHAT_BACKGROUND, LANGUAGE, FONT, REACTION, CLEAR_CACHE, LOGOUT, DELETE_ACCOUNT }
+private enum class SettingsDialog { EMAIL, PASSWORD, PRIVACY, APP_LOCK, ABOUT, LANGUAGE, FONT, REACTION, CLEAR_CACHE, LOGOUT, DELETE_ACCOUNT }
 
 @Composable
-fun SettingsTab(onSignedOut: () -> Unit) {
+fun SettingsTab(onSignedOut: () -> Unit, onOpenTheme: () -> Unit) {
     var dialog by remember { mutableStateOf<SettingsDialog?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         SettingsItem(Icons.Outlined.Email, Color(0xFF2AABEE), R.string.settings_email) { dialog = SettingsDialog.EMAIL }
         SettingsItem(Icons.Outlined.Lock, Color(0xFFFF9F0A), R.string.settings_changePassword) { dialog = SettingsDialog.PASSWORD }
         SettingsItem(Icons.Outlined.EmojiEmotions, Color(0xFFFF6482), R.string.settings_defaultReaction) { dialog = SettingsDialog.REACTION }
         SettingsItem(Icons.Outlined.Language, Color(0xFF32C769), R.string.settings_language) { dialog = SettingsDialog.LANGUAGE }
-        SettingsItem(Icons.Outlined.Palette, Color(0xFFAF52DE), R.string.settings_theme) { dialog = SettingsDialog.THEME }
-        SettingsItem(Icons.Outlined.Wallpaper, Color(0xFF64D2FF), R.string.settings_chatBackground) { dialog = SettingsDialog.CHAT_BACKGROUND }
+        SettingsItem(Icons.Outlined.Palette, Color(0xFFAF52DE), R.string.settings_theme, onClick = onOpenTheme)
         SettingsItem(Icons.Filled.TextFields, Color(0xFF5AC8FA), R.string.settings_fontSize) { dialog = SettingsDialog.FONT }
         SettingsItem(Icons.Outlined.PrivacyTip, Color(0xFF34C759), R.string.settings_privacy) { dialog = SettingsDialog.PRIVACY }
         SettingsItem(Icons.Outlined.PhonelinkLock, Color(0xFF5E5CE6), R.string.settings_appLock) { dialog = SettingsDialog.APP_LOCK }
@@ -106,8 +95,6 @@ fun SettingsTab(onSignedOut: () -> Unit) {
         SettingsDialog.PRIVACY -> PrivacyDialog(close)
         SettingsDialog.APP_LOCK -> AppLockSettingsDialog(close)
         SettingsDialog.ABOUT -> AboutDialog(close)
-        SettingsDialog.THEME -> ThemeDialog(close)
-        SettingsDialog.CHAT_BACKGROUND -> ChatBackgroundDialog(close)
         SettingsDialog.LANGUAGE -> LanguageDialog(close)
         SettingsDialog.FONT -> FontSizeDialog(close)
         SettingsDialog.REACTION -> DefaultReactionDialog(close)
@@ -157,56 +144,6 @@ fun AppDialog(
 @Composable
 fun DialogButton(text: String, color: Color = LocalAppColors.current.primary, onClick: () -> Unit) {
     TextButton(onClick = onClick) { Text(text, color = color) }
-}
-
-@Composable
-private fun ThemeDialog(onClose: () -> Unit) {
-    val app = LocalContext.current.app
-    val colors = LocalAppColors.current
-    val dark by app.darkTheme.collectAsState()
-    AppDialog(stringResource(R.string.theme_title), onClose, confirm = { DialogButton(stringResource(R.string.common_done), onClick = onClose) }) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(if (dark) R.string.theme_dark else R.string.theme_light), color = colors.textPrimary, modifier = Modifier.weight(1f))
-            Switch(
-                checked = !dark,
-                onCheckedChange = { light -> app.setDarkTheme(!light) },
-                colors = SwitchDefaults.colors(checkedTrackColor = colors.primary),
-            )
-        }
-    }
-}
-
-/** Фон чатов без своих обоев: фон темы или один из спокойных цветов; применяется сразу. */
-@Composable
-private fun ChatBackgroundDialog(onClose: () -> Unit) {
-    val app = LocalContext.current.app
-    val colors = LocalAppColors.current
-    val selected by app.chatBackground.collectAsState()
-    AppDialog(stringResource(R.string.settings_chatBackground), onClose, confirm = { DialogButton(stringResource(R.string.common_done), onClick = onClose) }) {
-        Column {
-            // первым — фон темы (null), дальше — палитра
-            val options = listOf<Int?>(null) + ChatBackgroundColors.indices
-            LazyVerticalGrid(GridCells.Fixed(4), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(options) { index ->
-                    val fill = chatBackgroundColor(index, colors.isDark) ?: colors.background
-                    val isSelected = index == selected
-                    Box(
-                        Modifier
-                            .aspectRatio(1f)
-                            .clip(CircleShape)
-                            .background(fill)
-                            .border(if (isSelected) 3.dp else 1.dp, if (isSelected) colors.primary else colors.textMuted.copy(alpha = 0.4f), CircleShape)
-                            .clickable { app.setChatBackground(index) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (isSelected) Icon(Icons.Filled.Check, null, tint = colors.primary)
-                    }
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Text(stringResource(R.string.chatBackground_hint), color = colors.textMuted, fontSize = 13.sp)
-        }
-    }
 }
 
 @Composable

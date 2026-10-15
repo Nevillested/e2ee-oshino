@@ -426,9 +426,9 @@ class UiSettings(private val secure: SecureStore, private val prefs: Prefs) {
         const val DEFAULT_REACTION = "👍"
     }
 
-    /** "light" | "dark" (по умолчанию dark). */
-    suspend fun theme(): String = if (secure.read("app_theme_mode") == "light") "light" else "dark"
-    suspend fun setTheme(mode: String) = secure.write("app_theme_mode", if (mode == "light") "light" else "dark")
+    /** Ключ темы приложения ("dark" — тёмно-синяя, "light" — белая, …); null — не выбирали. */
+    suspend fun theme(): String? = secure.read("app_theme_mode")
+    suspend fun setTheme(id: String) = secure.write("app_theme_mode", id)
 
     /** "ru" | "en" (по умолчанию en). */
     fun locale(): String = if (prefs.getString("app_locale") == "ru") "ru" else "en"
@@ -471,16 +471,6 @@ class UiSettings(private val secure: SecureStore, private val prefs: Prefs) {
     fun setChatScrollAnchor(peerLogin: String, anchor: Pair<String, Int>?) {
         if (anchor == null) prefs.remove("chat_scroll_anchor:$peerLogin")
         else prefs.setString("chat_scroll_anchor:$peerLogin", "${anchor.first}|${anchor.second}")
-    }
-
-    /**
-     * Фон чатов без своих обоев: номер цвета из палитры приложения; null —
-     * фон темы. Только на этом телефоне — с сервером не синхронизируется.
-     */
-    fun chatBackground(): Int? = prefs.getLong("chat_background_color")?.toInt()
-
-    fun setChatBackground(index: Int?) {
-        if (index == null) prefs.remove("chat_background_color") else prefs.setLong("chat_background_color", index.toLong())
     }
 
     /** Последней в панели под полем ввода открывали вкладку стикеров (а не эмодзи). */

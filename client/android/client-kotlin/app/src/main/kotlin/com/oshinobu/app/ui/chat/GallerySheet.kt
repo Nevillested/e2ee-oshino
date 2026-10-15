@@ -334,7 +334,7 @@ private fun OrderBadge(order: Int?, size: Int) {
         Modifier.size(size.dp).clip(CircleShape).background(if (order != null) colors.primary else Color.Black.copy(alpha = 0.45f))
             .border(1.5.dp, Color.White, CircleShape),
         contentAlignment = Alignment.Center,
-    ) { if (order != null) Text("$order", color = Color.White, fontSize = (size / 2).sp, fontWeight = FontWeight.Bold) }
+    ) { if (order != null) Text("$order", color = colors.onPrimary, fontSize = (size / 2).sp, fontWeight = FontWeight.Bold) }
 }
 
 @Composable

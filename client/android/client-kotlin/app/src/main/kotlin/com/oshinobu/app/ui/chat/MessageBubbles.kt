@@ -69,18 +69,18 @@ import com.oshinobu.core.storage.StoredMessage
 val BubbleShape = RoundedCornerShape(14.dp)
 private val ReplyAccent = Color(0xFFFFC04D)
 
-fun AppColors.bubble(isMine: Boolean): Color = if (isMine) primary else surface
-fun AppColors.bubbleText(isMine: Boolean): Color = if (isMine) Color.White else textPrimary
-fun AppColors.bubbleMuted(isMine: Boolean): Color = if (isMine) Color.White.copy(alpha = 0.7f) else textMuted
+fun AppColors.bubble(isMine: Boolean): Color = if (isMine) bubbleMine else surface
+fun AppColors.bubbleText(isMine: Boolean): Color = if (isMine) onBubbleMine else textPrimary
+fun AppColors.bubbleMuted(isMine: Boolean): Color = if (isMine) onBubbleMine.copy(alpha = 0.7f) else textMuted
 
-/** Ссылка заметна и на своём (синем), и на чужом пузыре. */
-private fun linkColor(isMine: Boolean) = if (isMine) Color(0xFFFFD54F) else Color(0xFF2AABEE)
+/** Ссылка заметна и на своём, и на чужом пузыре (цвета — у темы). */
+private fun AppColors.linkColor(isMine: Boolean) = if (isMine) linkOnMine else primary
 
 /** Как у большинства мессенджеров: от http(s):// или www. до ближайшего пробела. */
 private val UrlRegex = Regex("""((https?://)|(www\.))\S+""", RegexOption.IGNORE_CASE)
 
 /** Текст со ссылками-кнопками (открываются во внешнем приложении). */
-fun linkified(text: String, isMine: Boolean): AnnotatedString = buildAnnotatedString {
+fun AppColors.linkified(text: String, isMine: Boolean): AnnotatedString = buildAnnotatedString {
     var cursor = 0
     for (m in UrlRegex.findAll(text)) {
         append(text.substring(cursor, m.range.first))
@@ -99,9 +99,9 @@ fun StatusIcon(status: String, onColoredBubble: Boolean = true) {
     when (status) {
         MessageStatus.FAILED -> Icon(Icons.Filled.ErrorOutline, null, mod, tint = Color(0xFFFF5252))
         MessageStatus.SENDING, MessageStatus.QUEUED ->
-            Icon(Icons.Filled.Schedule, null, mod, tint = if (onColoredBubble) Color.White.copy(alpha = 0.7f) else colors.textMuted)
-        MessageStatus.READ -> Icon(Icons.Filled.DoneAll, null, mod, tint = Color.White)
-        else -> Icon(Icons.Filled.Done, null, mod, tint = Color(0xFF40C4FF))
+            Icon(Icons.Filled.Schedule, null, mod, tint = if (onColoredBubble) colors.onBubbleMine.copy(alpha = 0.7f) else colors.textMuted)
+        MessageStatus.READ -> Icon(Icons.Filled.DoneAll, null, mod, tint = if (onColoredBubble) colors.onBubbleMine else colors.primary)
+        else -> Icon(Icons.Filled.Done, null, mod, tint = if (onColoredBubble) colors.sentTick else colors.textMuted)
     }
 }
 

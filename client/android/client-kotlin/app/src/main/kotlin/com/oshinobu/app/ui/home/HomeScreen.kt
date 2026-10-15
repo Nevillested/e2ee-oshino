@@ -146,6 +146,7 @@ fun HomeScreen(
     onOpenChat: (ChatTarget) -> Unit,
     onOpenTransfers: () -> Unit,
     onOpenCall: () -> Unit,
+    onOpenTheme: () -> Unit,
 ) {
     val core = LocalContext.current.app.core
     val colors = LocalAppColors.current
@@ -252,7 +253,7 @@ fun HomeScreen(
             ) { current ->
                 when (current) {
                     Tab.CHATS -> ChatList(onOpenChat)
-                    Tab.SETTINGS -> SettingsTab(onSignedOut = onSignedOut)
+                    Tab.SETTINGS -> SettingsTab(onSignedOut = onSignedOut, onOpenTheme = onOpenTheme)
                     Tab.PROFILE -> ProfileTab()
                 }
             }
@@ -538,7 +539,7 @@ private fun ChatRow(chat: ChatSummary, onOpen: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (unread) {
                     Box(Modifier.background(colors.primary, RoundedCornerShape(12.dp)).padding(horizontal = 7.dp, vertical = 2.dp)) {
-                        Text(if (chat.unreadCount > 9) "9+" else "${chat.unreadCount}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(if (chat.unreadCount > 9) "9+" else "${chat.unreadCount}", color = colors.onPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
                 if (chat.chatPinnedAt != null) Icon(Icons.Filled.PushPin, null, tint = colors.textMuted, modifier = Modifier.size(13.dp))

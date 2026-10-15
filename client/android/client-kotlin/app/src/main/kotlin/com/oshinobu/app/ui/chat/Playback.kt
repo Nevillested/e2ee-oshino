@@ -81,6 +81,10 @@ class PlaybackCoordinator(private val scope: CoroutineScope) {
     var failedId by mutableStateOf<String?>(null)
         private set
 
+    /** Ширина / высота кадра играющего видео (с учётом поворота); 0 — неизвестно или не видео. */
+    var videoAspect by mutableFloatStateOf(0f)
+        private set
+
     private var player: MediaPlayer? = null
     private var surface: Surface? = null
     private var ticker: Job? = null
@@ -98,6 +102,7 @@ class PlaybackCoordinator(private val scope: CoroutineScope) {
             p.setDataSource(file.path)
             surface?.let(p::setSurface)
             p.setOnCompletionListener { stop() }
+            p.setOnVideoSizeChangedListener { _, w, h -> videoAspect = if (w > 0 && h > 0) w.toFloat() / h else 0f }
             p.setOnErrorListener { _, _, _ ->
                 failedId = id
                 stop()
@@ -139,6 +144,7 @@ class PlaybackCoordinator(private val scope: CoroutineScope) {
         activeId = null
         isPlaying = false
         positionMs = 0
+        videoAspect = 0f
     }
 
     /** Поверхность видео-кружка (TextureView) готова/исчезла. */
@@ -184,7 +190,7 @@ fun VoicePlayer(
     resolveFile: suspend () -> File,
 ) {
     val colors = LocalAppColors.current
-    val accent = if (isMine) Color.White else colors.primary
+    val accent = if (isMine) colors.onBubbleMine else colors.primary
     val scope = rememberCoroutineScope()
     val load = remember { FileLoad() }
     val active = coordinator.activeId == messageId
@@ -298,6 +304,13 @@ fun VideoNotePlayer(
                             override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
                         }
                     }
+                },
+                // кадр видеосообщения — прямоугольник (запись SD, 4:3); TextureView сам растянул бы
+                // его на квадрат. Возвращаем пропорции и обрезаем по центру, как при записи
+                update = { view ->
+                    val aspect = coordinator.videoAspect
+                    view.scaleX = if (aspect > 1f) aspect else 1f
+                    view.scaleY = if (aspect in 0.0001f..1f) 1f / aspect else 1f
                 },
                 modifier = Modifier.fillMaxSize(),
             )

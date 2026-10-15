@@ -326,9 +326,6 @@
     <string name="settings_privacy">Приватность и безопасность</string>
     <string name="settings_theme">Тема</string>
     <string name="settings_title">Настройки</string>
-    <string name="theme_dark">Тёмная тема</string>
-    <string name="theme_light">Светлая тема</string>
-    <string name="theme_title">Тема</string>
     <string name="totp_codeCopied">Код скопирован</string>
     <string name="totp_confirm">Подтвердить</string>
     <string name="totp_manualEntry">Или введи секретный код вручную:</string>
@@ -439,7 +436,19 @@
     <string name="chat_wallpaperSet">Установить как фон чата</string>
     <string name="chat_wallpaperAlsoFor">Установить также у</string>
     <string name="error_wallpaperFailed">Не удалось установить фон чата</string>
-    <string name="settings_chatBackground">Фон чата</string>
-    <string name="chatBackground_hint">Для чатов без своего фона. Хранится только на этом телефоне.</string>
     <string name="chat_wallpaperHint">Двигайте и масштабируйте картинку пальцами</string>
+    <string name="theme_navy">Тёмно-синяя</string>
+    <string name="theme_white">Белая</string>
+    <string name="theme_black">Чёрная</string>
+    <string name="theme_yellow">Жёлто-чёрная</string>
+    <string name="theme_green">Зелёная</string>
+    <string name="themePreview_peerName">Боб</string>
+    <string name="themePreview_msg1">Привет! 👋</string>
+    <string name="themePreview_msg2">Привет, Боб!</string>
+    <string name="themePreview_msg3">Как дела?</string>
+    <string name="themePreview_msg4">Всё отлично, спасибо. А у тебя?</string>
+    <string name="themePreview_msg5">Тоже хорошо. Чем занимаешься?</string>
+    <string name="themePreview_msg6">Выбираю тему для приложения 🎨</string>
+    <string name="themePreview_msg7">О, покажешь потом?</string>
+    <string name="themePreview_msg8">Конечно!</string>
 </resources>

@@ -260,25 +260,25 @@ fun CallScreen(onClose: () -> Unit) {
             verticalAlignment = Alignment.Bottom,
         ) {
             val idle = colors.surface
-            RoundButton(if (mic) Icons.Filled.Mic else Icons.Filled.MicOff, if (!mic) colors.primary else idle, if (!mic) Color.White else colors.textPrimary) {
+            RoundButton(if (mic) Icons.Filled.Mic else Icons.Filled.MicOff, if (!mic) colors.primary else idle, if (!mic) colors.onPrimary else colors.textPrimary) {
                 scope.launch { calls.toggleMic() }
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 if (video) {
-                    RoundButton(Icons.Filled.Cameraswitch, if (!front) colors.primary else idle, if (!front) Color.White else colors.textPrimary) {
+                    RoundButton(Icons.Filled.Cameraswitch, if (!front) colors.primary else idle, if (!front) colors.onPrimary else colors.textPrimary) {
                         scope.launch { calls.switchCamera() }
                     }
                     Spacer(Modifier.height(8.dp))
                 }
-                RoundButton(Icons.Filled.VideocamOff, if (video) colors.primary else idle, if (video) Color.White else colors.textPrimary) {
+                RoundButton(Icons.Filled.VideocamOff, if (video) colors.primary else idle, if (video) colors.onPrimary else colors.textPrimary) {
                     withCamera { scope.launch { calls.toggleVideo() } }
                 }
             }
             if (AudioRoute.BLUETOOTH in routes) {
-                RoundButton(routeIcon(route), colors.primary, Color.White) { outputPicker = true }
+                RoundButton(routeIcon(route), colors.primary, colors.onPrimary) { outputPicker = true }
             } else {
                 val speaker = route == AudioRoute.SPEAKER
-                RoundButton(Icons.Filled.VolumeUp, if (speaker) colors.primary else idle, if (speaker) Color.White else colors.textPrimary) {
+                RoundButton(Icons.Filled.VolumeUp, if (speaker) colors.primary else idle, if (speaker) colors.onPrimary else colors.textPrimary) {
                     app.calls.audio.toggleSpeaker()
                 }
             }

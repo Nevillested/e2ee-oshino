@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.MirrorMode
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.ExperimentalPersistentRecording
@@ -278,7 +279,9 @@ class ChatRecorder(
     private suspend fun startVideo(owner: LifecycleOwner): Boolean {
         val provider = runCatching { cameraProvider() }.getOrNull() ?: return false
         val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.SD)).build()
-        val capture = VideoCapture.withOutput(recorder)
+        // фронтальная камера пишется зеркально — так же, как её показывает превью при записи:
+        // видеосообщение у получателя выглядит ровно так, как его видел автор
+        val capture = VideoCapture.Builder(recorder).setMirrorMode(MirrorMode.MIRROR_MODE_ON_FRONT_ONLY).build()
         frontLens = provider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)
         canFlip = frontLens && provider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)
         val file = File(context.cacheDir, "vnote_${System.nanoTime()}.mp4")

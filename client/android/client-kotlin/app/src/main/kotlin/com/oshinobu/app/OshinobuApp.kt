@@ -12,6 +12,7 @@ import com.oshinobu.app.call.WebRtcEngine
 import com.oshinobu.app.system.CrashDiagnostics
 import com.oshinobu.app.system.PushService
 import com.oshinobu.app.system.TransfersService
+import com.oshinobu.app.ui.theme.AppColors
 import com.oshinobu.app.ui.update.installedVersionCode
 import com.oshinobu.compat.FlutterPrefsAdapter
 import com.oshinobu.compat.FlutterSecureStoreAdapter
@@ -38,14 +39,11 @@ class OshinobuApp : Application() {
     lateinit var calls: CallController
         private set
 
-    /** Тёмная тема (по умолчанию тёмная); меняется в настройках сразу, без перезапуска. */
-    val darkTheme = MutableStateFlow(true)
+    /** Тема приложения (по умолчанию тёмно-синяя); меняется в настройках сразу, без перезапуска. */
+    val theme = MutableStateFlow(AppColors.Navy)
 
     /** Масштаб текста интерфейса (настройка "Размер шрифта"). */
     val textScale = MutableStateFlow(1.0)
-
-    /** Фон чатов без своих обоев (настройка "Фон чата"): номер цвета; null — фон темы. */
-    val chatBackground = MutableStateFlow<Int?>(null)
 
     override fun onCreate() {
         super.onCreate()
@@ -69,27 +67,21 @@ class OshinobuApp : Application() {
         CrashDiagnostics.install(this)
         applyLocale(core.settings.locale())
         textScale.value = core.settings.textScale()
-        chatBackground.value = core.settings.chatBackground()
-        core.scope.launch { darkTheme.value = core.settings.theme() != "light" }
+        core.scope.launch { theme.value = AppColors.byId(core.settings.theme()) }
         watchNetwork()
         calls = CallController(this, core).also { it.start() }
         PushService.registerOnSessionStart(core)
         TransfersService.follow(this, core)
     }
 
-    fun setDarkTheme(dark: Boolean) {
-        darkTheme.value = dark
-        core.scope.launch { core.settings.setTheme(if (dark) "dark" else "light") }
+    fun setTheme(colors: AppColors) {
+        theme.value = colors
+        core.scope.launch { core.settings.setTheme(colors.id) }
     }
 
     fun setTextScale(scale: Double) {
         textScale.value = scale
         core.settings.setTextScale(scale)
-    }
-
-    fun setChatBackground(index: Int?) {
-        chatBackground.value = index
-        core.settings.setChatBackground(index)
     }
 
     fun setLanguage(tag: String) {

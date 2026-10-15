@@ -326,9 +326,6 @@
     <string name="settings_privacy">Privacy and security</string>
     <string name="settings_theme">Theme</string>
     <string name="settings_title">Settings</string>
-    <string name="theme_dark">Dark theme</string>
-    <string name="theme_light">Light theme</string>
-    <string name="theme_title">Theme</string>
     <string name="totp_codeCopied">Code copied</string>
     <string name="totp_confirm">Confirm</string>
     <string name="totp_manualEntry">Or enter the secret code manually:</string>
@@ -439,7 +436,19 @@
     <string name="chat_wallpaperSet">Set as chat background</string>
     <string name="chat_wallpaperAlsoFor">Also set for</string>
     <string name="error_wallpaperFailed">Couldn\'t set the chat background</string>
-    <string name="settings_chatBackground">Chat background</string>
-    <string name="chatBackground_hint">Used in chats without their own background. Stored on this phone only.</string>
     <string name="chat_wallpaperHint">Move and zoom the picture with your fingers</string>
+    <string name="theme_navy">Dark blue</string>
+    <string name="theme_white">White</string>
+    <string name="theme_black">Black</string>
+    <string name="theme_yellow">Yellow &amp; black</string>
+    <string name="theme_green">Green</string>
+    <string name="themePreview_peerName">Bob</string>
+    <string name="themePreview_msg1">Hi! 👋</string>
+    <string name="themePreview_msg2">Hey Bob!</string>
+    <string name="themePreview_msg3">How are you?</string>
+    <string name="themePreview_msg4">All good, thanks. And you?</string>
+    <string name="themePreview_msg5">Fine too. What are you up to?</string>
+    <string name="themePreview_msg6">Picking a theme for the app 🎨</string>
+    <string name="themePreview_msg7">Nice, show me later?</string>
+    <string name="themePreview_msg8">Sure!</string>
 </resources>

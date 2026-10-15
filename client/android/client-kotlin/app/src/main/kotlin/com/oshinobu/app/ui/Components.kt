@@ -180,7 +180,7 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
         enabled = enabled && !loading,
         modifier = modifier.fillMaxWidth().heightIn(min = 52.dp),
         shape = CardShape,
-        colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = Color.White),
+        colors = ButtonDefaults.buttonColors(containerColor = colors.primary, contentColor = colors.onPrimary),
         contentPadding = PaddingValues(horizontal = 16.dp),
     ) {
         if (loading) {

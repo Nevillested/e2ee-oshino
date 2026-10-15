@@ -169,7 +169,7 @@ fun MessageBubble(
             Column {
                 if (media.isNotEmpty()) MediaGrid(vm, media, maxBubble - 12.dp, revealed, onReveal, onOpenViewer, onOpenFile, onSaveFile)
                 if (caption != null) {
-                    Text(linkified(caption.text, isMine), color = colors.bubbleText(isMine), fontSize = 16.sp, modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 6.dp))
+                    Text(colors.linkified(caption.text, isMine), color = colors.bubbleText(isMine), fontSize = 16.sp, modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 6.dp))
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -272,7 +272,7 @@ fun MessageBubble(
             }
             // текст: время — всегда отдельной нижней строкой справа, реакции — в ней же слева
             else -> Column(Modifier.fillMaxWidth()) {
-                Text(linkified(msg.text, msg.isMine), color = colors.bubbleText(msg.isMine), fontSize = 16.sp, modifier = Modifier.widthIn(max = maxText))
+                Text(colors.linkified(msg.text, msg.isMine), color = colors.bubbleText(msg.isMine), fontSize = 16.sp, modifier = Modifier.widthIn(max = maxText))
                 Spacer(Modifier.height(4.dp))
                 ReactionMetaRow(msg, justReacted) { MetaRow(msg) }
             }
@@ -297,13 +297,13 @@ private fun ReactionMetaRow(msg: StoredMessage, justReacted: Boolean, modifier: 
 // ---------------- шапка ----------------
 
 @Composable
-private fun HeaderPill(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+internal fun HeaderPill(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val colors = LocalAppColors.current
     Box(modifier.shadow(4.dp, RoundedCornerShape(50)).background(colors.surface, RoundedCornerShape(50)), contentAlignment = Alignment.Center) { content() }
 }
 
 @Composable
-private fun PillIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun PillIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean = true, onClick: () -> Unit) {
     val colors = LocalAppColors.current
     Icon(
         icon, null,
