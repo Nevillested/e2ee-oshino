@@ -9,13 +9,16 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -39,23 +42,29 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.oshinobu.app.R
 import com.oshinobu.app.media.MediaDecoding
 import com.oshinobu.app.ui.theme.LocalAppColors
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -66,8 +75,10 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Одно воспроизведение на чат: голосовое или видео-кружок. Новое — останавливает
- * прежнее. Панель управления под шапкой чата видна, пока [activeId] != null.
+ * Одно воспроизведение на всё приложение: голосовое или видеосообщение. Новое —
+ * останавливает прежнее. Живёт дольше экрана чата: вышли в список чатов —
+ * звук продолжается (панель сверху, видео — плавающим окошком), остановка — крестиком.
+ * Панель управления видна, пока [activeId] != null.
  */
 class PlaybackCoordinator(private val scope: CoroutineScope) {
     var activeId by mutableStateOf<String?>(null)
@@ -81,6 +92,10 @@ class PlaybackCoordinator(private val scope: CoroutineScope) {
     var failedId by mutableStateOf<String?>(null)
         private set
 
+    /** Играет видеосообщение (а не голосовое). */
+    var isVideo by mutableStateOf(false)
+        private set
+
     /** Ширина / высота кадра играющего видео (с учётом поворота); 0 — неизвестно или не видео. */
     var videoAspect by mutableFloatStateOf(0f)
         private set
@@ -90,7 +105,7 @@ class PlaybackCoordinator(private val scope: CoroutineScope) {
     private var ticker: Job? = null
 
     /** Начать [id] с начала (или продолжить, если это уже активное). */
-    fun play(id: String, file: File) {
+    fun play(id: String, file: File, video: Boolean = false) {
         if (activeId == id && player != null) {
             resume()
             return
@@ -116,6 +131,7 @@ class PlaybackCoordinator(private val scope: CoroutineScope) {
         }
         player = p
         activeId = id
+        isVideo = video
         durationMs = p.duration.toLong().coerceAtLeast(0)
         positionMs = 0
         p.start()
@@ -145,12 +161,24 @@ class PlaybackCoordinator(private val scope: CoroutineScope) {
         isPlaying = false
         positionMs = 0
         videoAspect = 0f
+        isVideo = false
     }
 
-    /** Поверхность видео-кружка (TextureView) готова/исчезла. */
-    fun attachSurface(s: Surface?) {
+    /** Поверхность видео (TextureView) готова — видео рисуется в неё (прежняя больше не нужна). */
+    fun attachSurface(s: Surface) {
         surface = s
         runCatching { player?.setSurface(s) }
+    }
+
+    /**
+     * Поверхность исчезла. Отцепляем, только если видео рисуется именно в неё:
+     * при переходе чат ↔ список новая поверхность цепляется раньше, чем
+     * исчезает старая, и её нельзя отцепить чужим "исчезла".
+     */
+    fun detachSurface(s: Surface) {
+        if (surface !== s) return
+        surface = null
+        runCatching { player?.setSurface(null) }
     }
 
     private fun startTicker() {
@@ -279,7 +307,7 @@ fun VideoNotePlayer(
                 load.loading = true
                 val file = runCatching { resolveFile() }.getOrNull()
                 load.loading = false
-                if (file != null) coordinator.play(messageId, file)
+                if (file != null) coordinator.play(messageId, file, video = true)
             }
         }
     }
@@ -289,32 +317,7 @@ fun VideoNotePlayer(
             .clickable(enabled = !load.loading && statusOverlay == null) { toggle() },
     ) {
         thumb?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-        if (active) {
-            DisposableEffect(Unit) { onDispose { coordinator.attachSurface(null) } }
-            AndroidView(
-                factory = { ctx ->
-                    TextureView(ctx).apply {
-                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                            override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) = coordinator.attachSurface(Surface(st))
-                            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) = Unit
-                            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
-                                coordinator.attachSurface(null)
-                                return true
-                            }
-                            override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
-                        }
-                    }
-                },
-                // кадр видеосообщения — прямоугольник (запись SD, 4:3); TextureView сам растянул бы
-                // его на квадрат. Возвращаем пропорции и обрезаем по центру, как при записи
-                update = { view ->
-                    val aspect = coordinator.videoAspect
-                    view.scaleX = if (aspect > 1f) aspect else 1f
-                    view.scaleY = if (aspect in 0.0001f..1f) 1f / aspect else 1f
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
+        if (active) VideoNoteSurface(coordinator, Modifier.fillMaxSize())
         when {
             statusOverlay != null -> statusOverlay()
             load.loading -> MediaStatusOverlay(stringResource(R.string.media_downloading), downloadPercent, null)
@@ -331,6 +334,89 @@ fun VideoNotePlayer(
                 modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
                     .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
             )
+        }
+    }
+}
+
+/** Плеер на всё приложение — один на чаты и список чатов. */
+val LocalPlayback = staticCompositionLocalOf<PlaybackCoordinator> { error("PlaybackCoordinator не предоставлен") }
+
+/**
+ * Картинка играющего видеосообщения. Кадр — прямоугольник (запись SD, 4:3),
+ * а место — квадрат: TextureView растянул бы кадр на него, поэтому
+ * возвращаем пропорции и обрезаем по центру, как при записи.
+ */
+@Composable
+fun VideoNoteSurface(coordinator: PlaybackCoordinator, modifier: Modifier = Modifier) {
+    val surface = remember { arrayOfNulls<Surface>(1) }
+    DisposableEffect(Unit) { onDispose { surface[0]?.let(coordinator::detachSurface) } }
+    AndroidView(
+        factory = { ctx ->
+            TextureView(ctx).apply {
+                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                    override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
+                        val s = Surface(st)
+                        surface[0] = s
+                        coordinator.attachSurface(s)
+                    }
+                    override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) = Unit
+                    override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
+                        surface[0]?.let(coordinator::detachSurface)
+                        surface[0] = null
+                        return true
+                    }
+                    override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
+                }
+            }
+        },
+        update = { view ->
+            val aspect = coordinator.videoAspect
+            view.scaleX = if (aspect > 1f) aspect else 1f
+            view.scaleY = if (aspect in 0.0001f..1f) 1f / aspect else 1f
+        },
+        modifier = modifier,
+    )
+}
+
+/**
+ * Видеосообщение, пока смотрим список чатов: окошко поверх, его можно
+ * перетаскивать пальцем по экрану; тап — пауза/продолжить. Закрывается
+ * вместе с воспроизведением (крестик на панели сверху или конец видео).
+ */
+@Composable
+fun FloatingVideoNote(coordinator: PlaybackCoordinator, modifier: Modifier = Modifier) {
+    if (coordinator.activeId == null || !coordinator.isVideo) return
+    val density = LocalDensity.current
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val size = 132.dp
+        val margin = with(density) { 12.dp.toPx() }
+        val sizePx = with(density) { size.toPx() }
+        val maxX = (constraints.maxWidth - sizePx - margin).coerceAtLeast(margin)
+        val maxY = (constraints.maxHeight - sizePx - margin).coerceAtLeast(margin)
+        // сначала — справа сверху
+        var offset by remember { mutableStateOf(Offset(maxX, margin)) }
+        Box(
+            Modifier
+                .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
+                .size(size)
+                .shadow(8.dp, RoundedCornerShape(18.dp))
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color.Black)
+                .pointerInput(maxX, maxY) {
+                    detectDragGestures { change, drag ->
+                        change.consume()
+                        offset = Offset((offset.x + drag.x).coerceIn(margin, maxX), (offset.y + drag.y).coerceIn(margin, maxY))
+                    }
+                }
+                .clickable { coordinator.togglePlayPause() },
+        ) {
+            VideoNoteSurface(coordinator, Modifier.fillMaxSize())
+            if (!coordinator.isPlaying) {
+                Box(
+                    Modifier.align(Alignment.Center).size(40.dp).background(Color.Black.copy(alpha = 0.45f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
+            }
         }
     }
 }

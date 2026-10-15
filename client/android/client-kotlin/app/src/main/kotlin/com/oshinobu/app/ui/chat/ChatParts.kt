@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.HideImage
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Wallpaper
@@ -449,7 +450,15 @@ private fun ActionPill(icon: androidx.compose.ui.graphics.vector.ImageVector, te
 
 /** Шапка режима выбора: счётчик, копировать, переслать, удалить. */
 @Composable
-fun SelectionHeader(count: Int, onClose: () -> Unit, onCopy: () -> Unit, onForward: () -> Unit, onDelete: () -> Unit) {
+fun SelectionHeader(
+    count: Int,
+    onClose: () -> Unit,
+    /** null — скачать нечего (кнопка только для одного голосового или видеосообщения). */
+    onSave: (() -> Unit)?,
+    onCopy: () -> Unit,
+    onForward: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val colors = LocalAppColors.current
     Row(
         Modifier.fillMaxWidth().background(colors.surface).statusBarsPadding().height(56.dp).padding(horizontal = 4.dp),
@@ -457,6 +466,9 @@ fun SelectionHeader(count: Int, onClose: () -> Unit, onCopy: () -> Unit, onForwa
     ) {
         IconButton(onClick = onClose) { Icon(Icons.Filled.Close, null, tint = colors.textPrimary) }
         Text("${stringResource(R.string.chat_selectedCount)}: $count", color = colors.textPrimary, fontSize = 18.sp, modifier = Modifier.weight(1f))
+        AnimatedVisibility(onSave != null, enter = fadeIn() + expandHorizontally(), exit = fadeOut() + shrinkHorizontally()) {
+            IconButton(onClick = { onSave?.invoke() }) { Icon(Icons.Outlined.Download, null, tint = colors.textPrimary) }
+        }
         IconButton(onClick = onCopy, enabled = count > 0) { Icon(Icons.Outlined.ContentCopy, null, tint = colors.textPrimary) }
         IconButton(onClick = onForward, enabled = count > 0) { Icon(Icons.AutoMirrored.Outlined.Forward, null, tint = colors.textPrimary) }
         IconButton(onClick = onDelete, enabled = count > 0) { Icon(Icons.Outlined.Delete, null, tint = colors.textPrimary) }
@@ -555,6 +567,16 @@ fun SearchResultsList(matches: List<StoredMessage>, topPadding: Dp, bottomPaddin
 
 // ---------------- файлы ----------------
 
+/** Имя в «Загрузках»: своё у файла; голосовым и видеосообщениям — по времени отправки. */
+private fun downloadName(msg: StoredMessage): String {
+    fun stamp() = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", java.util.Locale.US).format(java.util.Date(msg.timestamp))
+    return msg.fileName ?: when {
+        msg.isVoice -> "voice_${stamp()}.m4a"
+        msg.isVideoNote -> "video_${stamp()}.mp4"
+        else -> msg.text.ifBlank { "file" }
+    }
+}
+
 /**
  * "Сохранить на устройство": копия в "Загрузки". До Android 10 для этого
  * нужно разрешение на запись — спрашиваем при первом сохранении.
@@ -566,7 +588,7 @@ fun rememberSaveToDownloads(resolve: suspend (StoredMessage) -> File): (StoredMe
     var pending by remember { mutableStateOf<StoredMessage?>(null) }
 
     fun save(msg: StoredMessage) = scope.launch {
-        val result = runCatching { FileActions.saveToDownloads(context, resolve(msg), msg.fileName ?: msg.text.ifBlank { "file" }) }
+        val result = runCatching { FileActions.saveToDownloads(context, resolve(msg), downloadName(msg)) }
         val text = result.fold(
             onSuccess = { "${context.getString(R.string.chat_savedToDevice)}: $it" },
             onFailure = { context.getString(R.string.chat_saveToDeviceFailed) },

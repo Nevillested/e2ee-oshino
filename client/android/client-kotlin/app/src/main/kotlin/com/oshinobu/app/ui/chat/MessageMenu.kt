@@ -1,5 +1,6 @@
 package com.oshinobu.app.ui.chat
 
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
@@ -55,11 +56,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import com.oshinobu.app.R
 import com.oshinobu.app.ui.emoji.allEmojis
 import com.oshinobu.app.ui.theme.LocalAppColors
@@ -100,6 +109,20 @@ private fun actionsFor(isMine: Boolean, showCopy: Boolean, showEdit: Boolean, is
     }
 }
 
+/** Окно меню — во весь экран, от его левого верхнего угла. */
+private object WindowOrigin : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize) = IntOffset.Zero
+}
+
+/** Без фокуса (клавиатура и поле ввода остаются), во весь экран; "назад" и тап мимо — сами. */
+private val MenuWindowProperties = PopupProperties(
+    flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+    dismissOnBackPress = false,
+    dismissOnClickOutside = false,
+    usePlatformDefaultWidth = false,
+)
+
 /**
  * Контекстное меню сообщения поверх чата: панель реакций (частые первыми,
  * стрелка раскрывает все) и действия. Своё сообщение — меню левее точки
@@ -116,6 +139,8 @@ fun MessageContextMenu(
     onReaction: (String) -> Unit,
     onAction: (MessageAction) -> Unit,
     onDismiss: () -> Unit,
+    /** Где на экране левый верхний угол экрана чата (в его координатах — [MenuTarget.anchor]). */
+    rootOnScreen: Offset,
 ) {
     val colors = LocalAppColors.current
     val msg = target.msg
@@ -127,65 +152,73 @@ fun MessageContextMenu(
     LaunchedEffect(Unit) { appear.animateTo(1f, tween(160, easing = FastOutSlowInEasing)) }
     BackHandler(onBack = onDismiss)
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val density = LocalDensity.current
-        val estimatedHeight = (if (withReactions) CellSize else 0.dp) + ActionHeight * actions.size
-        val margin = 8.dp
-        val offset = with(density) {
-            val w = MenuWidth.toPx()
-            val h = (if (expanded) CellSize * 6 else estimatedHeight).toPx()
-            val m = margin.toPx()
-            val x = (if (msg.isMine) target.anchor.x - w else target.anchor.x).coerceIn(m, (constraints.maxWidth - w - m).coerceAtLeast(m))
-            val y = target.anchor.y.coerceIn(m, (constraints.maxHeight - h - m).coerceAtLeast(m))
-            IntOffset(x.toInt(), y.toInt())
-        }
-        Box(
-            Modifier.fillMaxSize().graphicsLayer { alpha = appear.value }.background(Color.Black.copy(alpha = 0.25f))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
-        )
-        Column(
-            Modifier
-                .offset { offset }
-                .graphicsLayer {
-                    alpha = appear.value
-                    scaleX = 0.85f + 0.15f * appear.value
-                    scaleY = 0.85f + 0.15f * appear.value
-                    transformOrigin = TransformOrigin(if (msg.isMine) 1f else 0f, 0f)
-                }
-                .width(MenuWidth)
-                .clip(RoundedCornerShape(16.dp))
-                .background(colors.surface)
-                .animateContentSize(tween(260)),
-        ) {
-            if (withReactions) {
-                Box(Modifier.fillMaxWidth().height(if (expanded) CellSize * 6 else CellSize)) {
-                    LazyVerticalGrid(GridCells.Fixed(Columns), userScrollEnabled = expanded) {
-                        items(emojis) { emoji ->
-                            Box(
-                                Modifier.size(CellSize).padding(3.dp).clip(CircleShape)
-                                    .background(if (emoji == msg.myReaction) colors.primary.copy(alpha = 0.25f) else Color.Transparent)
-                                    .clickable { onReaction(emoji) },
-                                contentAlignment = Alignment.Center,
-                            ) { Text(emoji, fontSize = 23.sp) }
+    // отдельным окном: обычные слои экрана лежат под клавиатурой, а всплывающее окно
+    // Android кладёт над ней — меню видно и при поднятой клавиатуре (как в Telegram).
+    // Клавиатура остаётся: окно не забирает фокус у поля ввода.
+    Popup(popupPositionProvider = WindowOrigin, properties = MenuWindowProperties) {
+        var originOnScreen by remember { mutableStateOf<Offset?>(null) }
+        BoxWithConstraints(Modifier.fillMaxSize().onGloballyPositioned { originOnScreen = it.positionOnScreen() }) {
+            val density = LocalDensity.current
+            // точка нажатия — в координатах экрана чата; переводим в координаты окна меню
+            val anchor = target.anchor + rootOnScreen - (originOnScreen ?: rootOnScreen)
+            val estimatedHeight = (if (withReactions) CellSize else 0.dp) + ActionHeight * actions.size
+            val margin = 8.dp
+            val offset = with(density) {
+                val w = MenuWidth.toPx()
+                val h = (if (expanded) CellSize * 6 else estimatedHeight).toPx()
+                val m = margin.toPx()
+                val x = (if (msg.isMine) anchor.x - w else anchor.x).coerceIn(m, (constraints.maxWidth - w - m).coerceAtLeast(m))
+                val y = anchor.y.coerceIn(m, (constraints.maxHeight - h - m).coerceAtLeast(m))
+                IntOffset(x.toInt(), y.toInt())
+            }
+            Box(
+                Modifier.fillMaxSize().graphicsLayer { alpha = appear.value }.background(Color.Black.copy(alpha = 0.25f))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+            )
+            Column(
+                Modifier
+                    .offset { offset }
+                    .graphicsLayer {
+                        alpha = appear.value
+                        scaleX = 0.85f + 0.15f * appear.value
+                        scaleY = 0.85f + 0.15f * appear.value
+                        transformOrigin = TransformOrigin(if (msg.isMine) 1f else 0f, 0f)
+                    }
+                    .width(MenuWidth)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(colors.surface)
+                    .animateContentSize(tween(260)),
+            ) {
+                if (withReactions) {
+                    Box(Modifier.fillMaxWidth().height(if (expanded) CellSize * 6 else CellSize)) {
+                        LazyVerticalGrid(GridCells.Fixed(Columns), userScrollEnabled = expanded) {
+                            items(emojis) { emoji ->
+                                Box(
+                                    Modifier.size(CellSize).padding(3.dp).clip(CircleShape)
+                                        .background(if (emoji == msg.myReaction) colors.primary.copy(alpha = 0.25f) else Color.Transparent)
+                                        .clickable { onReaction(emoji) },
+                                    contentAlignment = Alignment.Center,
+                                ) { Text(emoji, fontSize = 23.sp) }
+                            }
+                        }
+                        Box(
+                            Modifier.align(Alignment.TopEnd).size(CellSize).background(colors.surface).clickable { expanded = !expanded },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, null, tint = colors.textMuted)
                         }
                     }
-                    Box(
-                        Modifier.align(Alignment.TopEnd).size(CellSize).background(colors.surface).clickable { expanded = !expanded },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, null, tint = colors.textMuted)
-                    }
                 }
-            }
-            if (!expanded) {
-                actions.forEach { item ->
-                    Row(
-                        Modifier.fillMaxWidth().height(ActionHeight).clickable { onAction(item.action) }.padding(horizontal = 16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(item.icon, null, Modifier.size(22.dp), tint = if (item.danger) Danger else colors.textMuted)
-                        Spacer(Modifier.width(13.dp))
-                        Text(stringResource(item.label), color = if (item.danger) Danger else colors.textPrimary, fontSize = 17.sp)
+                if (!expanded) {
+                    actions.forEach { item ->
+                        Row(
+                            Modifier.fillMaxWidth().height(ActionHeight).clickable { onAction(item.action) }.padding(horizontal = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(item.icon, null, Modifier.size(22.dp), tint = if (item.danger) Danger else colors.textMuted)
+                            Spacer(Modifier.width(13.dp))
+                            Text(stringResource(item.label), color = if (item.danger) Danger else colors.textPrimary, fontSize = 17.sp)
+                        }
                     }
                 }
             }

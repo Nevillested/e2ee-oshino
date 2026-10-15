@@ -12,12 +12,15 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
@@ -117,6 +120,9 @@ import com.oshinobu.app.ui.ErrorRed
 import com.oshinobu.app.ui.PeerAvatar
 import com.oshinobu.app.ui.PeerName
 import com.oshinobu.app.ui.call.OngoingCallBanner
+import com.oshinobu.app.ui.chat.FloatingVideoNote
+import com.oshinobu.app.ui.chat.LocalPlayback
+import com.oshinobu.app.ui.chat.MediaControlBar
 import com.oshinobu.app.ui.errorText
 import com.oshinobu.app.ui.theme.CardShape
 import com.oshinobu.app.ui.theme.LocalAppColors
@@ -150,6 +156,7 @@ fun HomeScreen(
 ) {
     val core = LocalContext.current.app.core
     val colors = LocalAppColors.current
+    val playback = LocalPlayback.current
     RequestNotificationPermissions()
     var tab by rememberSaveable { mutableStateOf(Tab.CHATS) }
     var previousTab by remember { mutableStateOf(Tab.CHATS) }
@@ -219,6 +226,11 @@ fun HomeScreen(
                     Tab.PROFILE -> TopAppBar(title = {}, colors = barColors())
                 }
                 OngoingCallBanner(peerLogin = null, onOpen = onOpenCall)
+                // играет голосовое или видеосообщение из чата: панель сдвигает список вниз,
+                // крестик — остановить и убрать
+                AnimatedVisibility(playback.activeId != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    MediaControlBar(playback)
+                }
             }
         },
     ) { padding ->
@@ -269,6 +281,7 @@ fun HomeScreen(
                 )
             }
             HomeTabs(tab, ::selectTab, Modifier.align(Alignment.BottomCenter))
+            FloatingVideoNote(playback)
         }
     }
 }

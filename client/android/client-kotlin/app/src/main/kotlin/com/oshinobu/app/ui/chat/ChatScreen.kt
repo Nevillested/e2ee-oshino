@@ -65,6 +65,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -187,8 +188,8 @@ fun ChatScreen(
         ChatViewModel(app.core, app.routerHost, target.login, target.accountId, target.deviceId, forwarded, labels)
     }
     val thumbnailer = remember { AndroidVideoThumbnailer(app.core.dirs.support) }
-    val playback = remember { PlaybackCoordinator(scope) }
-    DisposableEffect(Unit) { onDispose { playback.stop() } }
+    // плеер — общий на приложение: вышли из чата — играет дальше (панель и окошко в списке чатов)
+    val playback = LocalPlayback.current
     val recorder = rememberChatRecorder { file, durationMs, videoNote -> vm.sendRecorded(file, durationMs, videoNote, thumbnailer) }
 
     val peerName = if (vm.peerDeleted) stringResource(R.string.home_deletedAccount) else rememberPeerDisplayName(vm.peer.accountId, vm.peer.login)
@@ -578,6 +579,11 @@ fun ChatScreen(
                     1 -> SelectionHeader(
                         count = vm.selected.size,
                         onClose = vm::clearSelection,
+                        // скачать — только одно голосовое или видеосообщение
+                        onSave = vm.selected.singleOrNull()
+                            ?.let { id -> vm.messages.firstOrNull { it.messageId == id } }
+                            ?.takeIf { it.isVoice || it.isVideoNote }
+                            ?.let { msg -> { saveFile(msg); vm.clearSelection() } },
                         onCopy = {
                             val texts = vm.selectedTexts()
                             if (texts.isNotEmpty()) {
@@ -735,6 +741,7 @@ fun ChatScreen(
                 },
                 onAction = { onMenuAction(t, it) },
                 onDismiss = { menu = null },
+                rootOnScreen = rootCoords[0]?.positionOnScreen() ?: Offset.Zero,
             )
         }
     }

@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -76,8 +77,10 @@ import com.oshinobu.app.ui.call.CallScreen
 import com.oshinobu.app.ui.call.IncomingCallScreen
 import com.oshinobu.app.ui.chat.ChatScreen
 import com.oshinobu.app.ui.chat.ForwardScreen
+import com.oshinobu.app.ui.chat.LocalPlayback
 import com.oshinobu.app.ui.chat.MediaViewerScreen
 import com.oshinobu.app.ui.chat.PeerProfileScreen
+import com.oshinobu.app.ui.chat.PlaybackCoordinator
 import com.oshinobu.app.ui.home.ChatTarget
 import com.oshinobu.app.ui.home.HomeScreen
 import com.oshinobu.app.ui.home.ThemeScreen
@@ -185,9 +188,14 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
             nav.previousBackStackEntry != null && nav.currentBackStackEntry?.destination?.route !in Routes.CALL_ROUTES
         }
     }
+    // плеер голосовых и видеосообщений — один на всё приложение: выход из чата его не останавливает
+    val playback = remember { PlaybackCoordinator(scope) }
+    DisposableEffect(Unit) { onDispose { playback.stop() } }
     // слой общих элементов: аватар перелетает между шапкой чата и профилем
     SharedTransitionLayout {
-    CompositionLocalProvider(LocalSwipeBack provides swipeBack, LocalSharedTransitionScope provides this) {
+    CompositionLocalProvider(
+        LocalSwipeBack provides swipeBack, LocalSharedTransitionScope provides this, LocalPlayback provides playback,
+    ) {
     // новый экран выезжает справа поверх неподвижного,
     // при возврате уезжает вправо (за пальцем — при свайпе назад);
     // профиль собеседника — проявляется с увеличением (Material "shared axis
@@ -316,7 +324,10 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
                 },
             ) {
                 HomeScreen(
-                    onSignedOut = { nav.startOver(Routes.WELCOME) },
+                    onSignedOut = {
+                        playback.stop()
+                        nav.startOver(Routes.WELCOME)
+                    },
                     onOpenChat = { nav.navigate(Routes.chat(it)) },
                     onOpenTransfers = { nav.navigate(Routes.TRANSFERS) },
                     onOpenCall = openCall,

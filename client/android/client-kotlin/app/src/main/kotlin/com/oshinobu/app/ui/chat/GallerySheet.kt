@@ -39,7 +39,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -70,15 +69,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -383,6 +379,8 @@ private fun GalleryPreview(
     val dismiss = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
+    // увеличенное фото двигается пальцем — листание и закрытие свайпом в это время выключены
+    var zoomed by remember { mutableStateOf(false) }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = (1f - abs(dismiss.value) / 1500f).coerceIn(0.3f, 1f)))) {
             HorizontalPager(
@@ -390,6 +388,7 @@ private fun GalleryPreview(
                 Modifier.fillMaxSize()
                     .graphicsLayer { translationY = dismiss.value }
                     .dismissOnVerticalDrag(
+                        enabled = { !zoomed },
                         onDrag = { dy -> scope.launch { dismiss.snapTo(dismiss.value + dy) } },
                         onEnd = {
                             scope.launch {
@@ -402,7 +401,8 @@ private fun GalleryPreview(
                             }
                         },
                     ),
-            ) { page -> PreviewPage(items[page], current = pager.currentPage == page) }
+                userScrollEnabled = !zoomed,
+            ) { page -> PreviewPage(items[page], current = pager.currentPage == page, onZoomChanged = { zoomed = it }) }
             val item = items[pager.currentPage]
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White) }
@@ -422,10 +422,11 @@ private fun GalleryPreview(
  * жест раньше страниц (проход Initial), но только вертикальный:
  * горизонтальный уходит листанию, два пальца — не наш.
  */
-private fun Modifier.dismissOnVerticalDrag(onDrag: (Float) -> Unit, onEnd: () -> Unit): Modifier = pointerInput(Unit) {
+private fun Modifier.dismissOnVerticalDrag(enabled: () -> Boolean, onDrag: (Float) -> Unit, onEnd: () -> Unit): Modifier = pointerInput(Unit) {
     val slop = viewConfiguration.touchSlop
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        if (!enabled()) return@awaitEachGesture
         var vertical = false
         while (true) {
             val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -446,7 +447,7 @@ private fun Modifier.dismissOnVerticalDrag(onDrag: (Float) -> Unit, onEnd: () ->
 }
 
 @Composable
-private fun PreviewPage(item: GalleryItem, current: Boolean) {
+private fun PreviewPage(item: GalleryItem, current: Boolean, onZoomChanged: (Boolean) -> Unit) {
     val context = LocalContext.current
     if (!item.isVideo) {
         val density = LocalDensity.current
@@ -461,16 +462,13 @@ private fun PreviewPage(item: GalleryItem, current: Boolean) {
             }
         }
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
-                ?: AppLoadingIndicator(size = 64.dp)
+            // щипок — масштаб, двойной тап — увеличить/вернуть (как в просмотре медиа в чате)
+            bitmap?.let { ZoomableImage(it, onZoomChanged) } ?: AppLoadingIndicator(size = 64.dp)
         }
         return
     }
     val view = remember { arrayOfNulls<VideoView>(1) }
     var playing by remember { mutableStateOf(false) }
-    var position by remember { mutableFloatStateOf(0f) }
-    var duration by remember { mutableFloatStateOf(0f) }
-    var dragging by remember { mutableStateOf<Float?>(null) }
     LaunchedEffect(current) {
         val v = view[0] ?: return@LaunchedEffect
         if (!current) {
@@ -480,11 +478,7 @@ private fun PreviewPage(item: GalleryItem, current: Boolean) {
     }
     LaunchedEffect(Unit) {
         while (true) {
-            view[0]?.let { v ->
-                if (dragging == null) position = v.currentPosition.toFloat()
-                if (v.duration > 0) duration = v.duration.toFloat()
-                playing = v.isPlaying
-            }
+            view[0]?.let { playing = it.isPlaying }
             delay(200)
         }
     }
@@ -503,37 +497,10 @@ private fun PreviewPage(item: GalleryItem, current: Boolean) {
             },
         )
         if (!playing) Icon(Icons.Filled.PlayArrow, null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(64.dp))
-        if (duration > 0) {
-            Row(
-                Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(alpha = 0.45f)).navigationBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val shown = dragging ?: position
-                Text(formatClock(shown.toLong()), color = Color.White, fontSize = 12.sp)
-                Slider(
-                    value = shown.coerceIn(0f, duration), valueRange = 0f..duration,
-                    onValueChange = { dragging = it },
-                    onValueChangeFinished = {
-                        dragging?.let { view[0]?.seekTo(it.toInt()); position = it }
-                        dragging = null
-                    },
-                    colors = SliderDefaults.colors(thumbColor = LocalAppColors.current.primary, activeTrackColor = LocalAppColors.current.primary, inactiveTrackColor = Color.White.copy(alpha = 0.24f)),
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                )
-                Text(formatClock(duration.toLong()), color = Color.White, fontSize = 12.sp)
-            }
-        }
+        VideoSeekBar({ view[0] }, Modifier.align(Alignment.BottomCenter))
     }
 }
 
-private fun formatClock(ms: Long): String {
-    val s = ms / 1000
-    val h = s / 3600
-    val mm = ((s % 3600) / 60).toString().padStart(2, '0')
-    val ss = (s % 60).toString().padStart(2, '0')
-    return if (h > 0) "$h:$mm:$ss" else "$mm:$ss"
-}
 
 /**
  * Подпись к выбранному: эмодзи/клавиатура, поле, "отправить". Эмодзи и

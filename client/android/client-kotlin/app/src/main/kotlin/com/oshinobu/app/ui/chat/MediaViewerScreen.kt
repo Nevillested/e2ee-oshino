@@ -10,12 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculatePan
-import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -45,7 +40,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -53,18 +47,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -216,90 +204,10 @@ private fun MediaPage(
     }
 }
 
-/**
- * Жесты страницы: два пальца (или уже увеличено) — масштаб и сдвиг;
- * один палец по вертикали — закрытие свайпом; по горизонтали — не трогаем,
- * это листание.
- */
-private fun Modifier.viewerGestures(
-    zoomEnabled: Boolean,
-    scale: () -> Float,
-    onTransform: (zoom: Float, pan: Offset) -> Unit,
-    onDismissDrag: (Float) -> Unit,
-    onDismissEnd: () -> Unit,
-): Modifier = pointerInput(zoomEnabled) {
-    val slop = viewConfiguration.touchSlop
-    awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false)
-        var vertical = false
-        var horizontal = false
-        while (true) {
-            val event = awaitPointerEvent()
-            val pressed = event.changes.filter { it.pressed }
-            if (pressed.isEmpty()) break
-            if (zoomEnabled && (pressed.size >= 2 || scale() > 1f)) {
-                onTransform(event.calculateZoom(), event.calculatePan())
-                event.changes.forEach { it.consume() }
-                continue
-            }
-            if (horizontal) continue
-            val ch = event.changes.firstOrNull { it.id == down.id } ?: break
-            val d = ch.position - down.position
-            if (!vertical && abs(d.y) > slop && abs(d.y) > abs(d.x)) vertical = true
-            else if (!vertical && abs(d.x) > slop) horizontal = true
-            if (vertical) {
-                onDismissDrag(ch.positionChange().y)
-                ch.consume()
-            }
-        }
-        if (vertical) onDismissEnd()
-    }
-}
-
 @Composable
 private fun ZoomablePhoto(file: File, onZoomChanged: (Boolean) -> Unit, onDismissDrag: (Float) -> Unit, onDismissEnd: () -> Unit) {
     val bitmap by produceState<Bitmap?>(null, file) { value = withContext(Dispatchers.IO) { MediaDecoding.decodeImage(file, 2560) } }
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
-    var size by remember { mutableStateOf(IntSize.Zero) }
-
-    fun clamp(o: Offset, s: Float): Offset {
-        val maxX = size.width * (s - 1) / 2
-        val maxY = size.height * (s - 1) / 2
-        return Offset(o.x.coerceIn(-maxX, maxX), o.y.coerceIn(-maxY, maxY))
-    }
-
-    fun apply(s: Float, o: Offset) {
-        scale = s
-        offset = clamp(o, s)
-        onZoomChanged(s > 1f)
-    }
-
-    val image = bitmap ?: return
-    Image(
-        image.asImageBitmap(), null, contentScale = ContentScale.Fit,
-        modifier = Modifier.fillMaxSize()
-            .onSizeChanged { size = it }
-            .viewerGestures(
-                zoomEnabled = true,
-                scale = { scale },
-                onTransform = { zoom, pan -> apply((scale * zoom).coerceIn(1f, 5f), offset + pan) },
-                onDismissDrag = onDismissDrag,
-                onDismissEnd = onDismissEnd,
-            )
-            .pointerInput(Unit) {
-                detectTapGestures(onDoubleTap = { tap ->
-                    // как в Телеге: увеличить вокруг точки тапа или вернуть исходный размер
-                    if (scale > 1f) {
-                        apply(1f, Offset.Zero)
-                    } else {
-                        val center = Offset(size.width / 2f, size.height / 2f)
-                        apply(2.5f, (center - tap) * 1.5f)
-                    }
-                })
-            }
-            .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y),
-    )
+    bitmap?.let { ZoomableImage(it, onZoomChanged, onDismissDrag, onDismissEnd) }
 }
 
 @Composable
@@ -338,5 +246,6 @@ private fun VideoPage(file: File, current: Boolean, onDismissDrag: (Float) -> Un
                 Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(40.dp))
             }
         }
+        VideoSeekBar({ view[0] }, Modifier.align(Alignment.BottomCenter))
     }
 }
