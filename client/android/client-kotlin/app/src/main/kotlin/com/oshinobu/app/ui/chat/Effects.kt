@@ -27,6 +27,8 @@ import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.unit.dp
+import kotlin.math.ceil
+import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
@@ -45,6 +47,8 @@ fun Dissolvable(dissolving: Boolean, content: @Composable () -> Unit) {
     val layer = rememberGraphicsLayer()
     var frozen by remember { mutableStateOf(false) }
     val progress = remember { Animatable(0f) }
+    // осколки считаются один раз — в первом кадре после заморозки, по размеру пузыря
+    val shards = remember { arrayOfNulls<Shards>(1) }
     LaunchedEffect(dissolving) {
         if (dissolving && !frozen) {
             frozen = true
@@ -57,38 +61,69 @@ fun Dissolvable(dissolving: Boolean, content: @Composable () -> Unit) {
                 layer.record { this@drawWithContent.drawContent() }
                 drawLayer(layer)
             } else {
-                drawShatter(layer, progress.value)
+                val s = shards[0] ?: Shards.of(size.width, size.height).also { shards[0] = it }
+                drawShatter(layer, s, progress.value)
             }
         },
     ) { content() }
 }
 
-private const val SHARD_PX = 10
+/** Сколько осколков не больше: каждый — отдельная отрисовка слоя, больше — кадры не успевают. */
+private const val MAX_SHARDS = 600
 
-private fun DrawScope.drawShatter(layer: GraphicsLayer, t: Float) {
-    val width = size.width.toInt()
-    val height = size.height.toInt()
-    val cols = (width + SHARD_PX - 1) / SHARD_PX
-    val rows = (height + SHARD_PX - 1) / SHARD_PX
-    for (r in 0 until rows) {
-        for (c in 0 until cols) {
-            val rnd = Random(r * 7919 + c)
-            // волна слева направо: правые осколки стартуют позже
-            val start = c.toFloat() / cols * 0.45f + rnd.nextFloat() * 0.1f
-            val local = ((t - start) / (1f - start)).coerceIn(0f, 1f)
-            if (local >= 1f) continue
-            val w = minOf(SHARD_PX, width - c * SHARD_PX).toFloat()
-            val h = minOf(SHARD_PX, height - r * SHARD_PX).toFloat()
-            val eased = FastOutSlowInEasing.transform(local)
-            val dx = (rnd.nextFloat() - 0.3f) * 160f * eased
-            val dy = -(40f + rnd.nextFloat() * 140f) * eased
-            // осколок сжимается к своему центру — вместо затухания
-            val keep = 1f - local
-            val cx = c * SHARD_PX + w / 2 + dx
-            val cy = r * SHARD_PX + h / 2 + dy
-            clipRect(cx - w * keep / 2, cy - h * keep / 2, cx + w * keep / 2, cy + h * keep / 2) {
-                translate(dx, dy) { drawLayer(layer) }
+/** Мельче этого осколки не режем (на маленьких пузырях их и так немного). */
+private const val MIN_SHARD_PX = 10f
+
+/**
+ * Осколки пузыря: на каждый — x, y, ширина, высота, когда стартует (0..1),
+ * куда улетает по x и по y. Считаются один раз, а не в каждом кадре.
+ */
+private class Shards(val data: FloatArray, val count: Int) {
+    companion object {
+        const val FIELDS = 7
+
+        fun of(width: Float, height: Float): Shards {
+            val side = maxOf(MIN_SHARD_PX, ceil(sqrt(width * height / MAX_SHARDS)))
+            val cols = ceil(width / side).toInt().coerceAtLeast(1)
+            val rows = ceil(height / side).toInt().coerceAtLeast(1)
+            val data = FloatArray(cols * rows * FIELDS)
+            val rnd = Random(cols * 7919 + rows)
+            var i = 0
+            for (r in 0 until rows) {
+                for (c in 0 until cols) {
+                    data[i++] = c * side
+                    data[i++] = r * side
+                    data[i++] = minOf(side, width - c * side)
+                    data[i++] = minOf(side, height - r * side)
+                    // волна слева направо: правые осколки стартуют позже
+                    data[i++] = c.toFloat() / cols * 0.45f + rnd.nextFloat() * 0.1f
+                    data[i++] = (rnd.nextFloat() - 0.3f) * 160f
+                    data[i++] = -(40f + rnd.nextFloat() * 140f)
+                }
             }
+            return Shards(data, cols * rows)
+        }
+    }
+}
+
+private fun DrawScope.drawShatter(layer: GraphicsLayer, shards: Shards, t: Float) {
+    val d = shards.data
+    for (n in 0 until shards.count) {
+        val i = n * Shards.FIELDS
+        val start = d[i + 4]
+        val local = ((t - start) / (1f - start)).coerceIn(0f, 1f)
+        if (local >= 1f) continue
+        val w = d[i + 2]
+        val h = d[i + 3]
+        val eased = FastOutSlowInEasing.transform(local)
+        val dx = d[i + 5] * eased
+        val dy = d[i + 6] * eased
+        // осколок сжимается к своему центру — вместо затухания
+        val keep = 1f - local
+        val cx = d[i] + w / 2 + dx
+        val cy = d[i + 1] + h / 2 + dy
+        clipRect(cx - w * keep / 2, cy - h * keep / 2, cx + w * keep / 2, cy + h * keep / 2) {
+            translate(dx, dy) { drawLayer(layer) }
         }
     }
 }

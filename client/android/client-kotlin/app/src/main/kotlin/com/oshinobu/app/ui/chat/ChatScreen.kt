@@ -10,6 +10,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -488,6 +489,7 @@ fun ChatScreen(
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val maxBubble = maxWidth * 0.72f
                 val maxText = maxWidth * 0.65f
+                val expandedVideo = maxWidth - 32.dp
                 LazyColumn(
                     state = listState,
                     reverseLayout = true,
@@ -501,63 +503,67 @@ fun ChatScreen(
                 ) {
                     items(groups, key = { it.key() }) { group ->
                         val rep = group.rep()
-                        when {
-                            rep.isCallLog -> CallLogRow(rep)
-                            rep.isUndecryptable -> UndecryptableRow(rep, peerName)
-                            else -> MessageRow(
-                                group = group,
-                                selectionMode = vm.selectionMode,
-                                selected = rep.messageId in vm.selected,
-                                dissolving = group.any { it.messageId in vm.dissolving },
-                                flash = if (flashId == group.key()) flashToken else 0,
-                                highlighted = currentMatch != null && group.any { it.messageId == currentMatch.messageId },
-                                swipeDx = if (swipeReplyId == rep.messageId) swipeReplyDx else 0f,
-                                rootCoords = { rootCoords[0] },
-                                onBounds = { rowBounds[group.key()] = it },
-                                gestures = RowGestures(
-                                    swipeReplyEnabled = !vm.selectionMode && !composerBlocked,
-                                    isListScrolling = { listState.isScrollInProgress },
-                                    onTap = { anchor ->
-                                        if (vm.selectionMode) toggleSelection(group.map { it.messageId }) else openMenu(group, anchor)
-                                    },
-                                    onDoubleTap = { if (!vm.selectionMode) vm.applyDefaultReaction(rep) },
-                                    onLongPress = { pos ->
-                                        // вход в режим выбора (или выбор ещё одной строки) — и дальше протяжка
-                                        val ids = group.map { it.messageId }
-                                        vm.toggleSelected(ids)
-                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        dragLastIds[0] = ids
-                                        dragSelectPos = pos
-                                    },
-                                    onSwipeReply = { dx ->
-                                        swipeReplyId = rep.messageId
-                                        swipeReplyDx = dx
-                                    },
-                                    onSwipeReplyFire = {
-                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        vm.startReply(rep)
-                                        inputFocus.requestFocus()
-                                    },
-                                    onSwipeEnd = { swipeReplyId = null; swipeReplyDx = 0f },
-                                ),
-                            ) {
-                                MessageBubble(
-                                    vm = vm,
+                        // удалённое (уже рассыпалось) уходит сразу, остальные плавно съезжают на его
+                        // место и встают — без пружины и отскока; появление и уход — без затухания
+                        Box(Modifier.animateItem(fadeInSpec = null, placementSpec = tween(MESSAGE_SHIFT_MS, easing = FastOutSlowInEasing), fadeOutSpec = null)) {
+                            when {
+                                rep.isCallLog -> CallLogRow(rep)
+                                rep.isUndecryptable -> UndecryptableRow(rep, peerName)
+                                else -> MessageRow(
                                     group = group,
-                                    justReacted = rep.messageId in vm.justReacted,
-                                    peerName = peerName,
-                                    maxBubble = maxBubble,
-                                    maxText = maxText,
-                                    expandedVideo = maxWidth - 32.dp,
-                                    playback = playback,
-                                    revealed = revealedSpoilers,
-                                    onReveal = { revealedSpoilers = revealedSpoilers + it },
-                                    onJump = ::jumpTo,
-                                    onOpenViewer = { m -> onOpenMedia(target.login, m.messageId) },
-                                    onOpenFile = { openFile(it) },
-                                    onSaveFile = saveFile,
-                                    onOpenStickerPack = { stickerPackFor = it },
-                                )
+                                    selectionMode = vm.selectionMode,
+                                    selected = rep.messageId in vm.selected,
+                                    dissolving = group.any { it.messageId in vm.dissolving },
+                                    flash = if (flashId == group.key()) flashToken else 0,
+                                    highlighted = currentMatch != null && group.any { it.messageId == currentMatch.messageId },
+                                    swipeDx = if (swipeReplyId == rep.messageId) swipeReplyDx else 0f,
+                                    rootCoords = { rootCoords[0] },
+                                    onBounds = { rowBounds[group.key()] = it },
+                                    gestures = RowGestures(
+                                        swipeReplyEnabled = !vm.selectionMode && !composerBlocked,
+                                        isListScrolling = { listState.isScrollInProgress },
+                                        onTap = { anchor ->
+                                            if (vm.selectionMode) toggleSelection(group.map { it.messageId }) else openMenu(group, anchor)
+                                        },
+                                        onDoubleTap = { if (!vm.selectionMode) vm.applyDefaultReaction(rep) },
+                                        onLongPress = { pos ->
+                                            // вход в режим выбора (или выбор ещё одной строки) — и дальше протяжка
+                                            val ids = group.map { it.messageId }
+                                            vm.toggleSelected(ids)
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            dragLastIds[0] = ids
+                                            dragSelectPos = pos
+                                        },
+                                        onSwipeReply = { dx ->
+                                            swipeReplyId = rep.messageId
+                                            swipeReplyDx = dx
+                                        },
+                                        onSwipeReplyFire = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            vm.startReply(rep)
+                                            inputFocus.requestFocus()
+                                        },
+                                        onSwipeEnd = { swipeReplyId = null; swipeReplyDx = 0f },
+                                    ),
+                                ) {
+                                    MessageBubble(
+                                        vm = vm,
+                                        group = group,
+                                        justReacted = rep.messageId in vm.justReacted,
+                                        peerName = peerName,
+                                        maxBubble = maxBubble,
+                                        maxText = maxText,
+                                        expandedVideo = expandedVideo,
+                                        playback = playback,
+                                        revealed = revealedSpoilers,
+                                        onReveal = { revealedSpoilers = revealedSpoilers + it },
+                                        onJump = ::jumpTo,
+                                        onOpenViewer = { m -> onOpenMedia(target.login, m.messageId) },
+                                        onOpenFile = { openFile(it) },
+                                        onSaveFile = saveFile,
+                                        onOpenStickerPack = { stickerPackFor = it },
+                                    )
+                                }
                             }
                         }
                     }
@@ -941,3 +947,5 @@ private fun MessageRow(
     }
 }
 
+/** Сообщения съезжают на место удалённого. */
+private const val MESSAGE_SHIFT_MS = 300
