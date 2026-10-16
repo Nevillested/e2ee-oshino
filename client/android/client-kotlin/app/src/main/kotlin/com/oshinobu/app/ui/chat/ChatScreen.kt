@@ -3,6 +3,7 @@ package com.oshinobu.app.ui.chat
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -21,6 +22,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.scrollBy
@@ -275,11 +277,31 @@ fun ChatScreen(
         }
     }
 
+    /**
+     * Переход к сообщению (закреп, цитата): лента плавно доезжает до него.
+     * Далеко — сначала незаметно переставляем ленту так, чтобы оно оказалось
+     * сразу за краем экрана, и уже оттуда так же плавно въезжает; затем подсветка.
+     */
     fun jumpTo(messageId: String) {
         val index = groups.indexOfFirst { g -> g.any { it.messageId == messageId } }
         if (index < 0) return
         scope.launch {
-            listState.animateScrollToItem(index, -with(density) { 160.dp.roundToPx() })
+            // где окажется сообщение: его нижний край — на 160dp выше низа ленты
+            val target = with(density) { 160.dp.roundToPx() }
+            val viewport = listState.layoutInfo.viewportSize.height
+            val visible = listState.layoutInfo.visibleItemsInfo
+            val shown = visible.firstOrNull { it.index == index }
+            val distance = if (shown != null) {
+                (shown.offset - target).toFloat()
+            } else {
+                // лента снизу вверх: индексы больше — выше (старее). Ставим сообщение на экран
+                // выше (или ниже) нужного места — оттуда и доезжаем
+                val above = index > (visible.lastOrNull()?.index ?: 0)
+                val jump = if (above) viewport else -viewport
+                listState.scrollToItem(index, -(target + jump))
+                listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }?.let { (it.offset - target).toFloat() } ?: jump.toFloat()
+            }
+            listState.animateScrollBy(distance, tween(JUMP_SCROLL_MS, easing = FastOutSlowInEasing))
             flashId = groups[index].key()
             flashToken++
         }
@@ -871,6 +893,8 @@ private fun MessageRow(
 
     Row(
         Modifier
+            // удаляют — место строки сразу схлопывается, соседние съезжают, пока она рассыпается
+            .collapseOnDissolve(dissolving)
             .fillMaxWidth()
             .padding(vertical = 2.dp)
             .jumpFlash(flashA, colors.primary)
@@ -892,7 +916,10 @@ private fun MessageRow(
                             if (currentSelectionMode) {
                                 g.onTap(toRoot(down.position))
                             } else {
-                                val second = withTimeoutOrNull(viewConfiguration.doubleTapTimeoutMillis) { awaitFirstDown() }
+                                // ждём второго тапа (реакция) до 220 мс от первого касания, как Telegram,
+                                // а не системные 300 мс после отпускания: меню открывается быстрее
+                                val wait = (DOUBLE_TAP_WINDOW_MS - (SystemClock.uptimeMillis() - down.uptimeMillis)).coerceAtLeast(0)
+                                val second = if (wait == 0L) null else withTimeoutOrNull(wait) { awaitFirstDown() }
                                 if (second != null) {
                                     g.onDoubleTap()
                                     // остаток второго тапа никому не нужен
@@ -949,3 +976,9 @@ private fun MessageRow(
 
 /** Сообщения съезжают на место удалённого. */
 private const val MESSAGE_SHIFT_MS = 300
+
+/** Лента доезжает до закрепа/цитаты. */
+private const val JUMP_SCROLL_MS = 700
+
+/** Окно двойного тапа (реакция) — от первого касания; одиночный тап (меню) — не раньше. Как в Telegram. */
+private const val DOUBLE_TAP_WINDOW_MS = 220L

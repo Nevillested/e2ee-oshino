@@ -26,10 +26,13 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
 import kotlin.math.ceil
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlin.random.Random
+import kotlinx.coroutines.delay
 
 /**
  * Пузырь, который при удалении рассыпается на осколки: в момент удаления
@@ -67,6 +70,30 @@ fun Dissolvable(dissolving: Boolean, content: @Composable () -> Unit) {
         },
     ) { content() }
 }
+
+/**
+ * Место удаляемой строки схлопывается сразу, пока она ещё рассыпается (как в
+ * Telegram): соседние сообщения съезжают на её место вместе с началом
+ * анимации, а не ждут её конца. Сама строка на экране стоит на месте — её
+ * сдвиг вверх компенсирует уменьшение места (в ленте снизу вверх нижний край
+ * строки неподвижен), поэтому осколки летят оттуда, где было сообщение.
+ */
+@Composable
+fun Modifier.collapseOnDissolve(dissolving: Boolean): Modifier {
+    val collapse = remember { Animatable(0f) }
+    LaunchedEffect(dissolving) {
+        if (dissolving) collapse.animateTo(1f, tween(COLLAPSE_MS, easing = FastOutSlowInEasing))
+    }
+    return layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        val k = collapse.value
+        val height = (placeable.height * (1f - k)).roundToInt()
+        layout(placeable.width, height) { placeable.place(0, height - placeable.height) }
+    }
+}
+
+/** За сколько схлопывается место удаляемой строки. */
+private const val COLLAPSE_MS = 300
 
 /** Сколько осколков не больше: каждый — отдельная отрисовка слоя, больше — кадры не успевают. */
 private const val MAX_SHARDS = 600
@@ -149,8 +176,11 @@ fun flashAlpha(token: Int): Float {
     val anim = remember { Animatable(0f) }
     LaunchedEffect(token) {
         if (token == 0) return@LaunchedEffect
-        anim.snapTo(0.35f)
-        anim.animateTo(0f, tween(2200))
+        // плавно разгорается, немного держится и плавно гаснет
+        anim.snapTo(0f)
+        anim.animateTo(0.35f, tween(400, easing = FastOutSlowInEasing))
+        delay(300)
+        anim.animateTo(0f, tween(1500, easing = FastOutSlowInEasing))
     }
     return anim.value
 }

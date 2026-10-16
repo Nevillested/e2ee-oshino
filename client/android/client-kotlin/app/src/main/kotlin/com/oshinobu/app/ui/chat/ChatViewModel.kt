@@ -215,8 +215,16 @@ class ChatViewModel(
         core.chatService.sendReadReceipts(peer, messages)
     }
 
+    /**
+     * Уже рассыпавшиеся — больше не показываются никогда, даже если запоздалое
+     * перечитывание (начатое ещё до удаления) вернёт их из хранилища: иначе
+     * удалённое на долю секунды мелькало целым после анимации.
+     */
+    private val removedIds = mutableSetOf<String>()
+
     /** Рассыпающиеся сообщения остаются на своих местах (по времени), пока идёт анимация. */
-    private fun withGhosts(stored: List<StoredMessage>): List<StoredMessage> {
+    private fun withGhosts(loaded: List<StoredMessage>): List<StoredMessage> {
+        val stored = if (removedIds.isEmpty()) loaded else loaded.filter { it.messageId !in removedIds }
         val ghosts = dissolving.values.filter { g -> stored.none { it.messageId == g.messageId } }
         if (ghosts.isEmpty()) return stored
         return (stored + ghosts).sortedBy { it.timestamp }
@@ -227,8 +235,12 @@ class ChatViewModel(
         dissolving = dissolving + gone.associateBy { it.messageId }
         viewModelScope.launch {
             delay(DISSOLVE_MS)
+            val ids = gone.map { it.messageId }.toSet()
+            // рассыпалось — убрано насовсем, ещё до удаления из хранилища
+            removedIds += ids
+            dissolving = dissolving - ids
+            messages = messages.filter { it.messageId !in ids }
             then()
-            dissolving = dissolving - gone.map { it.messageId }.toSet()
             reload()
         }
     }
