@@ -1,6 +1,5 @@
 package com.oshinobu.app.ui.chat
 
-import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -21,12 +20,17 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -71,20 +75,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntRect
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupPositionProvider
-import androidx.compose.ui.window.PopupProperties
 import com.oshinobu.app.R
 import com.oshinobu.app.ui.emoji.allEmojis
 import com.oshinobu.app.ui.theme.LocalAppColors
@@ -135,23 +131,6 @@ private fun actionsFor(isMine: Boolean, showCopy: Boolean, showEdit: Boolean, is
     }
 }
 
-/** Окно меню (и подтверждения удаления) — во весь экран, от его левого верхнего угла. */
-internal object WindowOrigin : PopupPositionProvider {
-    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize) = IntOffset.Zero
-}
-
-/**
- * Без фокуса (клавиатура и поле ввода остаются как были — не прячутся и не
- * выскакивают обратно), во весь экран; "назад" и тап мимо — сами.
- */
-internal val MenuWindowProperties = PopupProperties(
-    flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-    dismissOnBackPress = false,
-    dismissOnClickOutside = false,
-    usePlatformDefaultWidth = false,
-)
-
 /**
  * Контекстное меню сообщения поверх чата: панель реакций (частые первыми,
  * стрелка раскрывает все) и действия. Своё сообщение — меню левее точки
@@ -168,8 +147,6 @@ fun MessageContextMenu(
     onReaction: (String) -> Unit,
     onAction: (MessageAction) -> Unit,
     onDismiss: () -> Unit,
-    /** Где на экране левый верхний угол экрана чата (в его координатах — [MenuTarget.anchor]). */
-    rootOnScreen: Offset,
 ) {
     val colors = LocalAppColors.current
     val msg = target.msg
@@ -178,78 +155,87 @@ fun MessageContextMenu(
     var expanded by remember { mutableStateOf(false) }
     val emojis by produceState(allEmojis) { value = sortedReactions(allEmojis) }
     val appear = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { appear.animateTo(1f, tween(160, easing = FastOutSlowInEasing)) }
-    BackHandler(onBack = onDismiss)
+    // закрытие — обратная анимация открытия (панели уменьшаются и гаснут, затемнение уходит),
+    // и только потом действие; повторные тапы, пока закрывается, — мимо
+    var closing by remember { mutableStateOf(false) }
+    fun close(then: () -> Unit) {
+        if (closing) return
+        closing = true
+        scope.launch {
+            appear.animateTo(0f, tween(140, easing = FastOutSlowInEasing))
+            then()
+        }
+    }
+    BackHandler { close(onDismiss) }
 
-    // отдельным окном: обычные слои экрана лежат под клавиатурой, а всплывающее окно
-    // Android кладёт над ней — меню видно и при поднятой клавиатуре (как в Telegram).
-    // Клавиатура остаётся: окно не забирает фокус у поля ввода.
-    Popup(popupPositionProvider = WindowOrigin, properties = MenuWindowProperties) {
-        var originOnScreen by remember { mutableStateOf<Offset?>(null) }
-        BoxWithConstraints(Modifier.fillMaxSize().onGloballyPositioned { originOnScreen = it.positionOnScreen() }) {
-            val density = LocalDensity.current
-            // точка нажатия — в координатах экрана чата; переводим в координаты окна меню
-            val anchor = target.anchor + rootOnScreen - (originOnScreen ?: rootOnScreen)
-            val panelsWidth = if (withReactions) BarWidth else ActionsWidth
-            val estimatedHeight = when {
-                expanded -> GridHeight
-                withReactions -> BarHeight + PanelGap + ActionHeight * actions.size
-                else -> ActionHeight * actions.size
-            }
-            val margin = 8.dp
-            val offset = with(density) {
-                val w = panelsWidth.toPx()
-                val h = estimatedHeight.toPx()
-                val m = margin.toPx()
-                val x = (if (msg.isMine) anchor.x - w else anchor.x).coerceIn(m, (constraints.maxWidth - w - m).coerceAtLeast(m))
-                val y = anchor.y.coerceIn(m, (constraints.maxHeight - h - m).coerceAtLeast(m))
-                IntOffset(x.toInt(), y.toInt())
-            }
-            Box(
-                Modifier.fillMaxSize().graphicsLayer { alpha = appear.value }.background(Color.Black.copy(alpha = 0.25f))
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
-            )
-            // реакции и действия — две отдельные панели (как в Telegram), выровнены по стороне сообщения
-            Column(
-                Modifier
-                    .offset { offset }
-                    .width(panelsWidth)
-                    .graphicsLayer {
-                        alpha = appear.value
-                        scaleX = 0.85f + 0.15f * appear.value
-                        scaleY = 0.85f + 0.15f * appear.value
-                        transformOrigin = TransformOrigin(if (msg.isMine) 1f else 0f, 0f)
-                    },
-                // действия — по центру под рядом реакций (без реакций панель одна — выравнивать не с чем)
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                if (withReactions) {
-                    val shape = RoundedCornerShape(if (expanded) 18.dp else 50.dp)
-                    Box(
-                        Modifier.width(BarWidth).shadow(6.dp, shape).clip(shape).background(colors.surface)
-                            .animateContentSize(tween(260)),
-                    ) {
-                        if (expanded) {
-                            ReactionGrid(emojis, msg.myReaction, onReaction, onCollapse = { expanded = false })
-                        } else {
-                            ReactionRow(emojis.take(RowEmojis + 1), msg.myReaction, onReaction, onExpand = { expanded = true })
-                        }
+    // слой поверх всего экрана чата (не отдельное окно): всегда во весь экран, закрывает и поле
+    // ввода; само меню — в видимой части над клавиатурой. Фокус не трогает — клавиатура как была
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val anchor = target.anchor
+        val panelsWidth = if (withReactions) BarWidth else ActionsWidth
+        // место считаем по большей высоте (ряд + действия или раскрытая сетка): раскрытие
+        // реакций не сдвигает меню — сетка начинается там же, где был ряд
+        val collapsedHeight = if (withReactions) BarHeight + PanelGap + ActionHeight * actions.size else ActionHeight * actions.size
+        val estimatedHeight = if (withReactions) maxOf(collapsedHeight, GridHeight) else collapsedHeight
+        // меню — в видимой части: не под клавиатурой и не под системными панелями
+        val topInset = WindowInsets.statusBars.getTop(density)
+        val bottomInset = WindowInsets.ime.union(WindowInsets.navigationBars).getBottom(density)
+        val margin = 8.dp
+        val offset = with(density) {
+            val w = panelsWidth.toPx()
+            val h = estimatedHeight.toPx()
+            val m = margin.toPx()
+            val x = (if (msg.isMine) anchor.x - w else anchor.x).coerceIn(m, (constraints.maxWidth - w - m).coerceAtLeast(m))
+            val y = anchor.y.coerceIn(topInset + m, (constraints.maxHeight - bottomInset - h - m).coerceAtLeast(topInset + m))
+            IntOffset(x.toInt(), y.toInt())
+        }
+        Box(
+            Modifier.fillMaxSize().graphicsLayer { alpha = appear.value }.background(Color.Black.copy(alpha = 0.25f))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { close(onDismiss) },
+        )
+        // реакции и действия — две отдельные панели (как в Telegram), выровнены по стороне сообщения
+        Column(
+            Modifier
+                .offset { offset }
+                .width(panelsWidth)
+                .graphicsLayer {
+                    alpha = appear.value
+                    scaleX = 0.85f + 0.15f * appear.value
+                    scaleY = 0.85f + 0.15f * appear.value
+                    transformOrigin = TransformOrigin(if (msg.isMine) 1f else 0f, 0f)
+                },
+            // действия — по центру под рядом реакций (без реакций панель одна — выравнивать не с чем)
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (withReactions) {
+                val shape = RoundedCornerShape(if (expanded) 18.dp else 50.dp)
+                Box(
+                    Modifier.width(BarWidth).shadow(6.dp, shape).clip(shape).background(colors.surface)
+                        .animateContentSize(tween(260)),
+                ) {
+                    if (expanded) {
+                        ReactionGrid(emojis, msg.myReaction, { e -> close { onReaction(e) } }, onCollapse = { expanded = false })
+                    } else {
+                        ReactionRow(emojis.take(RowEmojis + 1), msg.myReaction, { e -> close { onReaction(e) } }, onExpand = { expanded = true })
                     }
                 }
-                AnimatedVisibility(!expanded, enter = fadeIn(tween(180)) + expandVertically(tween(220)), exit = fadeOut(tween(140)) + shrinkVertically(tween(220))) {
-                    Column(
-                        Modifier.padding(top = if (withReactions) PanelGap else 0.dp).width(ActionsWidth)
-                            .shadow(6.dp, RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp)).background(colors.surface),
-                    ) {
-                        actions.forEach { item ->
-                            Row(
-                                Modifier.fillMaxWidth().height(ActionHeight).clickable { onAction(item.action) }.padding(horizontal = 16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(item.icon, null, Modifier.size(22.dp), tint = if (item.danger) Danger else colors.textMuted)
-                                Spacer(Modifier.width(13.dp))
-                                Text(stringResource(item.label), color = if (item.danger) Danger else colors.textPrimary, fontSize = 17.sp)
-                            }
+            }
+            AnimatedVisibility(!expanded, enter = fadeIn(tween(180)) + expandVertically(tween(220)), exit = fadeOut(tween(140)) + shrinkVertically(tween(220))) {
+                Column(
+                    Modifier.padding(top = if (withReactions) PanelGap else 0.dp).width(ActionsWidth)
+                        .shadow(6.dp, RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp)).background(colors.surface),
+                ) {
+                    actions.forEach { item ->
+                        Row(
+                            Modifier.fillMaxWidth().height(ActionHeight).clickable { close { onAction(item.action) } }.padding(horizontal = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(item.icon, null, Modifier.size(22.dp), tint = if (item.danger) Danger else colors.textMuted)
+                            Spacer(Modifier.width(13.dp))
+                            Text(stringResource(item.label), color = if (item.danger) Danger else colors.textPrimary, fontSize = 17.sp)
                         }
                     }
                 }

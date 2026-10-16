@@ -210,6 +210,8 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
                 // заставка → главный: вместо выезда — раскрытие кругом (сам круг — в composable HOME)
                 Routes.HOME if initialState.destination.route == Routes.SPLASH -> EnterTransition.None
                 Routes.PEER_PROFILE -> fadeIn(tween(PROFILE_OPEN_MS)) + scaleIn(tween(PROFILE_OPEN_MS), initialScale = 0.8f)
+                // просмотр фото/видео — проявляется поверх чата: чат будто быстро затемняется
+                Routes.MEDIA -> fadeIn(tween(MEDIA_FADE_MS))
                 else -> slideInHorizontally(tween(450, easing = EaseInOut)) { it }
             }
         },
@@ -231,6 +233,9 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
             when (initialState.destination.route) {
                 in Routes.CALL_ROUTES -> ExitTransition.None
                 Routes.PEER_PROFILE -> fadeOut(tween(PROFILE_CLOSE_MS)) + scaleOut(tween(PROFILE_CLOSE_MS), targetScale = 0.8f)
+                // закрытие просмотра — как угодно (свайп фото, системный "назад"): затемнение быстро
+                // уходит, чат становится обычным; один и тот же переход для всех способов
+                Routes.MEDIA -> fadeOut(tween(MEDIA_FADE_MS))
                 else -> slideOutHorizontally(tween(340, easing = EaseInOut)) { it }
             }
         },
@@ -412,6 +417,9 @@ private class CircleRevealShape(private val fraction: Float) : Shape {
         return Outline.Generic(Path().apply { addOval(Rect(Offset(size.width / 2, size.height / 2), radius)) })
     }
 }
+
+/** Просмотр фото/видео: проявление и уход затемнения. */
+private const val MEDIA_FADE_MS = 220
 
 /** Профиль собеседника: открытие и закрытие — проявление с увеличением. */
 private const val PROFILE_OPEN_MS = 350

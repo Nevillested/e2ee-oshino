@@ -1,5 +1,6 @@
 package com.oshinobu.app.ui.chat
 
+import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -12,9 +13,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -170,17 +173,38 @@ fun pulsingHighlightAlpha(): Float {
     return a
 }
 
-/** Плавное угасание вспышки: от 0.35 к нулю за ~1.1 с, перезапуск по [token]. */
+/**
+ * Подсветка после перехода к сообщению: плавно разгорается (0,4 с), держится
+ * (0,3 с) и плавно гаснет (1,5 с). Считается от [startedAt] (uptime), а не от
+ * появления строки: строка, пересозданная посреди подсветки (прокрутка,
+ * перечитывание ленты), продолжает с того же места — подсветка не играет дважды.
+ * 0 — подсветки нет.
+ */
 @Composable
-fun flashAlpha(token: Int): Float {
-    val anim = remember { Animatable(0f) }
-    LaunchedEffect(token) {
-        if (token == 0) return@LaunchedEffect
-        // плавно разгорается, немного держится и плавно гаснет
-        anim.snapTo(0f)
-        anim.animateTo(0.35f, tween(400, easing = FastOutSlowInEasing))
-        delay(300)
-        anim.animateTo(0f, tween(1500, easing = FastOutSlowInEasing))
+fun flashAlpha(startedAt: Long): Float {
+    var alpha by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(startedAt) {
+        alpha = 0f
+        if (startedAt == 0L) return@LaunchedEffect
+        while (true) {
+            val t = SystemClock.uptimeMillis() - startedAt
+            if (t >= FLASH_TOTAL_MS) break
+            alpha = flashCurve(t)
+            withFrameMillis { }
+        }
+        alpha = 0f
     }
-    return anim.value
+    return alpha
+}
+
+private const val FLASH_RISE_MS = 400L
+private const val FLASH_HOLD_MS = 300L
+private const val FLASH_FALL_MS = 1500L
+private const val FLASH_TOTAL_MS = FLASH_RISE_MS + FLASH_HOLD_MS + FLASH_FALL_MS
+private const val FLASH_PEAK = 0.35f
+
+private fun flashCurve(t: Long): Float = when {
+    t < FLASH_RISE_MS -> FLASH_PEAK * FastOutSlowInEasing.transform(t.toFloat() / FLASH_RISE_MS)
+    t < FLASH_RISE_MS + FLASH_HOLD_MS -> FLASH_PEAK
+    else -> FLASH_PEAK * (1f - FastOutSlowInEasing.transform((t - FLASH_RISE_MS - FLASH_HOLD_MS).toFloat() / FLASH_FALL_MS))
 }

@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -47,6 +48,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -94,6 +96,7 @@ import com.oshinobu.core.storage.StoredMessage
 import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -213,7 +216,9 @@ fun ChatScreen(
     var wallpaperForPeer by remember { mutableStateOf(true) }
     var wallpaperBusy by remember { mutableStateOf(false) }
     var flashId by remember { mutableStateOf<String?>(null) }
-    var flashToken by remember { mutableIntStateOf(0) }
+    // когда началась подсветка сообщения [flashId] (uptime); 0 — нет
+    var flashStartedAt by remember { mutableLongStateOf(0L) }
+    var jumpJob by remember { mutableStateOf<Job?>(null) }
     var swipeReplyId by remember { mutableStateOf<String?>(null) }
     var swipeReplyDx by remember { mutableStateOf(0f) }
     var composerHeightPx by remember { mutableIntStateOf(0) }
@@ -278,32 +283,41 @@ fun ChatScreen(
     }
 
     /**
-     * Переход к сообщению (закреп, цитата): лента плавно доезжает до него.
-     * Далеко — сначала незаметно переставляем ленту так, чтобы оно оказалось
-     * сразу за краем экрана, и уже оттуда так же плавно въезжает; затем подсветка.
+     * Переход к сообщению (закреп, цитата) — непрерывная прокрутка, как в
+     * Telegram: лента разгоняется, едет, пока сообщение не покажется, и плавно
+     * тормозит у него (со скорости, на которой ехала). Только совсем далёкое
+     * (больше [JUMP_TELEPORT_ITEMS] сообщений) — сначала перескок на полтора
+     * экрана до него, иначе прокрутка шла бы секундами. Затем — подсветка.
      */
     fun jumpTo(messageId: String) {
         val index = groups.indexOfFirst { g -> g.any { it.messageId == messageId } }
         if (index < 0) return
-        scope.launch {
+        jumpJob?.cancel()
+        jumpJob = scope.launch {
             // где окажется сообщение: его нижний край — на 160dp выше низа ленты
             val target = with(density) { 160.dp.roundToPx() }
-            val viewport = listState.layoutInfo.viewportSize.height
-            val visible = listState.layoutInfo.visibleItemsInfo
-            val shown = visible.firstOrNull { it.index == index }
-            val distance = if (shown != null) {
-                (shown.offset - target).toFloat()
-            } else {
-                // лента снизу вверх: индексы больше — выше (старее). Ставим сообщение на экран
-                // выше (или ниже) нужного места — оттуда и доезжаем
-                val above = index > (visible.lastOrNull()?.index ?: 0)
-                val jump = if (above) viewport else -viewport
-                listState.scrollToItem(index, -(target + jump))
-                listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }?.let { (it.offset - target).toFloat() } ?: jump.toFloat()
+            val viewport = listState.layoutInfo.viewportSize.height.coerceAtLeast(1)
+            fun shown() = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
+            // лента снизу вверх: индексы больше — выше (старее), туда — scrollBy(+)
+            if (shown() == null && abs(index - listState.firstVisibleItemIndex) > JUMP_TELEPORT_ITEMS) {
+                val above = index > listState.firstVisibleItemIndex
+                listState.scrollToItem(index, -(target + (if (above) 1 else -1) * viewport * 3 / 2))
             }
-            listState.animateScrollBy(distance, tween(JUMP_SCROLL_MS, easing = FastOutSlowInEasing))
-            flashId = groups[index].key()
-            flashToken++
+            val maxStep = viewport * JUMP_MAX_SPEED_PER_FRAME
+            var step = 0f
+            while (shown() == null) {
+                val dir = if (index > listState.firstVisibleItemIndex) 1f else -1f
+                step = minOf(maxStep, step + maxStep * 0.12f)
+                withFrameNanos { }
+                if (listState.scrollBy(dir * step) == 0f) break
+            }
+            val item = shown() ?: return@launch
+            val remaining = (item.offset - target).toFloat()
+            // тормозим до нуля со скорости [step] за кадр: путь = скорость · время / 2
+            val duration = if (step > 0f) (2f * abs(remaining) / step * 16.7f).toInt().coerceIn(250, 900) else JUMP_SCROLL_MS
+            listState.animateScrollBy(remaining, tween(duration, easing = if (step > 0f) LinearOutSlowInEasing else FastOutSlowInEasing))
+            flashId = groups.getOrNull(index)?.key()
+            flashStartedAt = SystemClock.uptimeMillis()
         }
     }
 
@@ -536,7 +550,7 @@ fun ChatScreen(
                                     selectionMode = vm.selectionMode,
                                     selected = rep.messageId in vm.selected,
                                     dissolving = group.any { it.messageId in vm.dissolving },
-                                    flash = if (flashId == group.key()) flashToken else 0,
+                                    flash = if (flashId == group.key()) flashStartedAt else 0L,
                                     highlighted = currentMatch != null && group.any { it.messageId == currentMatch.messageId },
                                     swipeDx = if (swipeReplyId == rep.messageId) swipeReplyDx else 0f,
                                     rootCoords = { rootCoords[0] },
@@ -774,7 +788,6 @@ fun ChatScreen(
                 },
                 onAction = { onMenuAction(t, it) },
                 onDismiss = { menu = null },
-                rootOnScreen = rootCoords[0]?.positionOnScreen() ?: Offset.Zero,
             )
         }
     }
@@ -866,7 +879,7 @@ private fun MessageRow(
     selectionMode: Boolean,
     selected: Boolean,
     dissolving: Boolean,
-    flash: Int,
+    flash: Long,
     highlighted: Boolean,
     swipeDx: Float,
     rootCoords: () -> LayoutCoordinates?,
@@ -977,8 +990,14 @@ private fun MessageRow(
 /** Сообщения съезжают на место удалённого. */
 private const val MESSAGE_SHIFT_MS = 300
 
-/** Лента доезжает до закрепа/цитаты. */
+/** Лента доезжает до закрепа/цитаты, если оно уже на экране. */
 private const val JUMP_SCROLL_MS = 700
+
+/** Дальше этого (в сообщениях) к закрепу/цитате — сначала перескок. */
+private const val JUMP_TELEPORT_ITEMS = 60
+
+/** Наибольшая скорость прокрутки к закрепу — доля экрана за кадр (≈3 экрана в секунду). */
+private const val JUMP_MAX_SPEED_PER_FRAME = 0.05f
 
 /** Окно двойного тапа (реакция) — от первого касания; одиночный тап (меню) — не раньше. Как в Telegram. */
 private const val DOUBLE_TAP_WINDOW_MS = 220L

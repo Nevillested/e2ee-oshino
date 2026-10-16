@@ -6,6 +6,8 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.widget.Toast
 import android.widget.VideoView
+import androidx.activity.BackEventCompat
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
@@ -96,6 +98,18 @@ fun MediaViewerScreen(peerLogin: String, messageId: String, onBack: () -> Unit) 
     val dismiss = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
+    val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    // свайп фото пальцем начался — говорим навигации "начинаю возврат", как системный жест:
+    // она рисует чат под просмотром, и он виден сквозь гаснущий фон (иначе под ним было пусто — белый экран)
+    var backStarted by remember { mutableStateOf(false) }
+    fun startBack() {
+        if (backStarted || backDispatcher == null) return
+        backStarted = true
+        backDispatcher.dispatchOnBackStarted(BackEventCompat(0f, 0f, 0f, BackEventCompat.EDGE_LEFT))
+        // навигация начинает рисовать чат с первым прогрессом; прогресс крошечный — переход
+        // почти не начат, фото не гаснет (фон гаснет сам, по свайпу)
+        backDispatcher.dispatchOnBackProgressed(BackEventCompat(0f, 0f, 0.001f, BackEventCompat.EDGE_LEFT))
+    }
 
     // при свайпе фон и верхняя панель гаснут полностью, вместе с уезжающим фото: иначе после
     // закрытия навигация уводила вправо полупрозрачный затемнённый экран
@@ -108,14 +122,20 @@ fun MediaViewerScreen(peerLogin: String, messageId: String, onBack: () -> Unit) 
                 resolver = resolver,
                 current = pager.currentPage == page,
                 onZoomChanged = { zoomed = it },
-                onDismissDrag = { dy -> scope.launch { dismiss.snapTo(dismiss.value + dy) } },
+                onDismissDrag = { dy ->
+                    startBack()
+                    scope.launch { dismiss.snapTo(dismiss.value + dy) }
+                },
                 onDismissEnd = {
                     scope.launch {
                         if (abs(dismiss.value) > with(density) { 120.dp.toPx() }) {
                             dismiss.animateTo(if (dismiss.value > 0) 3000f else -3000f, tween(200))
-                            onBack()
+                            // начатый возврат — завершаем им же (с тем же уходом затемнения)
+                            if (backStarted && backDispatcher != null) backDispatcher.onBackPressed() else onBack()
                         } else {
                             dismiss.animateTo(0f, tween(180))
+                            if (backStarted) backDispatcher?.dispatchOnBackCancelled()
+                            backStarted = false
                         }
                     }
                 },

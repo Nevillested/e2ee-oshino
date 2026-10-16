@@ -13,12 +13,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
@@ -45,7 +50,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
 import com.oshinobu.app.R
 import com.oshinobu.app.ui.ErrorLine
 import com.oshinobu.app.ui.ErrorRed
@@ -59,9 +63,9 @@ import com.oshinobu.app.ui.theme.LocalAppColors
 /**
  * Удаление сообщений: компактная карточка — вопрос, по центру галочка "и у
  * собеседника" (только если хотя бы одно из них до него дошло — иначе
- * удалять там нечего), внизу "Отмена" слева и "Удалить" справа. Окно без
- * фокуса, как меню сообщения: клавиатура остаётся как была (обычный диалог
- * забирал фокус — она пряталась, а после удаления выскакивала обратно).
+ * удалять там нечего), внизу "Отмена" слева и "Удалить" справа. Слоем поверх
+ * экрана чата, а не диалогом-окном: фокус не трогает, клавиатура остаётся как
+ * была (диалог забирал фокус — она пряталась, а после удаления выскакивала обратно).
  */
 @Composable
 fun DeleteMessagesDialog(
@@ -76,57 +80,57 @@ fun DeleteMessagesDialog(
     val appear = remember { Animatable(0f) }
     LaunchedEffect(Unit) { appear.animateTo(1f, tween(160, easing = FastOutSlowInEasing)) }
     BackHandler(onBack = onDismiss)
-    Popup(popupPositionProvider = WindowOrigin, properties = MenuWindowProperties) {
-        Box(
-            Modifier.fillMaxSize().graphicsLayer { alpha = appear.value }.background(Color.Black.copy(alpha = 0.4f))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
-            contentAlignment = Alignment.Center,
+    // слой поверх экрана чата (не отдельное окно): во весь экран, карточка — по центру видимой части
+    Box(
+        Modifier.fillMaxSize().graphicsLayer { alpha = appear.value }.background(Color.Black.copy(alpha = 0.4f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
+            .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.systemBars)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier
+                .graphicsLayer {
+                    scaleX = 0.9f + 0.1f * appear.value
+                    scaleY = 0.9f + 0.1f * appear.value
+                }
+                .padding(horizontal = 32.dp).widthIn(max = 320.dp)
+                .shadow(8.dp, CardShape).clip(CardShape).background(colors.surface)
+                // тап по карточке — не "мимо"
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(
-                Modifier
-                    .graphicsLayer {
-                        scaleX = 0.9f + 0.1f * appear.value
-                        scaleY = 0.9f + 0.1f * appear.value
+            Text(stringResource(R.string.deleteMessage_title), color = colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            if (showPeerCheckbox) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.clip(RoundedCornerShape(8.dp)).clickable { alsoForPeer = !alsoForPeer }.padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                        Checkbox(alsoForPeer, { alsoForPeer = it }, colors = CheckboxDefaults.colors(checkedColor = colors.primary))
                     }
-                    .padding(horizontal = 32.dp).widthIn(max = 320.dp)
-                    .shadow(8.dp, CardShape).clip(CardShape).background(colors.surface)
-                    // тап по карточке — не "мимо"
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
-                    .padding(horizontal = 16.dp, vertical = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(stringResource(R.string.deleteMessage_title), color = colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                if (showPeerCheckbox) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(
-                        Modifier.clip(RoundedCornerShape(8.dp)).clickable { alsoForPeer = !alsoForPeer }.padding(horizontal = 4.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
-                            Checkbox(alsoForPeer, { alsoForPeer = it }, colors = CheckboxDefaults.colors(checkedColor = colors.primary))
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Text(stringResource(R.string.deleteMessage_alsoForPeer), color = colors.textPrimary, fontSize = 15.sp)
-                        Spacer(Modifier.width(6.dp))
-                        PeerAvatar(peerAccountId, 20.dp)
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            peerName, color = colors.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
-                        )
-                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.deleteMessage_alsoForPeer), color = colors.textPrimary, fontSize = 15.sp)
+                    Spacer(Modifier.width(6.dp))
+                    PeerAvatar(peerAccountId, 20.dp)
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        peerName, color = colors.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+                    )
                 }
-                Spacer(Modifier.height(14.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(
-                        onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = CardShape,
-                        border = BorderStroke(1.dp, colors.primary),
-                    ) { Text(stringResource(R.string.common_cancel), color = colors.primary, fontWeight = FontWeight.SemiBold) }
-                    OutlinedButton(
-                        onClick = { onConfirm(showPeerCheckbox && alsoForPeer) }, modifier = Modifier.weight(1f).height(44.dp), shape = CardShape,
-                        border = BorderStroke(1.dp, ErrorRed),
-                    ) { Text(stringResource(R.string.action_delete), color = ErrorRed, fontWeight = FontWeight.SemiBold) }
-                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(
+                    onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = CardShape,
+                    border = BorderStroke(1.dp, colors.primary),
+                ) { Text(stringResource(R.string.common_cancel), color = colors.primary, fontWeight = FontWeight.SemiBold) }
+                OutlinedButton(
+                    onClick = { onConfirm(showPeerCheckbox && alsoForPeer) }, modifier = Modifier.weight(1f).height(44.dp), shape = CardShape,
+                    border = BorderStroke(1.dp, ErrorRed),
+                ) { Text(stringResource(R.string.action_delete), color = ErrorRed, fontWeight = FontWeight.SemiBold) }
             }
         }
     }

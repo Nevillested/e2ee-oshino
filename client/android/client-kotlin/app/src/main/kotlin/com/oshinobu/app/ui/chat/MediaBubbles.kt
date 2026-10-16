@@ -2,6 +2,7 @@ package com.oshinobu.app.ui.chat
 
 import android.graphics.Bitmap
 import android.os.Build
+import android.util.LruCache
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -167,11 +168,37 @@ private fun PlayBadge() {
 }
 
 /** Картинка вложения, уже лежащего на устройстве (для видео — кадр). Перечитывается после скачивания. */
+/** Миниатюра вложения: ещё читается с диска / готова / файла на устройстве нет. */
+private sealed interface Thumb {
+    data object Loading : Thumb
+    data class Ready(val bitmap: Bitmap) : Thumb
+    data object Missing : Thumb
+}
+
+/**
+ * Уже раскодированные миниатюры — в памяти: экран чата пересоздаётся (возврат
+ * из просмотра фото), и без этого плитки на миг оставались пустыми, пока
+ * картинка заново читалась с диска. Предел — восьмая часть памяти приложения.
+ */
+private object ThumbCache {
+    private val cache = object : LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 8 / 1024).toInt()) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount / 1024
+    }
+
+    fun key(msg: StoredMessage, px: Int, version: Int) = "${msg.messageId}|${msg.mediaId}|$px|$version"
+    fun get(key: String): Bitmap? = cache.get(key)
+    fun put(key: String, bitmap: Bitmap) {
+        cache.put(key, bitmap)
+    }
+}
+
 @Composable
-private fun rememberMediaBitmap(vm: ChatViewModel, msg: StoredMessage, side: Dp): Bitmap? {
+private fun rememberMediaThumb(vm: ChatViewModel, msg: StoredMessage, side: Dp): Thumb {
     val px = with(LocalDensity.current) { (side * 2).roundToPx() }.coerceAtMost(1440)
-    val bitmap by produceState<Bitmap?>(null, msg.messageId, msg.mediaId, vm.mediaVersion, px) {
-        value = withContext(Dispatchers.IO) {
+    val key = ThumbCache.key(msg, px, vm.mediaVersion)
+    val thumb by produceState(ThumbCache.get(key)?.let { Thumb.Ready(it) } ?: Thumb.Loading, key) {
+        if (value is Thumb.Ready) return@produceState
+        val bitmap = withContext(Dispatchers.IO) {
             if (msg.isVideo) {
                 val preview = msg.localPreviewPath?.let(::File)?.takeIf { it.exists() }
                 preview?.let { MediaDecoding.decodeImage(it, px) }
@@ -180,8 +207,9 @@ private fun rememberMediaBitmap(vm: ChatViewModel, msg: StoredMessage, side: Dp)
                 vm.localMediaFile(msg)?.let { MediaDecoding.decodeImage(it, px) }
             }
         }
+        value = if (bitmap != null) Thumb.Ready(bitmap).also { ThumbCache.put(key, bitmap) } else Thumb.Missing
     }
-    return bitmap
+    return thumb
 }
 
 /**
@@ -223,7 +251,8 @@ private fun MediaTile(
     val sendingOrFailed = msg.isMine && (msg.status == MessageStatus.SENDING || msg.status == MessageStatus.FAILED)
     val upload = if (sendingOrFailed) uploadPhase(vm, msg) else null
     val download = downloadPhase(vm, msg)
-    val bitmap = rememberMediaBitmap(vm, msg, size)
+    val thumb = rememberMediaThumb(vm, msg, size)
+    val bitmap = (thumb as? Thumb.Ready)?.bitmap
     val hiddenSpoiler = msg.isSpoiler && !revealed
 
     Box(Modifier.size(size).background(colors.surface), contentAlignment = Alignment.Center) {
@@ -235,6 +264,8 @@ private fun MediaTile(
                 if (msg.isVideo && !hiddenSpoiler) PlayBadge()
             }
             sendingOrFailed -> Icon(Icons.AutoMirrored.Filled.InsertDriveFile, null, tint = colors.textMuted, modifier = Modifier.size(40.dp))
+            // миниатюра ещё читается с диска — пусто, а не "скачать": файл, может быть, уже есть
+            thumb is Thumb.Loading && download == null -> Unit
             download != null -> MediaStatusOverlay(download.text, download.percent) { vm.cancelDownload(msg) }
             msg.mediaId != null && msg.mediaId in vm.failedDownloads ->
                 Icon(Icons.Filled.Refresh, null, tint = Color(0xFFFF5252), modifier = Modifier.fillMaxSize().clickable { vm.requestDownload(msg) }.padding(size / 3))
