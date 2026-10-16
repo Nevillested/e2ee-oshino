@@ -53,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -68,10 +69,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -87,6 +90,7 @@ import com.oshinobu.app.ui.emoji.allEmojis
 import com.oshinobu.app.ui.theme.LocalAppColors
 import com.oshinobu.core.storage.MessageStatus
 import com.oshinobu.core.storage.StoredMessage
+import kotlin.math.exp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -131,13 +135,16 @@ private fun actionsFor(isMine: Boolean, showCopy: Boolean, showEdit: Boolean, is
     }
 }
 
-/** Окно меню — во весь экран, от его левого верхнего угла. */
-private object WindowOrigin : PopupPositionProvider {
+/** Окно меню (и подтверждения удаления) — во весь экран, от его левого верхнего угла. */
+internal object WindowOrigin : PopupPositionProvider {
     override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize) = IntOffset.Zero
 }
 
-/** Без фокуса (клавиатура и поле ввода остаются), во весь экран; "назад" и тап мимо — сами. */
-private val MenuWindowProperties = PopupProperties(
+/**
+ * Без фокуса (клавиатура и поле ввода остаются как были — не прячутся и не
+ * выскакивают обратно), во весь экран; "назад" и тап мимо — сами.
+ */
+internal val MenuWindowProperties = PopupProperties(
     flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
     dismissOnBackPress = false,
@@ -213,7 +220,8 @@ fun MessageContextMenu(
                         scaleY = 0.85f + 0.15f * appear.value
                         transformOrigin = TransformOrigin(if (msg.isMine) 1f else 0f, 0f)
                     },
-                horizontalAlignment = if (msg.isMine) Alignment.End else Alignment.Start,
+                // действия — по центру под рядом реакций (без реакций панель одна — выравнивать не с чем)
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 if (withReactions) {
                     val shape = RoundedCornerShape(if (expanded) 18.dp else 50.dp)
@@ -252,29 +260,48 @@ fun MessageContextMenu(
 
 /**
  * Ряд реакций: шесть эмодзи и стрелка. Повести пальцем справа налево — ряд
- * сдвигается и из-под стрелки выезжает седьмой; пока палец на экране, можно
- * вернуть обратно. Отпустили, вытянув больше половины, — раскрывается сетка
- * всех эмодзи (действия прячутся), меньше — ряд возвращается на место.
+ * тянется, как резина (чем дальше, тем туже, и сам ряд чуть растягивается
+ * влево), и из-под стрелки выезжает седьмой эмодзи. Выехал целиком —
+ * короткая вибрация: отпустишь — раскроется сетка всех эмодзи (действия
+ * прячутся). Пока палец на экране, жест обратим; отпустили раньше — ряд
+ * пружинисто возвращается.
  */
 @Composable
 private fun ReactionRow(emojis: List<String>, myReaction: String?, onReaction: (String) -> Unit, onExpand: () -> Unit) {
     val colors = LocalAppColors.current
     val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
     val cellPx = with(LocalDensity.current) { EmojiCell.toPx() }
+    // палец прошёл [drag]; ряд сдвинут на [pull] — с нарастающим сопротивлением, как резина
+    var drag by remember { mutableFloatStateOf(0f) }
     val pull = remember { Animatable(0f) }
+    var armed by remember { mutableStateOf(false) }
+    fun rubber(d: Float): Float = RubberLimit * cellPx * (1f - exp(-d / (RubberStiffness * cellPx)))
     fun release() {
+        drag = 0f
         scope.launch {
-            if (pull.value > cellPx / 2) onExpand() else pull.animateTo(0f, spring(dampingRatio = 0.8f, stiffness = 600f))
+            if (armed) onExpand() else pull.animateTo(0f, spring(dampingRatio = 0.45f, stiffness = 420f))
+            armed = false
         }
     }
     Box(
-        Modifier.width(BarWidth).height(BarHeight).pointerInput(Unit) {
-            detectHorizontalDragGestures(onDragEnd = ::release, onDragCancel = ::release) { change, dx ->
-                change.consume()
-                // палец влево — вытягиваем; чуть дальше седьмого — с сопротивлением
-                scope.launch { pull.snapTo((pull.value - dx).coerceIn(0f, cellPx * 1.25f)) }
+        Modifier.width(BarWidth).height(BarHeight)
+            // ряд немного растягивается влево вслед за пальцем — "резина"
+            .graphicsLayer {
+                scaleX = 1f + (pull.value / cellPx) * 0.06f
+                transformOrigin = TransformOrigin(1f, 0.5f)
             }
-        },
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(onDragEnd = ::release, onDragCancel = ::release) { change, dx ->
+                    change.consume()
+                    drag = (drag - dx).coerceAtLeast(0f)
+                    val p = rubber(drag)
+                    val nowArmed = p >= cellPx
+                    if (nowArmed && !armed) haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                    armed = nowArmed
+                    scope.launch { pull.snapTo(p) }
+                }
+            },
     ) {
         Box(Modifier.align(Alignment.CenterStart).padding(start = BarPadding).width(EmojiCell * RowEmojis).height(EmojiCell).clipToBounds()) {
             Row(Modifier.wrapContentWidth(Alignment.Start, unbounded = true).graphicsLayer { translationX = -pull.value }) {
@@ -289,6 +316,10 @@ private fun ReactionRow(emojis: List<String>, myReaction: String?, onReaction: (
         ) { Icon(Icons.Filled.KeyboardArrowDown, null, tint = colors.textMuted) }
     }
 }
+
+/** Насколько (в ячейках) ряд можно оттянуть резиной и как туго: чем меньше, тем раньше упирается. */
+private const val RubberLimit = 1.4f
+private const val RubberStiffness = 1.2f
 
 /** Все эмодзи сеткой (раскрытые реакции); стрелка вверх — обратно к ряду и действиям. */
 @Composable
