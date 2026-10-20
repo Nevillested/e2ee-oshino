@@ -11,24 +11,31 @@ import (
 	"strings"
 )
 
-// AppVersion — единственная допустимая версия клиента. Приложение с любой
-// другой версией (старше или новее) сервер не обслуживает: ответ 426 с этой
-// же информацией, клиент показывает экран "обновите приложение".
+// AppVersion — какие версии клиента обслуживает сервер.
 //
-// Номер берётся из app-version.properties в корне репозитория (versionCode) —
-// того же файла, по которому собирается Android-клиент: поднял версию, закоммитил,
-// deploy.sh — и сервер требует новую, без правки .env. Нет файла или номера —
-// проверка выключена. Остальное — переменными окружения:
+//   - VersionCode — последняя выпущенная версия: клиент, у которого установлена
+//     старше, показывает на главном экране кнопку «Обновить приложение» (без
+//     блокировки — старая версия продолжает работать);
+//   - MinVersionCode — самая старая версия, которую сервер ещё обслуживает:
+//     клиенту старше неё любой запрос (кроме versionExempt) отвечает 426 с этой
+//     же информацией. Новее последней — пропускается (сборку уже выпустили в
+//     Play, а сервер ещё не задеплоен).
 //
-//	APP_APK_DIR      — папка, где лежит oshinobu.apk той же версии: сервер сам
+// Оба номера берутся из app-version.properties в корне репозитория (versionCode,
+// minVersionCode) — того же файла, по которому собирается Android-клиент: поднял
+// версию, закоммитил, deploy.sh — без правки .env. Нет minVersionCode — старые
+// версии не отсекаются. Остальное — переменными окружения:
+//
+//	APP_APK_DIR      — папка, где лежит oshinobu.apk последней версии: сервер сам
 //	                   раздаёт его по GET /app/apk тем, кто ставил не из Google Play;
 //	APP_APK_URL      — APK лежит где-то ещё: полный адрес вместо /app/apk.
 //
 // Установленные из Play обновляются через Play — им apk_url не нужен.
 type AppVersion struct {
-	VersionCode int    `json:"version_code"`
-	ApkURL      string `json:"apk_url"`
-	ApkDir      string `json:"-"`
+	VersionCode    int    `json:"version_code"`
+	MinVersionCode int    `json:"min_version_code"`
+	ApkURL         string `json:"apk_url"`
+	ApkDir         string `json:"-"`
 }
 
 // ApkFileName — имя APK в APP_APK_DIR.
@@ -48,33 +55,53 @@ func LoadAppVersion(versionFile string) AppVersion {
 	if os.Getenv("APP_VERSION_CODE") != "" {
 		log.Printf("app version: APP_VERSION_CODE в .env больше не используется — версия берётся из %s; строку можно удалить", versionFile)
 	}
-	return AppVersion{VersionCode: readVersionCode(versionFile), ApkURL: os.Getenv("APP_APK_URL"), ApkDir: os.Getenv("APP_APK_DIR")}
+	props := readProperties(versionFile)
+	v := AppVersion{
+		VersionCode:    propertyInt(versionFile, props, "versionCode"),
+		MinVersionCode: propertyInt(versionFile, props, "minVersionCode"),
+		ApkURL:         os.Getenv("APP_APK_URL"),
+		ApkDir:         os.Getenv("APP_APK_DIR"),
+	}
+	log.Printf("app version: последняя %d, обслуживаются с %d", v.VersionCode, v.MinVersionCode)
+	return v
 }
 
-// readVersionCode — versionCode из файла вида key=value (# — комментарии);
-// не прочитался — 0 (проверка выключена), с записью в лог.
-func readVersionCode(path string) int {
+// readProperties — файл вида key=value (# — комментарии); не прочитался — пусто,
+// с записью в лог.
+func readProperties(path string) map[string]string {
+	props := map[string]string{}
 	f, err := os.Open(path)
 	if err != nil {
-		log.Printf("app version: %v — проверка версии выключена", err)
-		return 0
+		log.Printf("app version: %v", err)
+		return props
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		key, value, ok := strings.Cut(strings.TrimSpace(scanner.Text()), "=")
-		if !ok || strings.TrimSpace(key) != "versionCode" {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "#") {
 			continue
 		}
-		code, err := strconv.Atoi(strings.TrimSpace(value))
-		if err != nil {
-			log.Printf("app version: versionCode в %s не число (%q) — проверка версии выключена", path, value)
-			return 0
+		if key, value, ok := strings.Cut(line, "="); ok {
+			props[strings.TrimSpace(key)] = strings.TrimSpace(value)
 		}
-		return code
 	}
-	log.Printf("app version: в %s нет versionCode — проверка версии выключена", path)
-	return 0
+	return props
+}
+
+// propertyInt — числовое значение ключа; нет или не число — 0, с записью в лог.
+func propertyInt(path string, props map[string]string, key string) int {
+	value, ok := props[key]
+	if !ok {
+		log.Printf("app version: в %s нет %s", path, key)
+		return 0
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		log.Printf("app version: %s в %s не число (%q)", key, path, value)
+		return 0
+	}
+	return n
 }
 
 // apkFile — путь к APK в APP_APK_DIR, если он там лежит.
@@ -106,7 +133,8 @@ func (v AppVersion) writeJSON(w http.ResponseWriter, status int) {
 	_ = json.NewEncoder(w).Encode(v.withApkURL())
 }
 
-// NewAppVersionHandler — GET /app/version: какая версия сейчас обязательна.
+// NewAppVersionHandler — GET /app/version: последняя версия, самая старая
+// обслуживаемая и откуда взять APK.
 func NewAppVersionHandler(v AppVersion) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		v.writeJSON(w, http.StatusOK)
@@ -133,7 +161,7 @@ func NewAppApkHandler(v AppVersion) func(http.ResponseWriter, *http.Request) {
 //     и откуда-то скачать новую версию;
 //   - /session/check — только сверяет токен, ничего не отдаёт; клиенты 1.0.0+44
 //     и +45 считали ЛЮБОЙ не-200 ответ на него (в т. ч. 426) отменой сессии и
-//     выходили из аккаунта со стиранием ключей — при смене обязательной версии
+//     выходили из аккаунта со стиранием ключей — при подъёме minVersionCode
 //     такой клиент обязан получить здесь честный ответ;
 //   - /health.
 var versionExempt = map[string]bool{
@@ -143,17 +171,17 @@ var versionExempt = map[string]bool{
 	"/health":        true,
 }
 
-// RequireAppVersion пропускает к остальным маршрутам только клиентов с
-// обязательной версией (кроме versionExempt).
+// RequireAppVersion не пускает к остальным маршрутам (кроме versionExempt)
+// клиентов старше MinVersionCode и запросы без версии.
 func RequireAppVersion(v AppVersion, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if v.VersionCode == 0 || versionExempt[r.URL.Path] {
+		if v.MinVersionCode == 0 || versionExempt[r.URL.Path] {
 			next.ServeHTTP(w, r)
 			return
 		}
 		client, err := strconv.Atoi(r.Header.Get(AppVersionHeader))
-		if err != nil || client != v.VersionCode {
-			log.Printf("app version: отказ %s %s — версия клиента %q, нужна %d", r.Method, r.URL.Path, r.Header.Get(AppVersionHeader), v.VersionCode)
+		if err != nil || client < v.MinVersionCode {
+			log.Printf("app version: отказ %s %s — версия клиента %q, обслуживаются с %d", r.Method, r.URL.Path, r.Header.Get(AppVersionHeader), v.MinVersionCode)
 			v.writeJSON(w, http.StatusUpgradeRequired)
 			return
 		}

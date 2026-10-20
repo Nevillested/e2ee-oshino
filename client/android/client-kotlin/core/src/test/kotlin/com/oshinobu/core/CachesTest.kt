@@ -104,7 +104,7 @@ class CachesTest {
 
             val prefs = InMemoryPrefs()
             val api = ApiClient(ApiConfig(server.url("/").toString().trimEnd('/')))
-            CrashReporter(logger, CrashStore(dirs), api, Session(prefs).apply { token = "t" }, prefs, scope, now = { clock }).install()
+            CrashReporter(logger, CrashStore(dirs), api, Session(prefs).apply { token = "t" }, prefs, scope, callReports(dirs), now = { clock }).install()
             server.enqueue(MockResponse())
             logger.error("сбой расшифровки")
             val first = server.takeRequest(5, TimeUnit.SECONDS)!!
@@ -132,7 +132,7 @@ class CachesTest {
             // ограничение "раз в 30 минут" для обычных ошибок падение не останавливает
             prefs.setLong("crash_reporter_last_sent_at_ms", clock)
             val api = ApiClient(ApiConfig(server.url("/").toString().trimEnd('/')))
-            val reporter = CrashReporter(logger, crashes, api, Session(prefs).apply { token = "t" }, prefs, scope, now = { clock })
+            val reporter = CrashReporter(logger, crashes, api, Session(prefs).apply { token = "t" }, prefs, scope, callReports(dirs), now = { clock })
             logger.log("шаг перед падением")
             crashes.record("java.lang.IllegalStateException: boom")
 
@@ -147,6 +147,44 @@ class CachesTest {
             reporter.sendPendingCrash()
             server.takeRequest(5, TimeUnit.SECONDS)!!
             withTimeout(5_000) { while (crashes.pending() != null) delay(10) }
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    private fun callReports(dirs: AppDirs) = CrashStore(dirs, name = "pending_call_reports.txt")
+
+    @Test
+    fun `проблема звонка уходит отдельным отчётом и лежит до подтверждения`() = runBlocking {
+        val server = MockWebServer().apply { start() }
+        try {
+            val dirs = AppDirs(dir, dir, dir)
+            val logger = FileLogger(dirs, scope)
+            val prefs = InMemoryPrefs()
+            // ограничение "раз в 30 минут" для обычных ошибок отчёты о звонках не касается
+            prefs.setLong("crash_reporter_last_sent_at_ms", clock)
+            val api = ApiClient(ApiConfig(server.url("/").toString().trimEnd('/')))
+            val reports = callReports(dirs)
+            val reporter = CrashReporter(logger, CrashStore(dirs), api, Session(prefs).apply { token = "t" }, prefs, scope, reports, now = { clock })
+            logger.log("CallManager step call.buildingAnswer")
+
+            server.enqueue(MockResponse().setResponseCode(500))
+            reporter.reportCallProblem("incoming screen not shown overlay=false")
+            val failed = server.takeRequest(5, TimeUnit.SECONDS)!!.body.readUtf8()
+            assertTrue("call_problem" in failed && "overlay=false" in failed && "call.buildingAnswer" in failed)
+            delay(200)
+            assertTrue(reports.pending() != null, "сервер не принял — отчёт остаётся")
+
+            // второй сбой того же звонка — в журнал, отдельного отчёта нет
+            reporter.reportCallProblem("call ended before media connected")
+            delay(300)
+            assertEquals(1, server.requestCount)
+
+            server.enqueue(MockResponse())
+            reporter.sendPendingCrash()
+            server.takeRequest(5, TimeUnit.SECONDS)!!
+            withTimeout(5_000) { while (reports.pending() != null) delay(10) }
+            assertTrue(logger.file.exists(), "журнал после отчёта о звонке не очищается")
         } finally {
             server.shutdown()
         }

@@ -365,12 +365,17 @@
     <string name="call_overlayBody">To show incoming calls on the whole screen even while you use the phone, allow Oshinobu to display over other apps.</string>
     <string name="call_overlayAllow">Allow</string>
     <string name="call_overlayLater">Not now</string>
-    <string name="update_title">Update required</string>
-    <string name="update_body">This version of Oshinobu is no longer supported. Update to keep using the app.</string>
-    <string name="update_button">Update</string>
+    <string name="update_button">Update app</string>
     <string name="update_downloading">Downloading the update…</string>
+    <string name="update_readyTitle">New version downloaded</string>
+    <string name="update_readyBody">Install the update now?</string>
+    <string name="update_install">Install</string>
+    <string name="update_later">Later</string>
+    <string name="update_failedTitle">Update failed</string>
     <string name="update_failed">Couldn\'t download the update. Check your connection and try again.</string>
-    <string name="update_allowInstall">Allow installing apps from Oshinobu, then tap Update again.</string>
+    <string name="update_notNewer">The server doesn\'t have the new version yet. Try again a bit later.</string>
+    <string name="update_allowInstall">Allow installing apps from Oshinobu, then tap Install again.</string>
+    <string name="common_close">Close</string>
     <!-- стикеры -->
     <string name="sticker_preview">Sticker</string>
     <string name="sticker_tabEmoji">Emoji</string>

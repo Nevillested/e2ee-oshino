@@ -142,6 +142,7 @@ class CallManager(
     private val _usingFrontCamera = MutableStateFlow(true)
     private val _incoming = MutableSharedFlow<IncomingCall>(extraBufferCapacity = 4)
     private val _openCallScreen = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+    private val _problems = MutableSharedFlow<String>(extraBufferCapacity = 8)
 
     val state: StateFlow<CallState> = _state.asStateFlow()
 
@@ -161,6 +162,12 @@ class CallManager(
 
     /** Звонок принят без экрана входящего (кнопкой в уведомлении) — открыть экран звонка. */
     val openCallScreen: SharedFlow<Unit> = _openCallScreen.asSharedFlow()
+
+    /**
+     * Звонок сработал плохо — что именно и в каком состоянии звонка; приложение
+     * добавляет состояние телефона и отправляет отчёт в feedback.
+     */
+    val problems: SharedFlow<String> = _problems.asSharedFlow()
 
     val callId: String? get() = currentCallId
 
@@ -205,6 +212,12 @@ class CallManager(
         }
     }
 
+    private fun problem(what: String) {
+        val text = "$what (callId=$currentCallId outgoing=$isOutgoing state=${_state.value} status=${_status.value} peer=${_peer.value?.deviceId})"
+        log.log("CallManager PROBLEM $text")
+        _problems.tryEmit(text)
+    }
+
     private fun setState(s: CallState) {
         log.log("CallManager state ${_state.value} -> $s")
         _state.value = s
@@ -242,6 +255,7 @@ class CallManager(
                 // сервер offer не получил — собеседнику не позвонит никто, гудеть незачем;
                 // в историю такой звонок не пишем: он никуда не ушёл
                 log.log("CallManager startCall: offer not sent — no connection")
+                problem("outgoing call: offer not sent, no connection to server")
                 startedAt = null
                 endWithReason("call.noConnection")
                 return@onCallThread
@@ -252,6 +266,7 @@ class CallManager(
             throw e
         } catch (e: Exception) {
             log.error("CallManager startCall FAILED: $e")
+            problem("outgoing call setup failed: $e")
             resetLocal()
         }
     }
@@ -281,6 +296,7 @@ class CallManager(
             throw e
         } catch (e: Exception) {
             log.error("CallManager accept FAILED: $e")
+            problem("accept failed: $e")
             send("call_end", JsonObject(emptyMap()))
             resetLocal()
         } finally {
@@ -410,6 +426,7 @@ class CallManager(
                 scope.launch(dispatcher) {
                     log.log("CallManager connection FAILED — ending call")
                     if (_state.value != CallState.IDLE) {
+                        problem("WebRTC connection failed, media ${if (_connectedAt.value != null) "was connected" else "never connected"}")
                         send("call_end", JsonObject(emptyMap()))
                         resetLocal()
                     }
@@ -502,6 +519,7 @@ class CallManager(
         }
         val payload = router.openCallSignal(sender, envelope) ?: run {
             log.log("CallManager $type from=$sender: decrypt failed, dropped")
+            problem("call signal $type from=$sender could not be decrypted")
             return
         }
         val callId = envelope.optString("call_id")
@@ -638,6 +656,8 @@ class CallManager(
 
     private suspend fun resetLocal(peerWasUnavailable: Boolean = false) {
         if (_state.value == CallState.IDLE && rtc == null) return
+        // ответили, а звук так и не соединился — собеседники друг друга не услышали
+        if (_state.value == CallState.CONNECTED && _connectedAt.value == null) problem("call ended before media connected")
         ringTimeout?.cancel() // сам таймер перед сбросом уже обнулил ссылку на себя
         ringTimeout = null
         logCall(peerWasUnavailable)

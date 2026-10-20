@@ -55,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import com.oshinobu.app.R
 import com.oshinobu.app.app
 import com.oshinobu.app.ui.ErrorRed
@@ -127,11 +128,13 @@ fun AppDialog(
     onDismiss: () -> Unit,
     confirm: @Composable () -> Unit,
     dismiss: (@Composable () -> Unit)? = null,
+    properties: DialogProperties = DialogProperties(),
     content: @Composable () -> Unit,
 ) {
     val colors = LocalAppColors.current
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = properties,
         containerColor = colors.surface,
         shape = CardShape,
         title = { Text(title, color = colors.textPrimary) },

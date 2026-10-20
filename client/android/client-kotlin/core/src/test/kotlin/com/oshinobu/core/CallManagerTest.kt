@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
@@ -178,11 +179,14 @@ class CallManagerTest {
             val alice = net.device("alice")
             val bob = net.device("bob")
             alice.transport.statusFlow.value = ConnectionStatus.RECONNECTING
+            val problem = async(start = CoroutineStart.UNDISPATCHED) { alice.calls.problems.first() }
             val call = async { alice.calls.startCall(bob.callPeer()) }
             net.eventually("no connection shown") { alice.calls.status.value == "call.noConnection" }
             call.await()
             assertEquals(CallState.IDLE, alice.calls.state.value)
             assertTrue(alice.chats.getMessages("bob").none { it.isCallLog })
+            // сбой звонка — повод для отчёта в feedback
+            assertTrue("offer not sent" in withTimeout(5_000) { problem.await() })
         }
     }
 }

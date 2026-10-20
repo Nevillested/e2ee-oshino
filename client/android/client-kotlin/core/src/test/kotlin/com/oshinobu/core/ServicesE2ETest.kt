@@ -6,6 +6,9 @@ import com.oshinobu.core.protocol.InnerMessage
 import com.oshinobu.core.storage.MessageStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -118,5 +121,93 @@ class ServicesE2ETest {
         net.relay.flush(bob.deviceId)
         net.eventually("второе расшифровано без первого") { bob.chats.getMessages("alice").any { it.messageId == second.messageId } }
         assertTrue(bob.chats.getMessages("alice").none { it.messageId == lost.messageId })
+    }
+
+    @Test
+    fun `сброс, пока собеседник не на связи, — его сообщения старой сессией не теряются`() = runBlocking {
+        val alice = net.device("alice")
+        val bob = net.device("bob")
+        // сессия подтверждена в обе стороны
+        alice.sendText(bob, "привет")
+        net.eventually("Боб получил") { bob.chats.getMessages("alice").size == 1 }
+        val hi = bob.sendText(alice, "привет-привет")
+        net.eventually("Алиса получила") { alice.chats.getMessages("bob").any { it.messageId == hi.messageId } }
+
+        // Алиса пропала со связи; Боб сбрасывает шифрование — сброс ждёт её на сервере
+        alice.transport.statusFlow.value = ConnectionStatus.RECONNECTING
+        bob.router.resetSessionWith(alice.deviceId, "manual (chat menu)")
+        assertTrue(bob.sessions.get(alice.deviceId) == null)
+        // Боб пишет уже новой сессией (свежая X3DH)
+        val fromBob = bob.sendText(alice, "после сброса")
+
+        // Алиса о сбросе не знает: и сообщения, и сигнал звонка — старой сессией
+        val old1 = alice.sendText(bob, "старой сессией 1")
+        val old2 = alice.sendText(bob, "старой сессией 2")
+        val signal = alice.messenger.sealCallSignal(bob.deviceId, buildJsonObject { put("call_id", "c1") })
+        assertEquals("c1", bob.router.openCallSignal(alice.deviceId, signal)?.get("call_id")?.jsonPrimitive?.content)
+
+        // Алиса снова на связи: её очередь уходит, ей досылается сброс и сообщение Боба
+        alice.transport.statusFlow.value = ConnectionStatus.CONNECTED
+        net.relay.flush(alice.deviceId)
+        net.eventually("Боб расшифровал всё, что Алиса слала старой сессией") {
+            bob.chats.getMessages("alice").map { it.messageId }.containsAll(listOf(old1.messageId, old2.messageId))
+        }
+        net.eventually("Алиса получила сообщение Боба после сброса") {
+            alice.chats.getMessages("bob").any { it.messageId == fromBob.messageId }
+        }
+
+        // дальше переписка в обе стороны работает, потерянных нет
+        val a = alice.sendText(bob, "дальше")
+        net.eventually("Боб получил дальше") { bob.chats.getMessages("alice").any { it.messageId == a.messageId } }
+        val b = bob.sendText(alice, "и обратно")
+        net.eventually("Алиса получила обратно") { alice.chats.getMessages("bob").any { it.messageId == b.messageId } }
+        assertTrue(bob.chats.getMessages("alice").none { it.isUndecryptable })
+        assertTrue(alice.chats.getMessages("bob").none { it.isUndecryptable })
+    }
+
+    @Test
+    fun `обе стороны одновременно подняли новую сессию — сходятся на одной`() = runBlocking {
+        val alice = net.device("alice")
+        val bob = net.device("bob")
+        // оба начинают переписку, ещё не получив ничего друг от друга
+        alice.transport.statusFlow.value = ConnectionStatus.RECONNECTING
+        bob.transport.statusFlow.value = ConnectionStatus.RECONNECTING
+        val fromAlice = alice.sendText(bob, "я первая")
+        val fromBob = bob.sendText(alice, "нет, я")
+        alice.transport.statusFlow.value = ConnectionStatus.CONNECTED
+        bob.transport.statusFlow.value = ConnectionStatus.CONNECTED
+        net.eventually("обе отправки на сервере") { net.relay.pending.size == 2 }
+        net.relay.flush(alice.deviceId)
+        net.relay.flush(bob.deviceId)
+        net.eventually("оба получили") {
+            bob.chats.getMessages("alice").any { it.messageId == fromAlice.messageId } &&
+                alice.chats.getMessages("bob").any { it.messageId == fromBob.messageId }
+        }
+        repeat(3) { i ->
+            val a = alice.sendText(bob, "a$i")
+            val b = bob.sendText(alice, "b$i")
+            net.eventually("обмен $i") {
+                bob.chats.getMessages("alice").any { it.messageId == a.messageId } &&
+                    alice.chats.getMessages("bob").any { it.messageId == b.messageId }
+            }
+        }
+        assertTrue(bob.chats.getMessages("alice").none { it.isUndecryptable })
+        assertTrue(alice.chats.getMessages("bob").none { it.isUndecryptable })
+    }
+
+    @Test
+    fun `сервер отклонил конверт — он уходит из очереди, сообщение не отправлено`() = runBlocking {
+        val alice = net.device("alice")
+        val bob = net.device("bob")
+        alice.sendText(bob, "привет")
+        net.eventually("Боб получил") { bob.chats.getMessages("alice").size == 1 }
+
+        // Боб переустановил приложение — его прежнего устройства на сервере больше нет
+        net.relay.goneDevices += bob.deviceId
+        val lost = alice.sendText(bob, "в никуда")
+        net.eventually("не отправлено") {
+            alice.chats.getMessages("bob").first { it.messageId == lost.messageId }.status == MessageStatus.FAILED
+        }
+        assertTrue(alice.sendQueueStore.getAll().isEmpty(), "отклонённое не повторяется на каждом переподключении")
     }
 }

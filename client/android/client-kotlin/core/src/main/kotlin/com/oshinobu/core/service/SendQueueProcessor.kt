@@ -21,7 +21,8 @@ import java.util.Collections
  * конверт сначала ложится на диск, и уходит из очереди ТОЛЬКО по ack
  * сервера. Нет соединения — ждёт реконнекта; ack не пришёл за 8 с —
  * продолжаем слушать опоздавший ack в фоне, а при следующем реконнекте
- * конверт уходит снова (дубли на приёме гасятся по message_id).
+ * конверт уходит снова (дубли на приёме гасятся по message_id). Отказ
+ * сервера ("rejected": получателя нет, блокировка) — конверт убирается.
  */
 class SendQueueProcessor(
     private val store: SendQueueStore,
@@ -94,11 +95,17 @@ class SendQueueProcessor(
                 scope.launch {
                     try {
                         ack.await()
+                    } catch (e: DeliveryRejectedException) {
+                        finalizeRejected(id, messageId, peerLogin, e.reason)
+                        return@launch
                     } catch (_: Exception) {
                         return@launch
                     }
                     finalizeAcked(id, messageId, peerLogin)
                 }
+                return
+            } catch (e: DeliveryRejectedException) {
+                finalizeRejected(id, messageId, peerLogin, e.reason)
                 return
             } catch (_: kotlinx.coroutines.CancellationException) {
                 return // ожидание отменено (сообщение удалено/отменено)
@@ -107,6 +114,18 @@ class SendQueueProcessor(
         } finally {
             inFlight.remove(id)
         }
+    }
+
+    /**
+     * Сервер не примет конверт никогда (устройства получателя больше нет,
+     * блокировка) — убрать из очереди, иначе он повторялся бы на каждом
+     * переподключении; сообщение — «не отправлено».
+     */
+    private suspend fun finalizeRejected(id: String, messageId: String?, peerLogin: String?, reason: String) {
+        log.log("SendQueueProcessor id=$id rejected by server ($reason) — dropped from queue")
+        store.remove(id)
+        if (messageId != null && peerLogin != null) chats.updateMessageStatus(peerLogin, messageId, MessageStatus.FAILED)
+        onAckedCallbacks.remove(id)
     }
 
     private suspend fun finalizeAcked(id: String, messageId: String?, peerLogin: String?) {

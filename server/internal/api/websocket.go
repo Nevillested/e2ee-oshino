@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"server/internal/db"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -113,6 +115,40 @@ func ackSender(ctx context.Context, conn *websocket.Conn, deliveryID string) {
 	if writeErr := conn.Write(ctx, websocket.MessageText, msgBytes); writeErr != nil {
 		log.Printf("ackSender: не удалось подтвердить отправителю: %v", writeErr)
 	}
+}
+
+// Причины отказа в rejectSender.
+const (
+	rejectUnknownDevice = "unknown_device"
+	rejectBlocked       = "blocked"
+)
+
+// rejectSender — сообщение не принято и НИКОГДА не будет принято (устройства
+// получателя больше нет — переустановка; или блокировка): отправитель уберёт
+// его из своей очереди и покажет «не отправлено». Раньше сервер в этих случаях
+// молча не подтверждал — клиент повторял такие конверты на каждом
+// переподключении бесконечно. Клиенты до +70 этот кадр игнорируют.
+func rejectSender(ctx context.Context, conn *websocket.Conn, deliveryID, reason string) {
+	if deliveryID == "" {
+		return
+	}
+	msgBytes, err := json.Marshal(struct {
+		Type       string `json:"Type"`
+		DeliveryId string `json:"DeliveryId"`
+		Reason     string `json:"Reason"`
+	}{Type: "rejected", DeliveryId: deliveryID, Reason: reason})
+	if err != nil {
+		return
+	}
+	if writeErr := conn.Write(ctx, websocket.MessageText, msgBytes); writeErr != nil {
+		log.Printf("rejectSender: не удалось ответить отправителю: %v", writeErr)
+	}
+}
+
+// isForeignKeyViolation — ссылка на несуществующую строку (устройство получателя удалено).
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
 func respondCallUnavailable(ctx context.Context, ws_object *websocket.Conn) error {
@@ -706,6 +742,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 				var toDeviceUUID pgtype.UUID
 				if err := toDeviceUUID.Scan(NewWSMsgFrom.ToDeviceId); err != nil {
 					log.Printf("ошибка конвертации Device ID получателя: %v", err)
+					rejectSender(r.Context(), ws_object, NewWSMsgFrom.DeliveryId, rejectUnknownDevice)
 					continue
 				}
 
@@ -714,6 +751,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 					// очередь: обычный клиент и так не даёт набрать сообщение
 					// (вместо поля ввода — плашка блокировки), это подстраховка
 					// на случай изменённого клиента.
+					rejectSender(r.Context(), ws_object, NewWSMsgFrom.DeliveryId, rejectBlocked)
 					continue
 				}
 
@@ -750,6 +788,13 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 					ToDeviceID: toDeviceUUID,
 					Ciphertext: string(message),
 				})
+				if saveErr != nil && isForeignKeyViolation(saveErr) {
+					// устройства получателя больше нет (переустановил приложение) —
+					// доставлять некому и никогда не будет
+					log.Printf("сообщение устройству %s отклонено: устройства нет", NewWSMsgFrom.ToDeviceId)
+					rejectSender(r.Context(), ws_object, NewWSMsgFrom.DeliveryId, rejectUnknownDevice)
+					continue
+				}
 				if saveErr != nil {
 					log.Printf("Ошибка добавления сообщения в очередь: %v", saveErr)
 					// Не смогли гарантировать сохранность — НЕ подтверждаем

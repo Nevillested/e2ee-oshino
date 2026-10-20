@@ -80,6 +80,29 @@ class NetTest {
     }
 
     @Test
+    fun `версии приложения — из GET app-version и из ответа 426`() = runBlocking {
+        val versioned = ApiClient(ApiConfig(server.url("/").toString().trimEnd('/'), appVersionCode = 68))
+        server.enqueue(MockResponse().setBody("""{"version_code":70,"min_version_code":66,"apk_url":"/app/apk"}"""))
+        val info = versioned.getAppVersion()
+        assertEquals(70, info?.versionCode)
+        assertEquals(66, info?.minVersionCode)
+        assertEquals(server.url("/app/apk").toString(), info?.apkUrl)
+        assertEquals(info, versioned.latestVersion.value)
+        assertEquals("68", server.takeRequest().getHeader(ApiClient.APP_VERSION_HEADER))
+
+        // сервер без minVersionCode и без APK
+        server.enqueue(MockResponse().setBody("""{"version_code":71,"apk_url":""}"""))
+        assertEquals(0, versioned.getAppVersion()?.minVersionCode)
+        assertEquals(null, versioned.latestVersion.value?.apkUrl)
+        server.takeRequest()
+
+        // любой запрос получил 426 — сведения о версиях из его тела
+        server.enqueue(MockResponse().setResponseCode(426).setBody("""{"version_code":72,"min_version_code":72,"apk_url":""}"""))
+        assertEquals(null, versioned.checkSession("tok"))
+        assertEquals(72, versioned.latestVersion.value?.minVersionCode)
+    }
+
+    @Test
     fun `коды ошибок превращаются в ключи локализации`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(429))
         assertEquals("error.tooManyLoginAttempts", assertFailsWith<ApiException> { api.login("a", "b", "c") }.errorKey)

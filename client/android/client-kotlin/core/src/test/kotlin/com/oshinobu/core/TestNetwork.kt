@@ -5,6 +5,7 @@ import com.oshinobu.core.net.ApiClient
 import com.oshinobu.core.net.ApiConfig
 import com.oshinobu.core.net.CallSignaling
 import com.oshinobu.core.net.ConnectionStatus
+import com.oshinobu.core.net.DeliveryRejection
 import com.oshinobu.core.net.IncomingEnvelope
 import com.oshinobu.core.net.Transport
 import com.oshinobu.core.protocol.InnerMessage
@@ -188,8 +189,14 @@ class TestNetwork : AutoCloseable {
         /** Все кадры, когда-либо разосланные получателям. */
         val delivered = CopyOnWriteArrayList<Pair<String, IncomingEnvelope>>()
         private val serverDelivery = AtomicInteger()
+        /** Устройства, которых на сервере больше нет (переустановка): конверты им сервер отклоняет. */
+        val goneDevices: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
         fun send(from: FakeTransport, to: String, envelope: JsonObject, deliveryId: String) {
+            if (to in goneDevices) {
+                from.rejectionsFlow.tryEmit(DeliveryRejection(deliveryId, "unknown_device"))
+                return
+            }
             from.acksFlow.tryEmit(deliveryId) // сервер принял — ack отправителю
             val frame = IncomingEnvelope(envelope, "srv-${serverDelivery.incrementAndGet()}")
             pending[frame.deliveryId!!] = to to frame
@@ -224,9 +231,11 @@ class TestNetwork : AutoCloseable {
         val statusFlow = MutableStateFlow(ConnectionStatus.CONNECTED)
         val messagesFlow = MutableSharedFlow<IncomingEnvelope>(extraBufferCapacity = 256)
         val acksFlow = MutableSharedFlow<String>(extraBufferCapacity = 256)
+        val rejectionsFlow = MutableSharedFlow<DeliveryRejection>(extraBufferCapacity = 256)
         override val status = statusFlow
         override val messages = messagesFlow
         override val acks = acksFlow
+        override val rejections = rejectionsFlow
         override val isConnected get() = statusFlow.value == ConnectionStatus.CONNECTED
 
         override fun sendEnvelope(toDeviceId: String, envelope: JsonObject, deliveryId: String, silent: Boolean) {

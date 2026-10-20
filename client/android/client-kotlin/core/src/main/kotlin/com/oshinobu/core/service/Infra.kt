@@ -1,5 +1,6 @@
 package com.oshinobu.core.service
 
+import com.oshinobu.core.net.DeliveryRejection
 import com.oshinobu.core.net.Transport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -40,18 +41,27 @@ class KeyedMutex {
     suspend fun <T> run(key: String, action: suspend () -> T): T = locks.getOrPut(key) { Mutex() }.withLock { action() }
 }
 
+/** Сервер отказался принять конверт насовсем ([reason] — см. [DeliveryRejection]). */
+class DeliveryRejectedException(val reason: String) : Exception("доставка отклонена сервером: $reason")
+
 /** Ожидание ack сервера по deliveryId (порт SendAckRegistry). */
 class AckRegistry(transport: Transport, scope: CoroutineScope) {
     private val waiters = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
 
     init {
         scope.launch { transport.acks.collect { fulfill(it) } }
+        scope.launch { transport.rejections.collect { reject(it) } }
     }
 
     fun waiter(deliveryId: String): CompletableDeferred<Unit> = waiters.getOrPut(deliveryId) { CompletableDeferred() }
 
     fun fulfill(deliveryId: String) {
         waiters.remove(deliveryId)?.complete(Unit)
+    }
+
+    /** Сервер не примет конверт никогда — ожидание ack падает с [DeliveryRejectedException]. */
+    fun reject(rejection: DeliveryRejection) {
+        waiters.remove(rejection.deliveryId)?.completeExceptionally(DeliveryRejectedException(rejection.reason))
     }
 
     fun cancel(deliveryId: String) {

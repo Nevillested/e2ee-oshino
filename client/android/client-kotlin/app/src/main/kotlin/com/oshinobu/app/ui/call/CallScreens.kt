@@ -354,6 +354,7 @@ fun IncomingCallScreen(onAccepted: () -> Unit, onClose: () -> Unit) {
     val withMic = rememberWithPermission(Manifest.permission.RECORD_AUDIO)
 
     LaunchedEffect(state) { if (state != CallState.INCOMING_RINGING && !answered) onClose() }
+    LaunchedEffect(Unit) { context.app.calls.markIncomingScreenShown() }
     BackHandler { scope.launch { if (window?.unlockIfLocked() != false) onClose() } }
 
     val login = peer?.login

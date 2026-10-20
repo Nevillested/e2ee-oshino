@@ -60,9 +60,12 @@ private fun Context.callIcon() = R.drawable.ic_notification
  */
 class CallRingService : Service() {
     companion object {
-        private const val CHANNEL_ID = "call_ring_service"
+        const val CHANNEL_ID = "call_ring_service"
         private const val NOTIFICATION_ID = 777
         private const val RING_TIMEOUT_MS = 120_000L
+
+        /** Звонок поднят пушем — за это время сам звонок (offer) обязан прийти по WebSocket, иначе — отчёт. */
+        private const val OFFER_WAIT_MS = 20_000L
         const val EXTRA_CALL_ID = "oshinobu.CALL_ID"
         const val EXTRA_CALLER_DEVICE_ID = "oshinobu.CALLER_DEVICE_ID"
 
@@ -108,7 +111,18 @@ class CallRingService : Service() {
         }
         stopHandler.removeCallbacksAndMessages(null)
         stopHandler.postDelayed({ stopSelf() }, RING_TIMEOUT_MS)
+        if (!ringing && app.core.calls.state.value == CallState.IDLE) {
+            // поднят пушем, сам звонок ещё не пришёл: телефон звонит, а ответить не на что
+            app.core.logger.log("CallRingService ring by push callId=$callId ${CallDiagnostics.snapshot(this)}")
+            val pushCallId = callId
+            stopHandler.postDelayed({ checkOfferArrived(pushCallId) }, OFFER_WAIT_MS)
+        }
         return START_NOT_STICKY
+    }
+
+    private fun checkOfferArrived(pushCallId: String?) {
+        if (callId != pushCallId || app.core.calls.state.value != CallState.IDLE) return
+        app.calls.reportProblem("push call ringing but call offer not received within ${OFFER_WAIT_MS / 1000}s (callId=$pushCallId)")
     }
 
     override fun onDestroy() {
@@ -126,7 +140,10 @@ class CallRingService : Service() {
 
     /** Приложение не на экране, а показывать поверх других разрешено — открываем экран входящего сразу. */
     private fun showIncomingScreen() {
-        if (app.routerHost.isAppInForeground || !Settings.canDrawOverlays(this)) return
+        if (app.routerHost.isAppInForeground || !Settings.canDrawOverlays(this)) {
+            app.core.logger.log("CallRingService incoming screen not started: appForeground=${app.routerHost.isAppInForeground} overlay=${Settings.canDrawOverlays(this)}")
+            return
+        }
         runCatching {
             startActivity(
                 Intent(this, MainActivity::class.java)

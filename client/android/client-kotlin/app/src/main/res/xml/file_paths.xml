@@ -2,6 +2,6 @@
 <paths>
     <!-- временная копия файла под настоящим именем — см. FileActions.open -->
     <cache-path name="shared" path="shared/" />
-    <!-- скачанный APK обновления — для установщика -->
-    <cache-path name="updates" path="updates/" />
+    <!-- скачанный APK обновления — для установщика (AppUpdater) -->
+    <files-path name="updates" path="updates/" />
 </paths>

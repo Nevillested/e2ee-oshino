@@ -90,8 +90,8 @@ class FileLogger(dirs: AppDirs, scope: CoroutineScope, private val maxBytes: Lon
  * теряет), или при следующем запуске — о нативном падении, которое Java не
  * ловит. Отправляет [CrashReporter]; удаляется только после ответа сервера.
  */
-class CrashStore(dirs: AppDirs, private val maxBytes: Long = 512 * 1024) {
-    val file = File(dirs.documents, "pending_crash.txt")
+class CrashStore(dirs: AppDirs, private val maxBytes: Long = 512 * 1024, name: String = "pending_crash.txt") {
+    val file = File(dirs.documents, name)
 
     @Synchronized
     fun record(report: String) {
@@ -135,21 +135,76 @@ class CrashReporter(
     private val session: Session,
     private val prefs: Prefs,
     private val scope: CoroutineScope,
+    /** Отчёты о проблемах звонков, ещё не дошедшие до сервера. */
+    private val callReports: CrashStore,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     private companion object {
         const val MIN_INTERVAL_MS = 30 * 60_000L
         const val LAST_SENT_KEY = "crash_reporter_last_sent_at_ms"
         const val MAX_UPLOAD_CHARS = 500_000
+
+        /** Проблемы одного звонка идут пачкой (сбой → завершение) — один отчёт на них. */
+        const val CALL_REPORT_INTERVAL_MS = 60_000L
+        const val CALL_REPORT_JOURNAL_CHARS = 150_000
+        const val CALL_PROBLEM_KIND = "call_problem"
     }
 
     private val sending = AtomicBoolean(false)
     private val sendingCrash = AtomicBoolean(false)
+    private val sendingCallReports = AtomicBoolean(false)
+
+    @Volatile
+    private var lastCallReportAt: Long? = null
+
+    /**
+     * Звонок сработал плохо ([summary] — что именно и состояние телефона):
+     * отчёт с последней частью журнала — в feedback (kind=call_problem). Пишется
+     * на диск и уходит при первой возможности, как падение: проблемы звонков
+     * часто совпадают с пропавшей связью. Журнал не очищается.
+     */
+    fun reportCallProblem(summary: String) {
+        val at = now()
+        val last = lastCallReportAt
+        if (last != null && at - last < CALL_REPORT_INTERVAL_MS) {
+            logger.log("Call problem (joined to the previous report): $summary")
+            return
+        }
+        lastCallReportAt = at
+        logger.log("Call problem reported: $summary")
+        scope.launch {
+            logger.flush()
+            val journal = runCatching { logger.file.readText() }.getOrDefault("").takeLast(CALL_REPORT_JOURNAL_CHARS)
+            callReports.record("=== CALL PROBLEM ${LocalDateTime.now()} ===\n$summary\n=== журнал ===\n$journal")
+            sendPendingCallReports()
+        }
+    }
+
+    /** Отправить накопленные отчёты о звонках (повторный вызов во время отправки — пропуск). */
+    private fun sendPendingCallReports() {
+        if (!sendingCallReports.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                val text = callReports.pending() ?: return@launch
+                val token = session.token ?: return@launch
+                api.reportCrashLog(token, text, CALL_PROBLEM_KIND)
+                callReports.clear()
+                logger.log("Call problem report delivered")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.log("Call problem report not delivered yet: $e")
+            } finally {
+                sendingCallReports.set(false)
+            }
+        }
+    }
 
     fun install() = logger.setErrorHook { if (sending.compareAndSet(false, true)) scope.launch { report() } }
 
-    /** Отправить записанное падение, если оно есть (повторный вызов во время отправки — пропуск). */
+    /** Отправить записанное падение и отчёты о звонках, если они есть (повторный вызов во время отправки — пропуск). */
     fun sendPendingCrash() {
+        sendPendingCallReports()
         if (!sendingCrash.compareAndSet(false, true)) return
         scope.launch {
             try {

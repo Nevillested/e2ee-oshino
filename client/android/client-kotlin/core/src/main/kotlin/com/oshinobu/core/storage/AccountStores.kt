@@ -133,6 +133,11 @@ class KeyStore(private val secure: SecureStore) {
 
 /** Состояние Double Ratchet по устройствам собеседников (`ratchet:<deviceId>`). */
 class SessionStore(private val secure: SecureStore) {
+    private companion object {
+        /** Сколько прежних сессий с устройством держим для приёма. */
+        const val MAX_ARCHIVED = 3
+    }
+
     private fun key(deviceId: String) = "ratchet:$deviceId"
 
     suspend fun get(deviceId: String): RatchetState? =
@@ -143,6 +148,51 @@ class SessionStore(private val secure: SecureStore) {
     suspend fun clear(deviceId: String) {
         secure.delete(key(deviceId))
         clearPendingInit(deviceId)
+    }
+
+    private fun archiveKey(deviceId: String) = "ratchet_archive:$deviceId"
+
+    /**
+     * Прежние сессии с устройством, новые первыми, — только для приёма. После
+     * сброса или новой X3DH собеседник ещё какое-то время шифрует старой
+     * сессией (не на связи, сброс ждёт его на сервере): такие сообщения
+     * должны расшифровываться, а не теряться.
+     */
+    suspend fun archived(deviceId: String): List<RatchetState> =
+        secure.read(archiveKey(deviceId))
+            ?.let { Json.parseToJsonElement(it).jsonArray.map { e -> RatchetState.fromJson(e.jsonObject) } }
+            .orEmpty()
+
+    private suspend fun saveArchive(deviceId: String, states: List<RatchetState>) =
+        if (states.isEmpty()) secure.delete(archiveKey(deviceId))
+        else secure.write(archiveKey(deviceId), JsonArray(states.take(MAX_ARCHIVED).map { it.toJson() }).toString())
+
+    /** Текущую сессию — в архив; текущей больше нет, X3DH-поля исходящей тоже стёрты. */
+    suspend fun retire(deviceId: String) {
+        val current = get(deviceId)
+        if (current != null) saveArchive(deviceId, listOf(current) + archived(deviceId))
+        clear(deviceId)
+    }
+
+    /**
+     * [state] — новая текущая сессия (поднята из X3DH-полей входящего), прежняя
+     * текущая уходит в архив. Собеседник на ней ответил — X3DH-поля больше не нужны.
+     */
+    suspend fun replace(deviceId: String, state: RatchetState) {
+        retire(deviceId)
+        save(deviceId, state)
+    }
+
+    /**
+     * Архивная сессия [index] расшифровала входящее — собеседник шифрует именно
+     * ею: она снова текущая ([state] — уже продвинутая), текущая — в архив.
+     */
+    suspend fun promote(deviceId: String, index: Int, state: RatchetState) {
+        val rest = archived(deviceId).filterIndexed { i, _ -> i != index }
+        val current = get(deviceId)
+        saveArchive(deviceId, listOfNotNull(current) + rest)
+        clearPendingInit(deviceId)
+        save(deviceId, state)
     }
 
     private fun initKey(deviceId: String) = "x3dh_init:$deviceId"

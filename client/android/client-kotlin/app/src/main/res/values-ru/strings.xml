@@ -365,12 +365,17 @@
     <string name="call_overlayBody">Чтобы входящий звонок открывался на весь экран, даже когда вы пользуетесь телефоном, разрешите Oshinobu показ поверх других приложений.</string>
     <string name="call_overlayAllow">Разрешить</string>
     <string name="call_overlayLater">Не сейчас</string>
-    <string name="update_title">Нужно обновить приложение</string>
-    <string name="update_body">Эта версия Oshinobu больше не поддерживается. Обновите приложение, чтобы продолжить.</string>
-    <string name="update_button">Обновить</string>
+    <string name="update_button">Обновить приложение</string>
     <string name="update_downloading">Скачиваем обновление…</string>
+    <string name="update_readyTitle">Новая версия скачана</string>
+    <string name="update_readyBody">Установить обновление сейчас?</string>
+    <string name="update_install">Установить</string>
+    <string name="update_later">Позже</string>
+    <string name="update_failedTitle">Не удалось обновить</string>
     <string name="update_failed">Не удалось скачать обновление. Проверьте связь и попробуйте ещё раз.</string>
-    <string name="update_allowInstall">Разрешите установку приложений из Oshinobu и снова нажмите «Обновить».</string>
+    <string name="update_notNewer">На сервере пока нет новой версии. Попробуйте чуть позже.</string>
+    <string name="update_allowInstall">Разрешите установку приложений из Oshinobu и снова нажмите «Установить».</string>
+    <string name="common_close">Закрыть</string>
     <!-- стикеры -->
     <string name="sticker_preview">Стикер</string>
     <string name="sticker_tabEmoji">Эмодзи</string>

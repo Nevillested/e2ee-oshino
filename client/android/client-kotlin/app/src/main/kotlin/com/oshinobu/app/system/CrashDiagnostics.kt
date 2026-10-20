@@ -4,7 +4,6 @@ import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.os.Build
 import com.oshinobu.app.OshinobuApp
-import com.oshinobu.app.ui.update.installedVersionCode
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.util.Date

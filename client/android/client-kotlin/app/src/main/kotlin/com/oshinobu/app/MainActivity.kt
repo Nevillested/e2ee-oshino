@@ -30,15 +30,17 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.oshinobu.app.call.CallIntents
 import com.oshinobu.app.ui.AppNavigation
 import com.oshinobu.app.ui.call.CallWindow
 import com.oshinobu.app.ui.call.PipCallView
 import com.oshinobu.app.ui.lock.AppLockGate
 import com.oshinobu.app.ui.theme.OshinobuTheme
-import com.oshinobu.app.ui.update.UpdateGate
 import com.oshinobu.core.service.CallState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -130,11 +132,20 @@ class MainActivity : AppCompatActivity(), CallWindow {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale * textScale.toFloat())) {
                 OshinobuTheme(theme) {
-                    if (inPip) PipCallView() else UpdateGate { AppLockGate { AppNavigation(callScreenRequests, launchedForCall, autoAccept) } }
+                    if (inPip) PipCallView() else AppLockGate { AppNavigation(callScreenRequests, launchedForCall, autoAccept) }
                 }
             }
         }
         lifecycleScope.launch { app.calls.pipAllowed.collect(::updatePipParams) }
+        // новая версия: проверка при каждом входе в приложение и раз в час, пока оно на экране
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    app.updater.checkForUpdate()
+                    delay(UPDATE_CHECK_INTERVAL_MS)
+                }
+            }
+        }
         lifecycleScope.launch {
             app.core.calls.state.collect { if (it == CallState.IDLE) onCallEnded() }
         }
@@ -229,6 +240,8 @@ class MainActivity : AppCompatActivity(), CallWindow {
     }
 
     companion object {
+        private const val UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000L
+
         /** Открыть приложение из уведомления. */
         fun openAppIntent(context: Context): PendingIntent = PendingIntent.getActivity(
             context,

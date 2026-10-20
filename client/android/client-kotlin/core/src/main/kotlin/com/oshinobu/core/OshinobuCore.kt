@@ -113,7 +113,7 @@ class OshinobuCore(
     val stickers = Stickers(api, session, secure, dirs, logger)
     val wallpapers = Wallpapers(api, session, dirs, logger)
     val crashes = CrashStore(dirs)
-    val crashReporter = CrashReporter(logger, crashes, api, session, prefs, scope)
+    val crashReporter = CrashReporter(logger, crashes, api, session, prefs, scope, CrashStore(dirs, name = "pending_call_reports.txt"))
     val chatActions = ChatActions(api, session, chats, messenger, router, cleanup) {
         session.token?.let { syncBlockedContacts(it) }
     }

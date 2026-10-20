@@ -169,8 +169,12 @@ private class ProgressBody(private val delegate: RequestBody, private val onProg
     }
 }
 
-/** Версия приложения, которую требует сервер, и откуда взять APK. */
-data class AppVersionInfo(val versionCode: Int, val apkUrl: String?)
+/**
+ * Версии приложения по данным сервера: [versionCode] — последняя выпущенная,
+ * [minVersionCode] — самая старая, которую сервер ещё обслуживает (0 — любая),
+ * [apkUrl] — откуда взять APK последней версии тем, кто ставил не из Play.
+ */
+data class AppVersionInfo(val versionCode: Int, val minVersionCode: Int, val apkUrl: String?)
 
 class ApiClient(
     val config: ApiConfig = ApiConfig(),
@@ -179,22 +183,21 @@ class ApiClient(
     /** Передача файлов: большие таймауты. */
     media: OkHttpClient = defaultMediaClient(),
 ) {
-    private val _updateRequired = MutableStateFlow<AppVersionInfo?>(null)
+    private val _latestVersion = MutableStateFlow<AppVersionInfo?>(null)
 
-    /** Сервер больше не обслуживает эту версию приложения — показать "обновите". */
-    val updateRequired: StateFlow<AppVersionInfo?> = _updateRequired.asStateFlow()
+    /**
+     * Последнее, что сервер сообщил о версиях ([getAppVersion] или ответ 426);
+     * null — ещё не спрашивали или не было связи.
+     */
+    val latestVersion: StateFlow<AppVersionInfo?> = _latestVersion.asStateFlow()
 
-    fun noteUpdateRequired(info: AppVersionInfo) {
-        _updateRequired.value = info
-    }
-
-    /** Заголовок версии в запрос; ответ 426 — сервер требует другую версию. */
+    /** Заголовок версии в запрос; ответ 426 — эту версию сервер больше не обслуживает. */
     private val versionInterceptor = Interceptor { chain ->
         val request = config.appVersionCode?.let { chain.request().newBuilder().header(APP_VERSION_HEADER, it.toString()).build() }
             ?: chain.request()
         val response = chain.proceed(request)
         if (response.code == HTTP_UPGRADE_REQUIRED) {
-            runCatching { parseAppVersion(response.peekBody(4096).string()) }.getOrNull()?.let(::noteUpdateRequired)
+            runCatching { parseAppVersion(response.peekBody(4096).string()) }.getOrNull()?.let { _latestVersion.value = it }
         }
         response
     }
@@ -223,13 +226,17 @@ class ApiClient(
         val code = (o["version_code"] as? JsonPrimitive)?.intOrNull ?: return null
         // сервер раздаёт APK сам — адрес относительный (/app/apk), дополняем адресом сервера
         val apk = o.str("apk_url")?.takeIf { it.isNotBlank() }?.let { config.baseUrl.toHttpUrl().resolve(it)?.toString() }
-        return AppVersionInfo(code, apk)
+        val min = (o["min_version_code"] as? JsonPrimitive)?.intOrNull ?: 0
+        return AppVersionInfo(code, min, apk)
     }
 
-    /** Какая версия приложения нужна серверу; null — нет связи или сервер о версиях не знает. */
+    /**
+     * Спросить у сервера версии приложения (результат — и в [latestVersion]);
+     * null — нет связи или сервер о версиях не знает.
+     */
     suspend fun getAppVersion(): AppVersionInfo? = try {
         val (code, body) = callShort(req("/app/version").get().build())
-        if (code == 200) parseAppVersion(body)?.takeIf { it.versionCode > 0 } else null
+        if (code == 200) parseAppVersion(body)?.takeIf { it.versionCode > 0 }?.also { _latestVersion.value = it } else null
     } catch (_: Exception) {
         null
     }
@@ -657,9 +664,10 @@ class ApiClient(
         if (code != 200) fail("error.reportFailed", code)
     }
 
-    suspend fun reportCrashLog(token: String, logText: String) {
+    /** Автоотчёт в feedback: [kind] — auto_crash (ошибки и падения) или call_problem (звонок сработал плохо). */
+    suspend fun reportCrashLog(token: String, logText: String, kind: String = "auto_crash") {
         val code = withTimeout(15_000) {
-            call(req("/feedback", token).post(json("message" to logText, "kind" to "auto_crash")).build()).first
+            call(req("/feedback", token).post(json("message" to logText, "kind" to kind)).build()).first
         }
         if (code != 200) throw ApiException("crash report failed", code)
     }

@@ -9,11 +9,12 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import com.oshinobu.app.call.CallController
 import com.oshinobu.app.call.WebRtcEngine
+import com.oshinobu.app.system.AppUpdater
 import com.oshinobu.app.system.CrashDiagnostics
 import com.oshinobu.app.system.PushService
 import com.oshinobu.app.system.TransfersService
+import com.oshinobu.app.system.installedVersionCode
 import com.oshinobu.app.ui.theme.AppColors
-import com.oshinobu.app.ui.update.installedVersionCode
 import com.oshinobu.compat.FlutterPrefsAdapter
 import com.oshinobu.compat.FlutterSecureStoreAdapter
 import com.oshinobu.compat.flutterAppDirs
@@ -37,6 +38,8 @@ class OshinobuApp : Application() {
     lateinit var rtc: WebRtcEngine
         private set
     lateinit var calls: CallController
+        private set
+    lateinit var updater: AppUpdater
         private set
 
     /** Тема приложения (по умолчанию тёмно-синяя); меняется в настройках сразу, без перезапуска. */
@@ -65,6 +68,7 @@ class OshinobuApp : Application() {
             config = ApiConfig(appVersionCode = installedVersionCode()),
         )
         CrashDiagnostics.install(this)
+        updater = AppUpdater(this, core)
         applyLocale(core.settings.locale())
         textScale.value = core.settings.textScale()
         // копия ключа темы читается сразу; нет её (выбирали до +62) — дочитываем из secure storage

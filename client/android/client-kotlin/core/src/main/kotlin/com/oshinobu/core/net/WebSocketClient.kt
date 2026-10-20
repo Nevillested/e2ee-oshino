@@ -30,6 +30,8 @@ import java.util.concurrent.TimeUnit
 //
 // Внешние кадры сервера: {"Type", "DeliveryId", "Ciphertext", ...}.
 //  - "ack"                   — сервер принял наш конверт (DeliveryId);
+//  - "rejected"              — и не примет никогда (DeliveryId, Reason):
+//                              устройства получателя больше нет / блокировка;
 //  - "presence"/"typing"     — присутствие собеседника;
 //  - "block_status_changed"  — кто-то (раз)блокировал;
 //  - "profile_updated"       — {AccountId, Field};
@@ -43,6 +45,9 @@ enum class ConnectionStatus { WAITING_FOR_NETWORK, CONNECTING, CONNECTED, RECONN
 
 class IncomingEnvelope(val envelope: JsonObject, val deliveryId: String?)
 
+/** Сервер отказался принять наш конверт [deliveryId] насовсем ([reason]: unknown_device, blocked). */
+data class DeliveryRejection(val deliveryId: String, val reason: String)
+
 data class ProfileChange(val accountId: String, val field: String)
 
 /**
@@ -53,6 +58,7 @@ interface Transport {
     val status: StateFlow<ConnectionStatus>
     val messages: SharedFlow<IncomingEnvelope>
     val acks: SharedFlow<String>
+    val rejections: SharedFlow<DeliveryRejection>
     val isConnected: Boolean
     fun sendEnvelope(toDeviceId: String, envelope: JsonObject, deliveryId: String, silent: Boolean = false)
     fun ackDelivery(deliveryId: String)
@@ -84,6 +90,7 @@ class WebSocketClient(
     private val _profileChanges = events<ProfileChange>()
     private val _wallpaperChanges = events<String>()
     private val _acks = events<String>()
+    private val _rejections = events<DeliveryRejection>()
     private val _sessionInvalidated = events<Unit>()
 
     override val messages: SharedFlow<IncomingEnvelope> = _messages.asSharedFlow()
@@ -95,6 +102,7 @@ class WebSocketClient(
     /** account_id собеседника, который поменял обои нашего с ним чата. */
     val wallpaperChanges: SharedFlow<String> = _wallpaperChanges.asSharedFlow()
     override val acks: SharedFlow<String> = _acks.asSharedFlow()
+    override val rejections: SharedFlow<DeliveryRejection> = _rejections.asSharedFlow()
     val sessionInvalidated: SharedFlow<Unit> = _sessionInvalidated.asSharedFlow()
 
     private val lock = Any()
@@ -276,6 +284,11 @@ class WebSocketClient(
         val deliveryId = outer.str("DeliveryId")?.takeIf { it.isNotEmpty() }
         when {
             type == "ack" -> deliveryId?.let { _acks.tryEmit(it) }
+            type == "rejected" -> deliveryId?.let {
+                val reason = outer.str("Reason").orEmpty()
+                log("WS recv rejected deliveryId=$it reason=$reason")
+                _rejections.tryEmit(DeliveryRejection(it, reason))
+            }
             type == "presence" || type == "typing" -> _presence.tryEmit(outer)
             type == "block_status_changed" -> {
                 log("WS recv block_status_changed")

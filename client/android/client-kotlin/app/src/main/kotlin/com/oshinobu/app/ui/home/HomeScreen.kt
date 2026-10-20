@@ -127,6 +127,7 @@ import com.oshinobu.app.ui.errorText
 import com.oshinobu.app.ui.theme.CardShape
 import com.oshinobu.app.ui.theme.LocalAppColors
 import com.oshinobu.app.ui.translate
+import com.oshinobu.app.ui.update.UpdateBar
 import com.oshinobu.core.format.formatChatTime
 import com.oshinobu.core.net.ConnectionStatus
 import com.oshinobu.core.optString
@@ -228,6 +229,8 @@ fun HomeScreen(
                 OngoingCallBanner(peerLogin = null, onOpen = onOpenCall)
             }
         },
+        // «Обновить приложение» — под панелью вкладок, появляется, когда есть версия новее
+        bottomBar = { UpdateBar() },
     ) { padding ->
         val forward = tab.ordinal > previousTab.ordinal
         Box(

@@ -64,10 +64,17 @@ data class DeviceOwnerRef(val accountId: String, val login: String)
  *  - сообщение под ключом прошлой эпохи ratchet — ack без счётчика сбоев
  *    (это либо поздний повтор прочитанного, либо необратимо потерянное);
  *  - сбой на ТЕКУЩЕМ ключе — без ack (сервер передоставит), после 3 подряд —
- *    ack + session_reset обеим сторонам;
+ *    ack + session_reset обеим сторонам (только если текущая сессия уже
+ *    подтверждена собеседником — иначе сброс ничего не лечит);
  *  - нет сессии и нет X3DH-полей — 2 минуты ждём гонку доставки, потом ack.
  * Окончательно потерянное входящее сообщение становится заглушкой
  * "Не удалось дешифровать сообщение" в чате.
+ *
+ * Сброс и новая X3DH не стирают прежнюю сессию, а отправляют её в архив
+ * ([SessionStore.archived]): собеседник, который ещё не узнал о сбросе (не на
+ * связи — сброс ждёт его на сервере), шифрует старой, и это должно
+ * расшифровываться. Раньше сброс стирал её сразу — всё, что собеседник слал
+ * до получения сброса, терялось, сбои копились и запускали новые сбросы.
  */
 class MessageRouter(
     private val transport: Transport,
@@ -145,8 +152,8 @@ class MessageRouter(
     private suspend fun process(senderDeviceId: String, envelope: JsonObject, deliveryId: String?) {
         if (envelope.optString("type") == SESSION_RESET_TYPE) {
             // собеседник нашёл рассинхрон при чтении НАШИХ сообщений — начинаем с чистого листа
-            log.log("Router session_reset received from=$senderDeviceId — clearing local session state")
-            sessions.clear(senderDeviceId)
+            log.log("Router session_reset received from=$senderDeviceId — retiring local session to archive")
+            sessions.retire(senderDeviceId)
             clearFailureCount(senderDeviceId)
             ack(deliveryId)
             return
@@ -170,58 +177,112 @@ class MessageRouter(
 
     // ---------------- расшифровка и самолечение ----------------
 
+    /** Итог вскрытия конверта ([open]). */
+    private sealed interface Opened {
+        class Ok(val raw: String) : Opened
+
+        /** Дубль уже расшифрованного — сессия здорова. */
+        data object Duplicate : Opened
+
+        /**
+         * Не вскрылся ни одной сессией. [current] — текущая после попытки (null —
+         * её не было), [triedFresh] — в конверте были X3DH-поля, но и новая
+         * сессия из них не подошла.
+         */
+        class Failed(val current: RatchetState?, val triedFresh: Boolean) : Opened
+    }
+
+    /**
+     * Вскрыть конверт и сохранить итог — общий путь сообщений и сигналов звонка:
+     *  1. текущей сессией;
+     *  2. прежними из архива — собеседник ещё шифрует ею (не узнал о сбросе или
+     *     о нашей новой X3DH): удачная снова становится текущей, а текущая — в
+     *     архив, так обе стороны сходятся на одной;
+     *  3. новой сессией из X3DH-полей конверта — прежняя текущая в архив.
+     * Вызывать под [sendLock] отправителя.
+     */
+    private suspend fun open(senderDeviceId: String, envelope: JsonObject): Opened {
+        val current = sessions.get(senderDeviceId)
+        if (current != null) {
+            try {
+                val raw = decryptMessage(current.nextReceivingKey(envelope), envelope)
+                sessions.save(senderDeviceId, current)
+                return opened(senderDeviceId, raw)
+            } catch (e: AlreadyProcessedException) {
+                log.log("Router IGNORING duplicate from=$senderDeviceId ${e.message}")
+                return Opened.Duplicate
+            } catch (e: Exception) {
+                log.log("Router current session failed from=$senderDeviceId: $e")
+            }
+        }
+        for ((index, old) in sessions.archived(senderDeviceId).withIndex()) {
+            try {
+                val raw = decryptMessage(old.nextReceivingKey(envelope), envelope)
+                log.log("Router decrypted with archived session #$index from=$senderDeviceId — it is current again")
+                sessions.promote(senderDeviceId, index, old)
+                return opened(senderDeviceId, raw)
+            } catch (e: AlreadyProcessedException) {
+                log.log("Router IGNORING duplicate (archived session #$index) from=$senderDeviceId ${e.message}")
+                return Opened.Duplicate
+            } catch (_: Exception) {
+                // не эта
+            }
+        }
+        val fresh = establishFreshIncoming(senderDeviceId, envelope)
+        if (fresh != null) {
+            try {
+                val raw = decryptMessage(fresh.nextReceivingKey(envelope), envelope)
+                log.log("Router new X3DH session from=$senderDeviceId (previous one archived)")
+                sessions.replace(senderDeviceId, fresh)
+                return opened(senderDeviceId, raw)
+            } catch (e: Exception) {
+                // например, свежий 3-DH root не совпал с 4-DH собеседника (наш одноразовый ключ уже израсходован)
+                log.log("Router new X3DH session from=$senderDeviceId failed: $e")
+            }
+        }
+        return Opened.Failed(current, triedFresh = fresh != null)
+    }
+
+    /** Вскрылся: собеседник шифрует текущей сессией — X3DH-поля ему больше не нужны, сбоев нет. */
+    private suspend fun opened(senderDeviceId: String, raw: String): Opened.Ok {
+        sessions.clearPendingInit(senderDeviceId)
+        clearFailureCount(senderDeviceId)
+        clearNoSessionFirstSeen(senderDeviceId)
+        return Opened.Ok(raw)
+    }
+
     /** null — расшифровать не удалось; ack/заглушка/сброс уже сделаны здесь по правилам выше. */
     private suspend fun decrypt(senderDeviceId: String, envelope: JsonObject, deliveryId: String?): InnerMessage? {
-        var state = sessions.get(senderDeviceId)
-        var isFreshSession = false
-        if (state == null) {
-            val fresh = establishFreshIncoming(senderDeviceId, envelope)
-            if (fresh == null) {
-                // нет сессии и нет X3DH: возможно, сообщение с инициализацией ещё в пути
-                val gaveUp = giveUpIfNoSessionTooLong(senderDeviceId)
-                log.log("Router DROP from=$senderDeviceId reason=no-session-and-no-handshake${if (gaveUp) " (gave up)" else ""}")
-                if (gaveUp) {
-                    ack(deliveryId)
+        when (val result = open(senderDeviceId, envelope)) {
+            is Opened.Ok -> {
+                rememberDecrypted(senderDeviceId, envelope)
+                return InnerMessage.decode(result.raw)
+            }
+            Opened.Duplicate -> {
+                ack(deliveryId)
+                return null
+            }
+            is Opened.Failed -> {
+                val current = result.current
+                if (current == null && !result.triedFresh) {
+                    // нет сессии и нет X3DH: возможно, сообщение с инициализацией ещё в пути
+                    val gaveUp = giveUpIfNoSessionTooLong(senderDeviceId)
+                    log.log("Router DROP from=$senderDeviceId reason=no-session-and-no-handshake${if (gaveUp) " (gave up)" else ""}")
+                    if (gaveUp) {
+                        ack(deliveryId)
+                        recordUndecryptable(senderDeviceId, envelope)
+                    }
+                    return null
+                }
+                log.error("Router decrypt-FAILED from=$senderDeviceId hadSession=${current != null} triedFresh=${result.triedFresh}")
+                if (current != null && !result.triedFresh) {
+                    handleUnrecoverable(senderDeviceId, envelope, deliveryId, current)
+                } else if (onDecryptFailure(senderDeviceId, deliveryId)) {
                     recordUndecryptable(senderDeviceId, envelope)
                 }
                 return null
             }
-            clearNoSessionFirstSeen(senderDeviceId)
-            state = fresh
-            isFreshSession = true
         }
-
-        val raw = try {
-            decryptMessage(state.nextReceivingKey(envelope), envelope)
-        } catch (e: AlreadyProcessedException) {
-            // безобидный дубль — сессия здорова, НЕ считаем сбоем
-            log.log("Router IGNORING duplicate from=$senderDeviceId ${e.message}")
-            ack(deliveryId)
-            return null
-        } catch (e: Exception) {
-            log.error("Router decrypt-FAILED from=$senderDeviceId error=$e isFreshSession=$isFreshSession")
-            // конверт мог нести X3DH-поля новой сессии, которую собеседник уже поднял
-            val fresh = if (isFreshSession) null else establishFreshIncoming(senderDeviceId, envelope)
-            if (fresh == null) {
-                handleUnrecoverable(senderDeviceId, envelope, deliveryId, state)
-                return null
-            }
-            try {
-                decryptMessage(fresh.nextReceivingKey(envelope), envelope).also { state = fresh }
-            } catch (e2: Exception) {
-                // свежий 3-DH root не совпал с 4-DH собеседника (наш одноразовый ключ уже израсходован)
-                log.error("Router: fresh X3DH re-decrypt ALSO failed ($e2) from=$senderDeviceId")
-                if (onDecryptFailure(senderDeviceId, deliveryId)) recordUndecryptable(senderDeviceId, envelope)
-                return null
-            }
-        }
-
-        clearFailureCount(senderDeviceId)
-        clearNoSessionFirstSeen(senderDeviceId)
-        sessions.save(senderDeviceId, state!!)
-        sessions.clearPendingInit(senderDeviceId)
-        rememberDecrypted(senderDeviceId, envelope)
-        return InnerMessage.decode(raw)
     }
 
     private suspend fun handleUnrecoverable(senderDeviceId: String, envelope: JsonObject, deliveryId: String?, state: RatchetState) {
@@ -266,11 +327,19 @@ class MessageRouter(
         if (count < RESET_FAILURE_THRESHOLD) return false
 
         ack(deliveryId)
+        // сброс лечит только подтверждённую собеседником сессию: нет текущей — следующая
+        // отправка и так поднимет новую; текущая — наша свежая X3DH без ответа —
+        // собеседник поднимет её по X3DH-полям любого нашего сообщения, а новый сброс
+        // лишь отправил бы её в архив (так раньше сбросы шли каруселью)
+        if (sessions.get(senderDeviceId) == null || sessions.pendingInit(senderDeviceId) != null) {
+            log.log("Router no auto session-reset for=$senderDeviceId: our session is not confirmed by the peer yet")
+            return true
+        }
         val last = prefs.getLong(lastResetKey(senderDeviceId))
         if (last == null || now() - last >= RESET_COOLDOWN_MS) {
             prefs.setLong(lastResetKey(senderDeviceId), now())
             log.log("Router auto session-reset for=$senderDeviceId after $count consecutive decrypt failures")
-            resetSessionWith(senderDeviceId, "auto ($count decrypt failures)")
+            resetLocked(senderDeviceId, "auto ($count decrypt failures)")
         }
         return true
     }
@@ -285,36 +354,39 @@ class MessageRouter(
 
     private suspend fun openCallSignalLocked(senderDeviceId: String, envelope: JsonObject): JsonObject? {
         try {
-            val state = sessions.get(senderDeviceId) ?: establishFreshIncoming(senderDeviceId, envelope)
-            if (state == null) {
-                log.log("Router call signal from=$senderDeviceId: no session and no handshake")
-                return null
+            return when (val result = open(senderDeviceId, envelope)) {
+                is Opened.Ok -> Json.parseToJsonElement(result.raw).jsonObject
+                Opened.Duplicate -> null
+                is Opened.Failed -> {
+                    if (result.current == null && !result.triedFresh) {
+                        log.log("Router call signal from=$senderDeviceId: no session and no handshake")
+                    } else {
+                        log.error("Router call signal decrypt-FAILED from=$senderDeviceId hadSession=${result.current != null} triedFresh=${result.triedFresh}")
+                        onDecryptFailure(senderDeviceId, null)
+                    }
+                    null
+                }
             }
-            val raw = decryptMessage(state.nextReceivingKey(envelope), envelope)
-            sessions.save(senderDeviceId, state)
-            sessions.clearPendingInit(senderDeviceId)
-            clearFailureCount(senderDeviceId)
-            return Json.parseToJsonElement(raw).jsonObject
-        } catch (e: AlreadyProcessedException) {
-            log.log("Router duplicate call signal from=$senderDeviceId ${e.message} — ignored")
-            return null
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log.error("Router call signal decrypt-FAILED from=$senderDeviceId error=$e")
-            onDecryptFailure(senderDeviceId, null)
+            log.error("Router call signal FAILED from=$senderDeviceId error=$e")
             return null
         }
     }
 
     /**
-     * Стереть сессию у себя и попросить собеседника сделать то же — следующая
-     * отправка любой из сторон поднимет свежий X3DH. Также по кнопке
-     * "Сбросить шифрование" и при очистке чата у обоих.
+     * Сессию у себя — в архив и попросить собеседника сделать то же — следующая
+     * отправка любой из сторон поднимет свежий X3DH, а то, что собеседник успел
+     * зашифровать прежней, ещё расшифруется. Также по кнопке "Сбросить
+     * шифрование" и при очистке чата у обоих.
      */
-    suspend fun resetSessionWith(deviceId: String, reason: String) {
+    suspend fun resetSessionWith(deviceId: String, reason: String) = sendLock.run(deviceId) { resetLocked(deviceId, reason) }
+
+    /** [resetSessionWith] под уже взятым [sendLock] устройства. */
+    private suspend fun resetLocked(deviceId: String, reason: String) {
         log.log("Router resetSessionWith device=$deviceId reason=$reason")
-        sessions.clear(deviceId)
+        sessions.retire(deviceId)
         val myDeviceId = keys.deviceId() ?: return
         queue.enqueue(
             toDeviceId = deviceId,
