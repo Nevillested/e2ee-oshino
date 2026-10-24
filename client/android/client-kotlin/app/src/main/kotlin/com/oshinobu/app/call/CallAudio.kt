@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import com.oshinobu.app.R
+import com.oshinobu.core.service.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,9 +25,11 @@ enum class AudioRoute { EARPIECE, SPEAKER, WIRED_HEADSET, BLUETOOTH }
  *  - нет Bluetooth: громкая связь вкл/выкл; иначе — проводные наушники,
  *    если подключены, или динамик у уха;
  *  - есть Bluetooth: по умолчанию он, остальные выходы — выбором из списка;
- *  - у уха (подключено, динамик у уха) — экран гаснет по датчику.
+ *  - у уха (подключено, динамик у уха) — экран гаснет по датчику; любой другой
+ *    выход (громкая связь, наушники) — датчик экран не трогает;
+ *  - гудки исходящего — явно в тот же выход, что и разговор.
  */
-class CallAudio(private val context: Context) {
+class CallAudio(private val context: Context, private val log: Logger) {
     private val am = context.getSystemService(AudioManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
 
@@ -136,21 +139,35 @@ class CallAudio(private val context: Context) {
         } else {
             (picked ?: AudioRoute.BLUETOOTH).takeIf { it in _routes.value } ?: AudioRoute.BLUETOOTH
         }
+        if (target != _route.value) log.log("CallAudio route ${_route.value} -> $target")
         route(target)
         _route.value = target
         speakerOn = target == AudioRoute.SPEAKER
+        ringback?.let { pointAt(it, target) }
         updateProximity()
+    }
+
+    /** Встроенный выход для [target] (у Bluetooth и наушников — первый подходящий). */
+    private fun outputFor(target: AudioRoute): AudioDeviceInfo? =
+        am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { it.type in typesOf(target) }
+
+    /**
+     * Гудки — в тот же выход, что и разговор. Плеер гудков — отдельный поток, и
+     * выбор выхода для разговора (setCommunicationDevice) Android на него
+     * распространяет не всегда: с громкой связью гудки шли громко в динамик у уха.
+     */
+    private fun pointAt(player: MediaPlayer, target: AudioRoute) {
+        // до Android 9 выбора выхода у плеера нет — там гудки идут по isSpeakerphoneOn вместе с разговором
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+        val device = outputFor(target)
+        if (device == null || !player.setPreferredDevice(device)) log.log("CallAudio ringback: no preferred device for $target")
     }
 
     private fun route(target: AudioRoute) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val types = when (target) {
-                AudioRoute.EARPIECE -> setOf(AudioDeviceInfo.TYPE_BUILTIN_EARPIECE)
-                AudioRoute.SPEAKER -> setOf(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
-                AudioRoute.WIRED_HEADSET -> WIRED_TYPES
-                AudioRoute.BLUETOOTH -> setOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET)
-            }
-            am.availableCommunicationDevices.firstOrNull { it.type in types }?.let { am.setCommunicationDevice(it) }
+            val types = typesOf(target)
+            val device = am.availableCommunicationDevices.firstOrNull { it.type in types }
+            if (device == null || !am.setCommunicationDevice(device)) log.log("CallAudio setCommunicationDevice($target) failed, device=${device?.type}")
         } else {
             @Suppress("DEPRECATION")
             am.isSpeakerphoneOn = target == AudioRoute.SPEAKER
@@ -165,15 +182,24 @@ class CallAudio(private val context: Context) {
         }
     }
 
-    /** Экран гаснет у уха — только в разговоре через динамик у уха. */
+    /**
+     * Экран гаснет у уха — только в разговоре через динамик у уха. Перешли на
+     * громкую связь или наушники — телефон убрали от уха: экран включается сразу,
+     * не дожидаясь, пока датчик освободится (раньше с флагом «ждать» экран так и
+     * оставался погашенным, если датчик был чем-то закрыт — рукой, чехлом).
+     * Разговор кончился — ждём, пока телефон отнимут от уха, чтобы не нажать щекой.
+     */
     private fun updateProximity() {
         val shouldHold = active && connected && _route.value == AudioRoute.EARPIECE
         val pm = context.getSystemService(PowerManager::class.java)
         if (shouldHold && proximity == null && pm.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
             proximity = pm.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "oshinobu:call_proximity").apply { acquire(4 * 60 * 60_000L) }
-        } else if (!shouldHold) {
-            proximity?.let { if (it.isHeld) it.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY) }
+            log.log("CallAudio proximity on")
+        } else if (!shouldHold && proximity != null) {
+            val callGoesOn = active && connected
+            proximity?.let { if (it.isHeld) it.release(if (callGoesOn) 0 else PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY) }
             proximity = null
+            log.log("CallAudio proximity off (route=${_route.value}, call ${if (callGoesOn) "goes on" else "ended"})")
         }
     }
 
@@ -191,6 +217,7 @@ class CallAudio(private val context: Context) {
             setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
             afd.close()
             isLooping = true
+            pointAt(this, _route.value)
             setOnPreparedListener { it.start() }
             prepareAsync()
         }
@@ -203,5 +230,12 @@ class CallAudio(private val context: Context) {
 
     private companion object {
         val WIRED_TYPES = setOf(AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_USB_HEADSET)
+
+        fun typesOf(target: AudioRoute): Set<Int> = when (target) {
+            AudioRoute.EARPIECE -> setOf(AudioDeviceInfo.TYPE_BUILTIN_EARPIECE)
+            AudioRoute.SPEAKER -> setOf(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
+            AudioRoute.WIRED_HEADSET -> WIRED_TYPES
+            AudioRoute.BLUETOOTH -> setOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET)
+        }
     }
 }

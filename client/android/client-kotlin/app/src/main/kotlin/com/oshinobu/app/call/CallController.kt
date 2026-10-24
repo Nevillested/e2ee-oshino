@@ -25,7 +25,7 @@ class CallController(private val context: Context, private val core: OshinobuCor
         const val INCOMING_SCREEN_CHECK_MS = 8_000L
     }
 
-    val audio = CallAudio(context)
+    val audio = CallAudio(context, core.logger)
 
     @Volatile
     private var incomingShownFor: String? = null

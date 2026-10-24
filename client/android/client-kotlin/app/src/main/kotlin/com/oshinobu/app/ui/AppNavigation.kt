@@ -155,6 +155,19 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
     val core = LocalContext.current.app.core
     val scope = rememberCoroutineScope()
     fun current() = nav.currentBackStackEntry?.destination?.route
+    // процесс убили в фоне (энергосбережение), а Android, поднимая приложение заново, восстановил
+    // открытые экраны — заставки, которая запускает сессию, не было: приложение выглядело рабочим
+    // (запросы по HTTPS шли), но WebSocket не подключался — исходящий звонок «нет соединения с
+    // сервером», входящий звенел по пушу, а принять было нечего (offer идёт по WebSocket).
+    // Поднимаем сессию сами; сервер её больше не признаёт — к приветствию.
+    LaunchedEffect(Unit) {
+        // первый экран стека — восстановленный или стартовый (граф ставит NavHost при первой компоновке)
+        val route = nav.currentBackStackEntryFlow.first().destination.route
+        if (route == Routes.SPLASH || route == Routes.CALL_LAUNCH) return@LaunchedEffect
+        if (core.session.token == null || core.sessionActive.value) return@LaunchedEffect
+        core.logger.log("Session restore: screens restored at $route without a session — starting it")
+        if (!resumeSession(core)) nav.startOver(Routes.WELCOME)
+    }
     // звонки: входящий — экран входящего; принятый из уведомления / раскрытый из окошка — экран звонка
     // (пока приложение поднимается ради звонка, на нужный экран ведёт сам CALL_LAUNCH)
     LaunchedEffect(Unit) {
