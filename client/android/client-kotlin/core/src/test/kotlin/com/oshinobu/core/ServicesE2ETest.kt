@@ -176,7 +176,8 @@ class ServicesE2ETest {
         val fromBob = bob.sendText(alice, "нет, я")
         alice.transport.statusFlow.value = ConnectionStatus.CONNECTED
         bob.transport.statusFlow.value = ConnectionStatus.CONNECTED
-        net.eventually("обе отправки на сервере") { net.relay.pending.size == 2 }
+        // сервер принял обе (кто подключился первым, тому доставлено сразу — ждём ack, а не очередь сервера)
+        net.eventually("обе отправки на сервере") { alice.sendQueueStore.getAll().isEmpty() && bob.sendQueueStore.getAll().isEmpty() }
         net.relay.flush(alice.deviceId)
         net.relay.flush(bob.deviceId)
         net.eventually("оба получили") {

@@ -13,13 +13,11 @@ import com.oshinobu.app.system.AppUpdater
 import com.oshinobu.app.system.CrashDiagnostics
 import com.oshinobu.app.system.PushService
 import com.oshinobu.app.system.TransfersService
-import com.oshinobu.app.system.installedVersionCode
 import com.oshinobu.app.ui.theme.AppColors
 import com.oshinobu.compat.FlutterPrefsAdapter
 import com.oshinobu.compat.FlutterSecureStoreAdapter
 import com.oshinobu.compat.flutterAppDirs
 import com.oshinobu.core.OshinobuCore
-import com.oshinobu.core.net.ApiConfig
 import com.oshinobu.core.service.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -65,7 +63,6 @@ class OshinobuApp : Application() {
             dirs = flutterAppDirs(this),
             routerHost = routerHost,
             rtcEngine = rtc,
-            config = ApiConfig(appVersionCode = installedVersionCode()),
         )
         CrashDiagnostics.install(this)
         updater = AppUpdater(this, core)

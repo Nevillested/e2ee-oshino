@@ -137,12 +137,13 @@ class MainActivity : AppCompatActivity(), CallWindow {
             }
         }
         lifecycleScope.launch { app.calls.pipAllowed.collect(::updatePipParams) }
-        // новая версия: проверка при каждом входе в приложение и раз в час, пока оно на экране
+        // новая версия: проверка при каждом входе в приложение и дальше, пока оно на экране
+        // (из Play — каждые 5 минут у самого Play, из APK — раз в час у сервера)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 while (true) {
                     app.updater.checkForUpdate()
-                    delay(UPDATE_CHECK_INTERVAL_MS)
+                    delay(app.updater.checkIntervalMs)
                 }
             }
         }
@@ -240,8 +241,6 @@ class MainActivity : AppCompatActivity(), CallWindow {
     }
 
     companion object {
-        private const val UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000L
-
         /** Открыть приложение из уведомления. */
         fun openAppIntent(context: Context): PendingIntent = PendingIntent.getActivity(
             context,

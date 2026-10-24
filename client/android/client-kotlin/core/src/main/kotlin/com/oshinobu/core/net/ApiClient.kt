@@ -22,7 +22,6 @@ import kotlinx.serialization.json.longOrNull
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -46,11 +45,7 @@ import kotlin.coroutines.resumeWithException
 // бросается [ApiException] с КЛЮЧОМ локализации ('error.loginTaken' и т.п.) —
 // переводит его уже слой интерфейса (app: ui/Messages.kt).
 
-/**
- * [appVersionCode] — versionCode приложения: уходит в каждом запросе
- * (заголовок X-App-Version), сервер обслуживает только одну версию.
- */
-class ApiConfig(val baseUrl: String = "https://ee2e.oshino.space", val appVersionCode: Int? = null) {
+class ApiConfig(val baseUrl: String = "https://ee2e.oshino.space") {
     val wsBaseUrl: String
         get() = when {
             baseUrl.startsWith("https://") -> "wss://" + baseUrl.removePrefix("https://")
@@ -170,43 +165,22 @@ private class ProgressBody(private val delegate: RequestBody, private val onProg
 }
 
 /**
- * Версии приложения по данным сервера: [versionCode] — последняя выпущенная,
- * [minVersionCode] — самая старая, которую сервер ещё обслуживает (0 — любая),
- * [apkUrl] — откуда взять APK последней версии тем, кто ставил не из Play.
+ * Последняя выпущенная версия приложения по данным сервера: [versionCode] и
+ * [apkUrl] — откуда взять её APK тем, кто ставил не из Play.
  */
-data class AppVersionInfo(val versionCode: Int, val minVersionCode: Int, val apkUrl: String?)
+data class AppVersionInfo(val versionCode: Int, val apkUrl: String?)
 
 class ApiClient(
     val config: ApiConfig = ApiConfig(),
     /** Обычные API-запросы. */
-    http: OkHttpClient = defaultHttpClient(),
+    private val http: OkHttpClient = defaultHttpClient(),
     /** Передача файлов: большие таймауты. */
-    media: OkHttpClient = defaultMediaClient(),
+    private val media: OkHttpClient = defaultMediaClient(),
 ) {
     private val _latestVersion = MutableStateFlow<AppVersionInfo?>(null)
 
-    /**
-     * Последнее, что сервер сообщил о версиях ([getAppVersion] или ответ 426);
-     * null — ещё не спрашивали или не было связи.
-     */
+    /** Последнее, что сервер сообщил о версии ([getAppVersion]); null — ещё не спрашивали или не было связи. */
     val latestVersion: StateFlow<AppVersionInfo?> = _latestVersion.asStateFlow()
-
-    /** Заголовок версии в запрос; ответ 426 — эту версию сервер больше не обслуживает. */
-    private val versionInterceptor = Interceptor { chain ->
-        val request = config.appVersionCode?.let { chain.request().newBuilder().header(APP_VERSION_HEADER, it.toString()).build() }
-            ?: chain.request()
-        val response = chain.proceed(request)
-        if (response.code == HTTP_UPGRADE_REQUIRED) {
-            runCatching { parseAppVersion(response.peekBody(4096).string()) }.getOrNull()?.let { _latestVersion.value = it }
-        }
-        response
-    }
-
-    /** Тот же клиент, но с версией приложения в каждом запросе (для WebSocket). */
-    fun versioned(client: OkHttpClient): OkHttpClient = client.newBuilder().addInterceptor(versionInterceptor).build()
-
-    private val http: OkHttpClient = versioned(http)
-    private val media: OkHttpClient = versioned(media)
 
     /**
      * Сменилась сеть (Wi-Fi ↔ мобильная): соединения старой сети мертвы, но
@@ -226,8 +200,7 @@ class ApiClient(
         val code = (o["version_code"] as? JsonPrimitive)?.intOrNull ?: return null
         // сервер раздаёт APK сам — адрес относительный (/app/apk), дополняем адресом сервера
         val apk = o.str("apk_url")?.takeIf { it.isNotBlank() }?.let { config.baseUrl.toHttpUrl().resolve(it)?.toString() }
-        val min = (o["min_version_code"] as? JsonPrimitive)?.intOrNull ?: 0
-        return AppVersionInfo(code, min, apk)
+        return AppVersionInfo(code, apk)
     }
 
     /**
@@ -256,8 +229,6 @@ class ApiClient(
             .writeTimeout(1, TimeUnit.MINUTES)
             .build()
 
-        const val APP_VERSION_HEADER = "X-App-Version"
-        const val HTTP_UPGRADE_REQUIRED = 426
 
         /** Короткие "фоновые" запросы — не дольше 8 с. */
         private const val SHORT_TIMEOUT_MS = 8_000L
@@ -361,12 +332,11 @@ class ApiClient(
         return obj(body).str("totp_url")!!
     }
 
-    /** true — сессия жива, false — сервер её отверг (вход с другого устройства), null — сеть. */
     /**
      * true — сессия жива, false — сервер её больше не признаёт (401: вошли на
-     * другом устройстве), null — неизвестно. Только 401 — повод выйти: 426
-     * (версия приложения устарела), 5xx на время перезапуска сервера и т. п.
-     * сессию не отменяют — выход по ним стирал бы ключи и всю переписку.
+     * другом устройстве), null — неизвестно. Только 401 — повод выйти: 5xx на
+     * время перезапуска сервера и т. п. сессию не отменяют — выход по ним
+     * стирал бы ключи и всю переписку.
      */
     suspend fun checkSession(token: String): Boolean? = try {
         when (callShort(req("/session/check", token).get().build()).first) {

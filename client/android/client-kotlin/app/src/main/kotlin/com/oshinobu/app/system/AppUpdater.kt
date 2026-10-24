@@ -9,6 +9,9 @@ import android.os.Build
 import android.provider.Settings
 import androidx.annotation.StringRes
 import androidx.core.content.FileProvider
+import com.google.android.play.core.appupdate.AppUpdateInfo
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.install.model.UpdateAvailability
 import com.oshinobu.app.R
 import com.oshinobu.core.OshinobuCore
 import com.oshinobu.core.net.AppVersionInfo
@@ -19,16 +22,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 
 /** versionCode установленного приложения. */
 fun Context.installedVersionCode(): Int = packageInfoVersion(packageManager.getPackageInfo(packageName, 0))
@@ -65,11 +71,16 @@ sealed interface ApkState {
 }
 
 /**
- * Обновление приложения. Последнюю версию сообщает сервер ([checkForUpdate] — при входе в
- * приложение и раз в час, плюс любой ответ 426); новее установленной — [available],
- * на главном экране появляется кнопка «Обновить приложение».
+ * Обновление приложения: есть что ставить — [updateReady], на главном экране кнопка
+ * «Обновить приложение». Проверка ([checkForUpdate]) — при каждом входе в приложение и
+ * дальше каждые [checkIntervalMs], пока оно на экране:
+ *  - установка из Play — спрашиваем сам Play: кнопка появляется, только когда Play
+ *    действительно готов обновить (публикация до телефона доходит не сразу), и по ней
+ *    открывается его окно обновления; наш сервер для кнопки не нужен;
+ *  - установка из APK — последнюю версию сообщает сервер, новее установленной —
+ *    [available].
  *
- * Установки из Play обновляются через Play. Остальным — APK с сервера, и без
+ * Установки не из Play — APK с сервера, и без
  * лишних скачиваний: APK живёт в files/updates/ (кэш система может стереть сама)
  * до тех пор, пока установленная версия его не догонит; уже скачанный APK
  * последней версии ставится сразу, оборванное скачивание продолжается с места
@@ -96,6 +107,16 @@ class AppUpdater(private val context: Context, private val core: OshinobuCore) {
         .map { latest -> latest?.takeIf { it.versionCode > installedVersion } }
         .stateIn(core.scope, SharingStarted.Eagerly, null)
 
+    private val playUpdate = MutableStateFlow(false)
+
+    /** Есть что ставить — показать кнопку «Обновить приложение». */
+    val updateReady: StateFlow<Boolean> =
+        combine(available, playUpdate) { server, play -> if (fromPlay) play else server != null }
+            .stateIn(core.scope, SharingStarted.Eagerly, false)
+
+    /** Как часто проверять, пока приложение на экране: Play отвечает с телефона, без нашего сервера. */
+    val checkIntervalMs: Long = if (fromPlay) PLAY_CHECK_INTERVAL_MS else SERVER_CHECK_INTERVAL_MS
+
     private val _apkState = MutableStateFlow<ApkState>(ApkState.Idle)
     val apkState: StateFlow<ApkState> = _apkState.asStateFlow()
 
@@ -105,9 +126,27 @@ class AppUpdater(private val context: Context, private val core: OshinobuCore) {
         core.scope.launch { removeStale() }
     }
 
-    /** Спросить у сервера последнюю версию (результат — в [available]). */
+    /** Проверить, есть ли обновление (результат — в [updateReady]). */
     suspend fun checkForUpdate() {
-        core.api.getAppVersion()
+        if (fromPlay) checkPlay() else core.api.getAppVersion()
+    }
+
+    /** Что Play знает об обновлении этой установки; null — Play не ответил. */
+    suspend fun playUpdateInfo(): AppUpdateInfo? = suspendCancellableCoroutine { cont ->
+        AppUpdateManagerFactory.create(context).appUpdateInfo
+            .addOnSuccessListener { cont.resume(it) }
+            .addOnFailureListener { cont.resume(null) }
+    }
+
+    private suspend fun checkPlay() {
+        val info = playUpdateInfo() ?: return
+        // начатое и брошенное обновление тоже считается: по кнопке Play его продолжит
+        val ready = info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE ||
+            info.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
+        if (ready != playUpdate.value) {
+            core.logger.log("Update via Play: ready=$ready availableVersionCode=${info.availableVersionCode()} installed=$installedVersion")
+        }
+        playUpdate.value = ready
     }
 
     /**
@@ -272,5 +311,7 @@ class AppUpdater(private val context: Context, private val core: OshinobuCore) {
         const val APK_NAME = "oshinobu.apk"
         const val APK_MIME = "application/vnd.android.package-archive"
         const val HTTP_RANGE_NOT_SATISFIABLE = 416
+        const val PLAY_CHECK_INTERVAL_MS = 5 * 60_000L
+        const val SERVER_CHECK_INTERVAL_MS = 60 * 60_000L
     }
 }

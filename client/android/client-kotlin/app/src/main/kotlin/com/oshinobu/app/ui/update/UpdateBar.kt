@@ -62,8 +62,6 @@ import com.oshinobu.app.ui.theme.LocalAppColors
 import com.oshinobu.core.net.AppVersionInfo
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 import kotlin.math.roundToInt
 
 private const val BAR_MS = 350
@@ -71,8 +69,8 @@ private const val BAR_MS = 350
 /**
  * Кнопка «Обновить приложение» под панелью вкладок главного экрана — во всю
  * ширину, со скруглёнными верхними углами, в цветах темы; фон уходит под
- * системную панель навигации. Появляется, когда сервер сообщил о версии новее
- * установленной: выезжает снизу, а содержимое экрана (и панель вкладок)
+ * системную панель навигации. Появляется, когда есть что ставить
+ * ([com.oshinobu.app.system.AppUpdater.updateReady]): выезжает снизу, а содержимое экрана (и панель вкладок)
  * поднимается вместе с ней. Место под системной панелью держится всегда — как
  * без кнопки, поэтому ни появление, ни уход ничего не дёргают.
  */
@@ -81,9 +79,10 @@ fun UpdateBar() {
     val context = LocalContext.current
     val colors = LocalAppColors.current
     val updater = context.app.updater
+    val ready by updater.updateReady.collectAsState()
     val available by updater.available.collectAsState()
     val shown by animateFloatAsState(
-        if (available != null) 1f else 0f,
+        if (ready) 1f else 0f,
         tween(BAR_MS, easing = FastOutSlowInEasing),
         label = "updateBar",
     )
@@ -110,10 +109,10 @@ fun UpdateBar() {
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
                 .background(colors.primary)
-                .clickable(enabled = available != null) {
-                    val latest = available ?: return@clickable
+                .clickable(enabled = ready) {
+                    val latest = available
                     // APK не выложен — обновляться всё равно есть откуда: из Play
-                    if (updater.fromPlay || latest.apkUrl == null) {
+                    if (updater.fromPlay || latest?.apkUrl == null) {
                         updateFromPlay()
                     } else {
                         dialog = latest
@@ -218,13 +217,11 @@ private fun rememberPlayUpdate(): () -> Unit {
     return remember(context) {
         {
             scope.launch {
-                val manager = AppUpdateManagerFactory.create(context)
-                val update = suspendCancellableCoroutine { cont ->
-                    manager.appUpdateInfo.addOnSuccessListener { cont.resume(it) }.addOnFailureListener { cont.resume(null) }
-                }
+                val update = context.app.updater.playUpdateInfo()
                 val options = AppUpdateOptions.defaultOptions(AppUpdateType.IMMEDIATE)
-                if (update != null && update.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE && update.isUpdateTypeAllowed(options)) {
-                    manager.startUpdateFlowForResult(update, launcher, options)
+                val resumable = update?.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
+                if (update != null && (resumable || update.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE && update.isUpdateTypeAllowed(options))) {
+                    AppUpdateManagerFactory.create(context).startUpdateFlowForResult(update, launcher, options)
                 } else {
                     context.openPlayPage()
                 }

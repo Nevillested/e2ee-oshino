@@ -11,31 +11,21 @@ import (
 	"strings"
 )
 
-// AppVersion — какие версии клиента обслуживает сервер.
-//
-//   - VersionCode — последняя выпущенная версия: клиент, у которого установлена
-//     старше, показывает на главном экране кнопку «Обновить приложение» (без
-//     блокировки — старая версия продолжает работать);
-//   - MinVersionCode — самая старая версия, которую сервер ещё обслуживает:
-//     клиенту старше неё любой запрос (кроме versionExempt) отвечает 426 с этой
-//     же информацией. Новее последней — пропускается (сборку уже выпустили в
-//     Play, а сервер ещё не задеплоен).
-//
-// Оба номера берутся из app-version.properties в корне репозитория (versionCode,
-// minVersionCode) — того же файла, по которому собирается Android-клиент: поднял
-// версию, закоммитил, deploy.sh — без правки .env. Нет minVersionCode — старые
-// версии не отсекаются. Остальное — переменными окружения:
+// AppVersion — последняя выпущенная версия приложения (versionCode из
+// app-version.properties в корне репозитория — того же файла, по которому
+// собирается Android-клиент: поднял версию, закоммитил, deploy.sh). Клиент,
+// поставленный из APK, у которого установлена старше, показывает на главном
+// экране кнопку «Обновить приложение»; установленные из Play узнают об
+// обновлении у самого Play. Сервер обслуживает любую версию клиента. Остальное —
+// переменными окружения:
 //
 //	APP_APK_DIR      — папка, где лежит oshinobu.apk последней версии: сервер сам
 //	                   раздаёт его по GET /app/apk тем, кто ставил не из Google Play;
 //	APP_APK_URL      — APK лежит где-то ещё: полный адрес вместо /app/apk.
-//
-// Установленные из Play обновляются через Play — им apk_url не нужен.
 type AppVersion struct {
-	VersionCode    int    `json:"version_code"`
-	MinVersionCode int    `json:"min_version_code"`
-	ApkURL         string `json:"apk_url"`
-	ApkDir         string `json:"-"`
+	VersionCode int    `json:"version_code"`
+	ApkURL      string `json:"apk_url"`
+	ApkDir      string `json:"-"`
 }
 
 // ApkFileName — имя APK в APP_APK_DIR.
@@ -43,9 +33,6 @@ const ApkFileName = "oshinobu.apk"
 
 // ApkPath — маршрут, по которому сервер раздаёт APK из APP_APK_DIR.
 const ApkPath = "/app/apk"
-
-// AppVersionHeader — заголовок, в котором клиент сообщает свой versionCode.
-const AppVersionHeader = "X-App-Version"
 
 // AppVersionFile — общий с клиентом файл версии, относительно рабочей папки
 // сервера (server/, см. WorkingDirectory в systemd-юните).
@@ -55,14 +42,12 @@ func LoadAppVersion(versionFile string) AppVersion {
 	if os.Getenv("APP_VERSION_CODE") != "" {
 		log.Printf("app version: APP_VERSION_CODE в .env больше не используется — версия берётся из %s; строку можно удалить", versionFile)
 	}
-	props := readProperties(versionFile)
 	v := AppVersion{
-		VersionCode:    propertyInt(versionFile, props, "versionCode"),
-		MinVersionCode: propertyInt(versionFile, props, "minVersionCode"),
-		ApkURL:         os.Getenv("APP_APK_URL"),
-		ApkDir:         os.Getenv("APP_APK_DIR"),
+		VersionCode: propertyInt(versionFile, readProperties(versionFile), "versionCode"),
+		ApkURL:      os.Getenv("APP_APK_URL"),
+		ApkDir:      os.Getenv("APP_APK_DIR"),
 	}
-	log.Printf("app version: последняя %d, обслуживаются с %d", v.VersionCode, v.MinVersionCode)
+	log.Printf("app version: последняя %d", v.VersionCode)
 	return v
 }
 
@@ -127,17 +112,11 @@ func (v AppVersion) withApkURL() AppVersion {
 	return v
 }
 
-func (v AppVersion) writeJSON(w http.ResponseWriter, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v.withApkURL())
-}
-
-// NewAppVersionHandler — GET /app/version: последняя версия, самая старая
-// обслуживаемая и откуда взять APK.
+// NewAppVersionHandler — GET /app/version: последняя версия и откуда взять её APK.
 func NewAppVersionHandler(v AppVersion) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		v.writeJSON(w, http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(v.withApkURL())
 	}
 }
 
@@ -154,37 +133,4 @@ func NewAppApkHandler(v AppVersion) func(http.ResponseWriter, *http.Request) {
 		w.Header().Set("Content-Disposition", `attachment; filename="`+ApkFileName+`"`)
 		http.ServeFile(w, r, path)
 	}
-}
-
-// versionExempt — маршруты, доступные любой версии клиента:
-//   - /app/version, /app/apk — устаревшему клиенту надо узнать, что он устарел,
-//     и откуда-то скачать новую версию;
-//   - /session/check — только сверяет токен, ничего не отдаёт; клиенты 1.0.0+44
-//     и +45 считали ЛЮБОЙ не-200 ответ на него (в т. ч. 426) отменой сессии и
-//     выходили из аккаунта со стиранием ключей — при подъёме minVersionCode
-//     такой клиент обязан получить здесь честный ответ;
-//   - /health.
-var versionExempt = map[string]bool{
-	"/app/version":   true,
-	ApkPath:          true,
-	"/session/check": true,
-	"/health":        true,
-}
-
-// RequireAppVersion не пускает к остальным маршрутам (кроме versionExempt)
-// клиентов старше MinVersionCode и запросы без версии.
-func RequireAppVersion(v AppVersion, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if v.MinVersionCode == 0 || versionExempt[r.URL.Path] {
-			next.ServeHTTP(w, r)
-			return
-		}
-		client, err := strconv.Atoi(r.Header.Get(AppVersionHeader))
-		if err != nil || client < v.MinVersionCode {
-			log.Printf("app version: отказ %s %s — версия клиента %q, обслуживаются с %d", r.Method, r.URL.Path, r.Header.Get(AppVersionHeader), v.MinVersionCode)
-			v.writeJSON(w, http.StatusUpgradeRequired)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }

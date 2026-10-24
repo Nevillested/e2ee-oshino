@@ -73,7 +73,7 @@ interface CallSignaling {
 class WebSocketClient(
     private val api: ApiClient,
     private val scope: CoroutineScope,
-    private val okHttp: OkHttpClient = api.versioned(OkHttpClient.Builder().pingInterval(45, TimeUnit.SECONDS).build()),
+    private val okHttp: OkHttpClient = OkHttpClient.Builder().pingInterval(45, TimeUnit.SECONDS).build(),
     private val readyTimeoutMs: Long = 8_000,
     private val reconnectDelayMs: Long = 3_000,
     private val callSignalWaitMs: Long = 5_000,
@@ -267,11 +267,6 @@ class WebSocketClient(
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            if (response?.code == ApiClient.HTTP_UPGRADE_REQUIRED) {
-                // эта версия приложения больше не обслуживается — переподключаться бессмысленно
-                log("WS rejected: app version not supported")
-                return
-            }
             log("WS failure: $t — reconnecting")
             scheduleReconnect(gen)
         }

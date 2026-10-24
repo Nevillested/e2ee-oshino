@@ -79,6 +79,7 @@ class SendQueueProcessor(
 
     private suspend fun attempt(id: String, toDeviceId: String, envelope: JsonObject, silent: Boolean, messageId: String?, peerLogin: String?) {
         if (!inFlight.add(id)) return // уже в полёте — не дублируем попытку
+        var sentOffline = false
         try {
             val ack = acks.waiter(id)
             try {
@@ -86,6 +87,7 @@ class SendQueueProcessor(
             } catch (e: Exception) {
                 acks.cancel(id)
                 log.log("SendQueueProcessor id=$id not sent (offline): $e")
+                sentOffline = true
                 return
             }
             try {
@@ -113,6 +115,9 @@ class SendQueueProcessor(
             finalizeAcked(id, messageId, peerLogin)
         } finally {
             inFlight.remove(id)
+            // связь появилась, пока эта попытка ещё шла: обход очереди на переподключении её
+            // пропустил («в полёте») — без повтора здесь конверт ждал бы следующего переподключения
+            if (sentOffline && transport.isConnected) scope.launch { attempt(id, toDeviceId, envelope, silent, messageId, peerLogin) }
         }
     }
 

@@ -72,34 +72,26 @@ class NetTest {
     }
 
     @Test
-    fun `сессию отменяет только 401 — устаревшая версия и сбои сервера не выход`() = runBlocking {
-        for ((code, expected) in listOf(200 to true, 401 to false, 426 to null, 502 to null, 500 to null)) {
+    fun `сессию отменяет только 401 — сбои сервера не выход`() = runBlocking {
+        for ((code, expected) in listOf(200 to true, 401 to false, 502 to null, 500 to null)) {
             server.enqueue(MockResponse().setResponseCode(code).setBody("{}"))
             assertEquals(expected, api.checkSession("tok"), "HTTP $code")
         }
     }
 
     @Test
-    fun `версии приложения — из GET app-version и из ответа 426`() = runBlocking {
-        val versioned = ApiClient(ApiConfig(server.url("/").toString().trimEnd('/'), appVersionCode = 68))
-        server.enqueue(MockResponse().setBody("""{"version_code":70,"min_version_code":66,"apk_url":"/app/apk"}"""))
-        val info = versioned.getAppVersion()
+    fun `последняя версия приложения — из GET app-version`() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"version_code":70,"apk_url":"/app/apk"}"""))
+        val info = api.getAppVersion()
         assertEquals(70, info?.versionCode)
-        assertEquals(66, info?.minVersionCode)
         assertEquals(server.url("/app/apk").toString(), info?.apkUrl)
-        assertEquals(info, versioned.latestVersion.value)
-        assertEquals("68", server.takeRequest().getHeader(ApiClient.APP_VERSION_HEADER))
-
-        // сервер без minVersionCode и без APK
-        server.enqueue(MockResponse().setBody("""{"version_code":71,"apk_url":""}"""))
-        assertEquals(0, versioned.getAppVersion()?.minVersionCode)
-        assertEquals(null, versioned.latestVersion.value?.apkUrl)
+        assertEquals(info, api.latestVersion.value)
         server.takeRequest()
 
-        // любой запрос получил 426 — сведения о версиях из его тела
-        server.enqueue(MockResponse().setResponseCode(426).setBody("""{"version_code":72,"min_version_code":72,"apk_url":""}"""))
-        assertEquals(null, versioned.checkSession("tok"))
-        assertEquals(72, versioned.latestVersion.value?.minVersionCode)
+        // APK на сервере не выложен
+        server.enqueue(MockResponse().setBody("""{"version_code":71,"apk_url":""}"""))
+        assertEquals(71, api.getAppVersion()?.versionCode)
+        assertEquals(null, api.latestVersion.value?.apkUrl)
     }
 
     @Test
