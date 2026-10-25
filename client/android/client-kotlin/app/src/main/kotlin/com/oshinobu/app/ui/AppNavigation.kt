@@ -49,6 +49,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
@@ -196,10 +198,17 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
     val str = listOf(navArgument("login") { type = NavType.StringType }, navArgument("url") { type = NavType.StringType })
     val dispatcher = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
     // со звонка свайпом не уходят — только кнопками экрана
-    val swipeBack = remember(dispatcher, nav) {
-        SwipeBackController(dispatcher) {
-            nav.previousBackStackEntry != null && nav.currentBackStackEntry?.destination?.route !in Routes.CALL_ROUTES
-        }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val swipeBack = remember(dispatcher, nav, keyboard, focusManager) {
+        SwipeBackController(
+            dispatcher,
+            canSwipe = { nav.previousBackStackEntry != null && nav.currentBackStackEntry?.destination?.route !in Routes.CALL_ROUTES },
+            onStarted = {
+                keyboard?.hide()
+                focusManager.clearFocus()
+            },
+        )
     }
     // плеер голосовых и видеосообщений — один на всё приложение: выход из чата его не останавливает
     val playback = remember { PlaybackCoordinator(scope) }

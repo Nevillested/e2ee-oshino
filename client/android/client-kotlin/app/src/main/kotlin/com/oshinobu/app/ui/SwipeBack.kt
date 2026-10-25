@@ -27,6 +27,11 @@ class SwipeBackController(
      * перерисовке, не успевал за сменой экрана — свайп не срабатывал вовсе.
      */
     private val canSwipe: () -> Boolean,
+    /**
+     * Свайп начался — убрать клавиатуру сразу: иначе она опускалась, только когда
+     * экран уже закрылся и поле ввода потеряло фокус, — после появления списка.
+     */
+    private val onStarted: () -> Unit = {},
 ) {
     val enabled: Boolean get() = canSwipe()
     private var active = false
@@ -34,6 +39,7 @@ class SwipeBackController(
     fun start(): Boolean {
         if (active || !canSwipe()) return false
         active = true
+        onStarted()
         dispatcher.dispatchOnBackStarted(BackEventCompat(0f, 0f, 0f, BackEventCompat.EDGE_LEFT))
         return true
     }

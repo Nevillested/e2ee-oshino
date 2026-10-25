@@ -25,9 +25,15 @@ enum class AudioRoute { EARPIECE, SPEAKER, WIRED_HEADSET, BLUETOOTH }
  *  - нет Bluetooth: громкая связь вкл/выкл; иначе — проводные наушники,
  *    если подключены, или динамик у уха;
  *  - есть Bluetooth: по умолчанию он, остальные выходы — выбором из списка;
- *  - у уха (подключено, динамик у уха) — экран гаснет по датчику; любой другой
- *    выход (громкая связь, наушники) — датчик экран не трогает;
+ *  - датчик приближения гасит экран ТОЛЬКО в разговоре через динамик у уха (чтобы
+ *    не нажать щекой); громкая связь, наушники, гудки, конец звонка — экран не
+ *    трогает никогда;
  *  - гудки исходящего — явно в тот же выход, что и разговор.
+ *
+ * Вызывается с разных потоков (состояние звонка — из ядра, смена устройств — с
+ * главного, кнопки — из интерфейса), поэтому всё под одной блокировкой: раньше
+ * два потока могли одновременно взять блокировку экрана по датчику, а отпускалась
+ * одна — экран продолжал гаснуть у лица и после звонка.
  */
 class CallAudio(private val context: Context, private val log: Logger) {
     private val am = context.getSystemService(AudioManager::class.java)
@@ -57,6 +63,7 @@ class CallAudio(private val context: Context, private val log: Logger) {
     val hasBluetooth: Boolean get() = AudioRoute.BLUETOOTH in _routes.value
 
     /** Начало звонка: режим связи, разговорный динамик. */
+    @Synchronized
     fun start() {
         if (active) return
         active = true
@@ -67,6 +74,7 @@ class CallAudio(private val context: Context, private val log: Logger) {
         refresh()
     }
 
+    @Synchronized
     fun stop() {
         if (!active) return
         active = false
@@ -88,12 +96,14 @@ class CallAudio(private val context: Context, private val log: Logger) {
     }
 
     /** Звонок соединён/нет — от этого зависит гашение экрана у уха. */
+    @Synchronized
     fun setConnected(value: Boolean) {
         connected = value
         updateProximity()
     }
 
     /** Кнопка "громкая связь" (без Bluetooth). */
+    @Synchronized
     fun toggleSpeaker() {
         if (hasBluetooth) return
         speakerOn = !speakerOn
@@ -101,6 +111,7 @@ class CallAudio(private val context: Context, private val log: Logger) {
     }
 
     /** Включить громкую связь, если она ещё не включена (первое видео собеседника). */
+    @Synchronized
     fun ensureSpeaker() {
         if (hasBluetooth || speakerOn) return
         speakerOn = true
@@ -108,12 +119,14 @@ class CallAudio(private val context: Context, private val log: Logger) {
     }
 
     /** Выбор из списка выходов (при Bluetooth). */
+    @Synchronized
     fun select(route: AudioRoute) {
         picked = route
         speakerOn = route == AudioRoute.SPEAKER
         apply()
     }
 
+    @Synchronized
     private fun refresh() {
         if (!active) return
         val outs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
@@ -183,27 +196,32 @@ class CallAudio(private val context: Context, private val log: Logger) {
     }
 
     /**
-     * Экран гаснет у уха — только в разговоре через динамик у уха. Перешли на
-     * громкую связь или наушники — телефон убрали от уха: экран включается сразу,
-     * не дожидаясь, пока датчик освободится (раньше с флагом «ждать» экран так и
-     * оставался погашенным, если датчик был чем-то закрыт — рукой, чехлом).
-     * Разговор кончился — ждём, пока телефон отнимут от уха, чтобы не нажать щекой.
+     * Экран гаснет у уха — только в разговоре через динамик у уха. Всё остальное
+     * (громкая связь, наушники, гудки, конец звонка) — блокировка снимается сразу,
+     * не дожидаясь, пока датчик освободится: с флагом «ждать» экран оставался
+     * погашенным, если датчик был чем-то закрыт (рука, чехол), и после звонка.
      */
     private fun updateProximity() {
         val shouldHold = active && connected && _route.value == AudioRoute.EARPIECE
         val pm = context.getSystemService(PowerManager::class.java)
         if (shouldHold && proximity == null && pm.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
-            proximity = pm.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "oshinobu:call_proximity").apply { acquire(4 * 60 * 60_000L) }
+            proximity = pm.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "oshinobu:call_proximity").apply {
+                // не по счётчику: одна блокировка — одно «отпустить», лишний захват ничего не оставит висеть
+                setReferenceCounted(false)
+                acquire(4 * 60 * 60_000L)
+            }
             log.log("CallAudio proximity on")
         } else if (!shouldHold && proximity != null) {
-            val callGoesOn = active && connected
-            proximity?.let { if (it.isHeld) it.release(if (callGoesOn) 0 else PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY) }
+            // сразу, без «дождаться, пока датчик освободится» — вне разговора у уха экран
+            // не должен гаснуть ни на миг
+            proximity?.let { if (it.isHeld) it.release() }
             proximity = null
-            log.log("CallAudio proximity off (route=${_route.value}, call ${if (callGoesOn) "goes on" else "ended"})")
+            log.log("CallAudio proximity off (route=${_route.value}, active=$active connected=$connected)")
         }
     }
 
     /** Гудки исходящего — в выбранный выход разговора. */
+    @Synchronized
     fun startRingback() {
         if (ringback != null) return
         ringback = MediaPlayer().apply {
@@ -223,6 +241,7 @@ class CallAudio(private val context: Context, private val log: Logger) {
         }
     }
 
+    @Synchronized
     fun stopRingback() {
         ringback?.release()
         ringback = null
