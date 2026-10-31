@@ -1,0 +1,56 @@
+# Проект Xcode генерируется из этого файла: на Mac — `brew install xcodegen`,
+# затем `xcodegen` в этой папке → Oshinobu.xcodeproj (сам .xcodeproj в git не кладём).
+name: Oshinobu
+options:
+  bundleIdPrefix: space.oshino
+  deploymentTarget:
+    iOS: "17.0"
+  developmentLanguage: en
+packages:
+  OshinobuCore:
+    path: ../OshinobuCore
+  WebRTC:
+    url: https://github.com/stasel/WebRTC
+    from: "120.0.0"
+  Lottie:
+    url: https://github.com/airbnb/lottie-spm
+    from: "4.4.0"
+targets:
+  Oshinobu:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Resources
+    dependencies:
+      - package: OshinobuCore
+      - package: WebRTC
+      - package: Lottie
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: Oshinobu
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UIBackgroundModes: [audio, voip, remote-notification, fetch]
+        NSMicrophoneUsageDescription: "Oshinobu uses the microphone for calls and voice messages."
+        NSCameraUsageDescription: "Oshinobu uses the camera for video calls, photos and video messages."
+        NSPhotoLibraryUsageDescription: "Oshinobu needs access to your photos to send them."
+        NSPhotoLibraryAddUsageDescription: "Oshinobu saves photos and videos you choose to your library."
+        NSFaceIDUsageDescription: "Unlock Oshinobu with Face ID."
+        ITSAppUsesNonExemptEncryption: true
+        CFBundleLocalizations: [en, ru]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: space.oshino.oshinobu
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: YES
+    entitlements:
+      path: Sources/Oshinobu.entitlements
+      properties:
+        aps-environment: development

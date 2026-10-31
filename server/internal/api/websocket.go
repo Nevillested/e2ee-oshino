@@ -295,9 +295,7 @@ func wakeWithPush(ctx context.Context, queries *db.Queries, toDeviceUUID pgtype.
 		return
 	}
 
-	if token, err := queries.GetPushTokenByDevice(ctx, toDeviceUUID); err == nil {
-		push.SendDataPush(ctx, token.FcmToken, push.TypeMessage, nil)
-	}
+	sendPush(ctx, queries, toDeviceUUID, push.TypeMessage, nil)
 }
 
 // tryLiveDeliverOnce — одна попытка доставить УЖЕ ГАРАНТИРОВАННО
@@ -327,7 +325,7 @@ func tryLiveDeliverOnce(ctx context.Context, registry *ConnectionRegistry, acks 
 	if writeErr := conn.Write(ctx, wireMsgType, relayBytes); writeErr != nil {
 		log.Printf("получатель считался онлайн, но запись не удалась (зомби-соединение): %v", writeErr)
 		acks.Cancel(relay.DeliveryId)
-		registry.RemoveIfCurrent(toDeviceId, conn)
+		registry.DropZombie(toDeviceId, conn)
 		return false
 	}
 
@@ -456,6 +454,9 @@ func startHeartbeat(ctx context.Context, ws_object *websocket.Conn, deviceID str
 				cancel()
 				if err != nil {
 					log.Printf("heartbeat: устройство %s не ответило на ping вовремя, соединение закрыто как зомби: %v", deviceID, err)
+					// закрыть по-настоящему: readLoop получит ошибку, устройство
+					// уйдёт из реестра, клиент переподключится
+					ws_object.CloseNow()
 					return
 				}
 			}
@@ -897,7 +898,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 					if write_error != nil {
 						log.Printf("получатель считался онлайн, но запись звонка не удалась (зомби-соединение): %v", write_error)
 						acks.Cancel(deliveryID)
-						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
+						registry.DropZombie(NewWSMsgFrom.ToDeviceId, ConnReceiver)
 					} else {
 						select {
 						case <-ackChan:
@@ -905,7 +906,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						case <-time.After(5 * time.Second):
 							log.Printf("получатель не подтвердил звонок за 5с, считаем офлайн (зомби-соединение)")
 							acks.Cancel(deliveryID)
-							registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
+							registry.DropZombie(NewWSMsgFrom.ToDeviceId, ConnReceiver)
 						}
 					}
 				}
@@ -920,33 +921,47 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						toDeviceID := NewWSMsgFrom.ToDeviceId
 						callID := callPayload.CallID
 						pendingCalls.Start(toDeviceID, callID, DeviceID, message, callRingTTL, func() {
+							// "недоступен" — только если звонок так никто и не забрал:
+							// раньше уходил безусловно и обрывал уже идущий разговор,
+							// когда offer дошёл до получателя мимо очереди отложенных
+							if !pendingCalls.Expire(toDeviceID, callID) {
+								return
+							}
 							if callerConn, ok := registry.Get(DeviceID); ok {
 								if err := respondCallUnavailable(context.Background(), callerConn); err != nil {
 									log.Printf("ошибка отправки call_unavailable по истечении ожидания: %v", err)
 								}
 							}
-							pendingCalls.Expire(toDeviceID, callID)
 						})
 
 						var toDeviceUUID pgtype.UUID
 						if uuidErr := toDeviceUUID.Scan(toDeviceID); uuidErr == nil {
-							if token, err := queries.GetPushTokenByDevice(r.Context(), toDeviceUUID); err == nil {
-								// caller_device_id — тот же класс данных, что и call_id: непрозрачный
-								// UUID, ничего не раскрывающий без отдельного авторизованного запроса
-								// (см. GetDeviceOwnerInfo на клиенте). Нужен нативной стороне клиента
-								// (CallDeclineReceiver), чтобы при отклонении звонка из полностью
-								// закрытого приложения было о ком записать пропущенный звонок в
-								// локальную историю чата при следующем запуске.
-								push.SendDataPush(r.Context(), token.FcmToken, push.TypeCall, map[string]string{
-									"call_id":          callID,
-									"caller_device_id": DeviceID,
-								})
-							}
+							// caller_device_id — тот же класс данных, что и call_id: непрозрачный
+							// UUID, ничего не раскрывающий без отдельного авторизованного запроса
+							// (см. GetDeviceOwnerInfo на клиенте). Нужен нативной стороне клиента
+							// (CallDeclineReceiver), чтобы при отклонении звонка из полностью
+							// закрытого приложения было о ком записать пропущенный звонок в
+							// локальную историю чата при следующем запуске.
+							sendPush(r.Context(), queries, toDeviceUUID, push.TypeCall, map[string]string{
+								"call_id":          callID,
+								"caller_device_id": DeviceID,
+							})
 						}
 					}
 				}
 
 			} else if strings.HasPrefix(MessageType, "call_") {
+
+				// Получатель отложенного звонка сам шлёт по нему сигнал (ответ,
+				// отказ, ICE) — значит, offer до него дошёл (например, живьём, но
+				// ack опоздал из-за медленной связи): ждать больше нечего, снимаем
+				// запись вместе с TTL-таймером.
+				var ownCall CallSignalPayload
+				if json.Unmarshal([]byte(NewWSMsgFrom.Ciphertext), &ownCall) == nil && ownCall.CallID != "" {
+					if pendingCalls.TakeIfSame(DeviceID, ownCall.CallID) != nil {
+						log.Printf("отложенный звонок %s снят: получатель уже отвечает по нему", ownCall.CallID)
+					}
+				}
 
 				if Status == true {
 					var write_error = ConnReceiver.Write(r.Context(), message_type, message)
@@ -958,7 +973,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						// Чистим стухший реестр получателя и просто идём дальше
 						// читать следующий кадр отправителя.
 						log.Printf("ошибка доставки %s получателю (зомби-соединение): %v", MessageType, write_error)
-						registry.RemoveIfCurrent(NewWSMsgFrom.ToDeviceId, ConnReceiver)
+						registry.DropZombie(NewWSMsgFrom.ToDeviceId, ConnReceiver)
 					}
 				} else {
 					var callPayload CallSignalPayload
@@ -977,9 +992,7 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 							// сейчас.
 							var toDeviceUUID pgtype.UUID
 							if uuidErr := toDeviceUUID.Scan(NewWSMsgFrom.ToDeviceId); uuidErr == nil {
-								if token, err := queries.GetPushTokenByDevice(r.Context(), toDeviceUUID); err == nil {
-									push.SendDataPush(r.Context(), token.FcmToken, push.TypeCallCancel, nil)
-								}
+								sendPush(r.Context(), queries, toDeviceUUID, push.TypeCallCancel, map[string]string{"call_id": callPayload.CallID})
 							}
 						}
 

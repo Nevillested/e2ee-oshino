@@ -134,6 +134,7 @@ func main() {
 	mux.HandleFunc("GET /turn-credentials", api.NewTurnCredentialsHandler(queries))
 	mux.HandleFunc("POST /push/register", api.NewRegisterPushTokenHandler(queries))
 	mux.HandleFunc("DELETE /push/register", api.NewUnregisterPushTokenHandler(queries))
+	mux.HandleFunc("POST /push/register-apns", api.NewRegisterApnsTokensHandler(queries))
 	mux.HandleFunc("POST /calls/decline", api.NewDeclineCallHandler(queries, registry, pendingCalls))
 	mux.HandleFunc("PUT /account/language", api.NewUpdateLanguageHandler(queries))
 	mux.HandleFunc("PUT /account/email", api.NewUpdateEmailHandler(queries))

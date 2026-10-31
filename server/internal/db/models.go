@@ -32,6 +32,14 @@ type AccountStickerPack struct {
 	AddedAt   pgtype.Timestamptz
 }
 
+type ApnsToken struct {
+	DeviceID   pgtype.UUID
+	AlertToken pgtype.Text
+	VoipToken  pgtype.Text
+	Sandbox    bool
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type ChatMute struct {
 	AccountID     pgtype.UUID
 	PeerAccountID pgtype.UUID
