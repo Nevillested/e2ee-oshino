@@ -101,6 +101,7 @@
     <string name="chat_negotiating">Согласование с собеседником…</string>
     <string name="chat_openFileFailed">Не удалось открыть файл</string>
     <string name="chat_pinnedMessage">Закреплённое сообщение</string>
+    <string name="chat_scrollToBottom">К последним сообщениям</string>
     <string name="chat_queued">В очереди</string>
     <string name="chat_replyDeleted">Удалённое сообщение</string>
     <string name="chat_replyYou">Вы</string>

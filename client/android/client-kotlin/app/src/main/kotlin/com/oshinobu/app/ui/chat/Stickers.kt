@@ -13,6 +13,7 @@ import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animateFloatAsState
@@ -49,7 +50,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -62,13 +66,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -513,6 +517,10 @@ fun StickerGrid(
 
 private const val RECENT = "recent"
 
+/** Проявление пака по нажатию на его кнопку: коротко, лишь бы не рывком. */
+private const val PACK_APPEAR_MS = 160
+private const val PACK_APPEAR_SCALE = 0.97f
+
 /**
  * Панель стикеров: сверху — неподвижная строка-пузырь (прокручивается
  * вбок): "Недавние" (открыты по умолчанию), установленные паки (новые
@@ -531,12 +539,41 @@ fun StickerPanel(
     val stickers = context.app.core.stickers
     val installed by stickers.installed.collectAsState()
     val recent by stickers.recent.collectAsState()
-    var selected by remember { mutableStateOf(RECENT) }
     var removeAsk by remember { mutableStateOf<StickerPackInfo?>(null) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { stickers.sync() }
-    // пак убрали (здесь или на другом устройстве) — назад к недавним
-    if (selected != RECENT && installed.none { it.id == selected }) selected = RECENT
+
+    // страницы листалки: "Недавние", затем установленные паки — в порядке строки
+    val pages = remember(installed) { listOf(RECENT) + installed.map { it.id } }
+    val pagerState = rememberPagerState { pages.size }
+    // открытый пак — по id: список паков меняется (установили/убрали), индекс съезжает
+    var selected by remember { mutableStateOf(RECENT) }
+    LaunchedEffect(pagerState) { snapshotFlow { pagerState.settledPage }.collect { selected = pages.getOrElse(it) { RECENT } } }
+    LaunchedEffect(pages) {
+        // пак убрали (здесь или на другом устройстве) — назад к недавним
+        val index = pages.indexOf(selected).takeIf { it >= 0 } ?: 0.also { selected = RECENT }
+        if (pagerState.currentPage != index) pagerState.scrollToPage(index)
+    }
+    // строка паков подсвечивает и подтягивает в видимую часть тот, к которому листают
+    val shownPage = pagerState.targetPage
+    val tabsState = rememberLazyListState()
+    LaunchedEffect(shownPage) {
+        val visible = tabsState.layoutInfo.visibleItemsInfo
+        if (visible.none { it.index == shownPage && it.offset >= 0 && it.offset + it.size <= tabsState.layoutInfo.viewportEndOffset }) {
+            tabsState.animateScrollToItem((shownPage - 1).coerceAtLeast(0))
+        }
+    }
+    // нажатие на пак: страница меняется сразу, без пролистывания через соседние, и
+    // проявляется — коротко (едва заметно), чтобы не возникала рывком
+    val appear = remember { Animatable(1f) }
+    fun openPage(index: Int) {
+        if (index == pagerState.currentPage && !pagerState.isScrollInProgress) return
+        scope.launch {
+            appear.snapTo(0f)
+            pagerState.scrollToPage(index)
+            appear.animateTo(1f, tween(PACK_APPEAR_MS, easing = FastOutSlowInEasing))
+        }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Box(
@@ -545,17 +582,19 @@ fun StickerPanel(
             contentAlignment = Alignment.CenterStart,
         ) {
             LazyRow(
+                state = tabsState,
                 contentPadding = PaddingValues(horizontal = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 item(key = RECENT) {
-                    PackTab(selected == RECENT, onClick = { selected = RECENT }) {
-                        Icon(Icons.Outlined.Schedule, stringResource(R.string.sticker_recent), tint = if (selected == RECENT) colors.primary else colors.textMuted)
+                    val on = shownPage == 0
+                    PackTab(on, onClick = { openPage(0) }) {
+                        Icon(Icons.Outlined.Schedule, stringResource(R.string.sticker_recent), tint = if (on) colors.primary else colors.textMuted)
                     }
                 }
-                items(installed, key = { it.id }) { pack ->
-                    PackTab(selected == pack.id, onClick = { selected = pack.id }, onLongClick = { removeAsk = pack }) {
+                itemsIndexed(installed, key = { _, pack -> pack.id }) { i, pack ->
+                    PackTab(shownPage == i + 1, onClick = { openPage(i + 1) }, onLongClick = { removeAsk = pack }) {
                         pack.stickers.firstOrNull()?.let { PanelSticker(it, Modifier.fillMaxSize()) }
                     }
                 }
@@ -566,14 +605,26 @@ fun StickerPanel(
                 }
             }
         }
-        val items = if (selected == RECENT) recent else installed.firstOrNull { it.id == selected }?.stickers.orEmpty()
         val padding = PaddingValues(start = 8.dp, end = 8.dp, top = 6.dp, bottom = bottomPadding)
-        if (selected == RECENT && items.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.sticker_recentEmpty), color = colors.textMuted, fontSize = 13.sp, textAlign = TextAlign.Center)
-            }
-        } else {
-            key(selected) {
+        // свайп по сетке — соседний пак (листалка забирает горизонтальный жест сама,
+        // поэтому общий свайп назад здесь не срабатывает; по ленте чата — как прежде)
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize().graphicsLayer {
+                alpha = appear.value
+                val scale = PACK_APPEAR_SCALE + (1f - PACK_APPEAR_SCALE) * appear.value
+                scaleX = scale
+                scaleY = scale
+            },
+            key = { pages.getOrElse(it) { it } },
+        ) { page ->
+            val id = pages.getOrElse(page) { RECENT }
+            val items = if (id == RECENT) recent else installed.firstOrNull { it.id == id }?.stickers.orEmpty()
+            if (id == RECENT && items.isEmpty()) {
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                    Text(stringResource(R.string.sticker_recentEmpty), color = colors.textMuted, fontSize = 13.sp, textAlign = TextAlign.Center)
+                }
+            } else {
                 StickerGrid(items, onSend, onPreview, Modifier.fillMaxSize(), padding)
             }
         }

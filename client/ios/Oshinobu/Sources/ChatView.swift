@@ -26,6 +26,9 @@ struct ChatView: View {
     @State private var sharing: URL?
     @State private var searching = false
     @State private var query = ""
+    /// Верх последнего сообщения и высота ленты — для кнопки «вниз».
+    @State private var lastRowTop: CGFloat = .infinity
+    @State private var viewportHeight: CGFloat = 0
     @State private var pickingWallpaper = false
     @State private var wallpaperItem: PhotosPickerItem?
     @State private var wallpaperDraft: UIImage?
@@ -73,6 +76,13 @@ struct ChatView: View {
                                     .allowsHitTesting(!selecting)
                             }
                             .id(m.messageId)
+                            .background {
+                                if m.messageId == messages.last?.messageId {
+                                    GeometryReader { g in
+                                        Color.clear.preference(key: LastRowTopKey.self, value: g.frame(in: .named("chatScroll")).minY)
+                                    }
+                                }
+                            }
                             .transition(.asymmetric(insertion: .opacity, removal: .dissolve))
                             .contentShape(Rectangle())
                             .onTapGesture { if selecting { toggleSelection(m.messageId) } }
@@ -82,6 +92,22 @@ struct ChatView: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 8)
                 }
+                .coordinateSpace(name: "chatScroll")
+                .background { GeometryReader { g in Color.clear.preference(key: ViewportHeightKey.self, value: g.size.height) } }
+                .onPreferenceChange(LastRowTopKey.self) { lastRowTop = $0 }
+                .onPreferenceChange(ViewportHeightKey.self) { viewportHeight = $0 }
+                .overlay(alignment: .bottomTrailing) {
+                    // последнее сообщение целиком ушло за низ ленты — кнопка «вниз»
+                    if viewportHeight > 0 && lastRowTop >= viewportHeight && !selecting, let lastId = messages.last?.messageId {
+                        ScrollDownButton {
+                            // та же прокрутка, что и переход к закрепу
+                            withAnimation(.easeInOut(duration: 0.6)) { proxy.scrollTo(lastId, anchor: .bottom) }
+                        }
+                        .padding(12)
+                        .transition(.scale(scale: 0.8).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeOut(duration: 0.16), value: viewportHeight > 0 && lastRowTop >= viewportHeight)
                 .defaultScrollAnchor(.bottom)
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: messages.last?.messageId) { id in
@@ -693,5 +719,33 @@ struct UploadStepText: View {
         let label = NSLocalizedString(step.replacingOccurrences(of: ".", with: "_"), comment: "")
         Text(verbatim: percent.map { "\(label) \(Int($0))%" } ?? label).font(.caption2.monospacedDigit())
             .task(id: messageId) { for await p in model.core.uploadProgress.stream() { percent = p[messageId] } }
+    }
+}
+
+/// Верх последнего сообщения в координатах ленты; нет строки (ушла далеко) — бесконечность.
+private struct LastRowTopKey: PreferenceKey {
+    static var defaultValue: CGFloat = .infinity
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = min(value, nextValue()) }
+}
+
+private struct ViewportHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+/// Квадратная кнопка со скруглёнными углами и стрелкой вниз — к последнему сообщению.
+struct ScrollDownButton: View {
+    @EnvironmentObject private var model: AppModel
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "chevron.down").font(.headline).foregroundStyle(model.theme.textPrimary)
+                .frame(width: 44, height: 44)
+                .background(model.theme.surface, in: RoundedRectangle(cornerRadius: 12))
+                .shadow(color: .black.opacity(0.18), radius: 4, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("chat_scrollToBottom"))
     }
 }

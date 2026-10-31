@@ -99,6 +99,7 @@
 "chat_negotiating" = "Согласование с собеседником…";
 "chat_openFileFailed" = "Не удалось открыть файл";
 "chat_pinnedMessage" = "Закреплённое сообщение";
+"chat_scrollToBottom" = "К последним сообщениям";
 "chat_queued" = "В очереди";
 "chat_replyDeleted" = "Удалённое сообщение";
 "chat_replyYou" = "Вы";

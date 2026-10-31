@@ -10,3 +10,6 @@ server/frps-config/frps.toml
 
 # APK для установок не из Play (раздаёт сервер, см. APP_APK_DIR)
 /apk/
+
+# бэкап московского сервера с секретами (см. moscow-backup/README.md) — не в git
+/moscow-backup/

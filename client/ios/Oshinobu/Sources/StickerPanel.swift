@@ -1,63 +1,59 @@
 import OshinobuCore
 import SwiftUI
 
-/// Панель стикеров: установленные паки (новые первыми), сетка; тап — отправить.
+/**
+ * Панель стикеров: «Недавние» (открыты по умолчанию), установленные паки (новые первыми)
+ * и «+»; под строкой — страницы: свайп по сетке листает к соседнему паку, нажатие на пак
+ * открывает его сразу, коротко проявляя (как на Android). Тап по стикеру — отправить.
+ */
 struct StickerPanel: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let peer: ChatSummary
     @State private var packs: [StickerPackInfo] = []
-    @State private var selected: String?
+    @State private var selected = Self.recent
     @State private var uploading = false
+    /// Проявление пака, открытого нажатием: 0 → 1 за долю секунды.
+    @State private var appear = 1.0
+
+    private static let recent = "recent"
+    private var pages: [String] { [Self.recent] + packs.map(\.id) }
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    Button { uploading = true } label: {
-                        Image(systemName: "plus").font(.subheadline.bold()).padding(8).background(model.theme.surface, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(Text("sticker_addPack"))
-                    Button { selected = nil } label: {
-                        Text("sticker_recent").font(.subheadline).padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(selected == nil ? model.theme.primary.opacity(0.2) : model.theme.surface, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    ForEach(packs, id: \.id) { pack in
-                        Button { selected = pack.id } label: {
-                            Text(verbatim: pack.title).font(.subheadline).padding(.horizontal, 12).padding(.vertical, 6)
-                                .background(selected == pack.id ? model.theme.primary.opacity(0.2) : model.theme.surface, in: Capsule())
+            ScrollViewReader { tabs in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        Button { uploading = true } label: {
+                            Image(systemName: "plus").font(.subheadline.bold()).padding(8).background(model.theme.surface, in: Circle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(Text("sticker_addPack"))
+                        tab(Self.recent) { Text("sticker_recent") }
+                        ForEach(packs, id: \.id) { pack in
+                            tab(pack.id) { Text(verbatim: pack.title) }
+                        }
                     }
+                    .padding(12)
                 }
-                .padding(12)
+                // листают свайпом — строка подтягивает открытый пак в видимую часть
+                .onChange(of: selected) { id in withAnimation(.easeOut(duration: 0.2)) { tabs.scrollTo(id, anchor: .center) } }
             }
-            ScrollView {
-                let ids = selected.map { id in packs.first { $0.id == id }?.stickers.map(\.id) ?? [] } ?? model.core.recentStickers
-                if ids.isEmpty && selected == nil {
-                    Text("sticker_recentEmpty").foregroundStyle(model.theme.textMuted).padding(40)
+            TabView(selection: $selected) {
+                ForEach(pages, id: \.self) { id in
+                    grid(id).tag(id)
                 }
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                    ForEach(ids, id: \.self) { id in
-                        StickerCell(stickerId: id)
-                            .onTapGesture {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                Task { await model.core.sendSticker(id, to: peer) }
-                                dismiss()
-                            }
-                    }
-                }
-                .padding(12)
             }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .opacity(appear)
+            .scaleEffect(0.97 + 0.03 * appear)
         }
         .background(model.theme.background.ignoresSafeArea())
         .sheet(isPresented: $uploading) {
             StickerUploadView { pack in
                 // свой новый пак — первым в строке
                 packs.insert(pack, at: 0)
-                selected = pack.id
+                open(pack.id)
             }
             .environmentObject(model)
         }
@@ -65,7 +61,49 @@ struct StickerPanel: View {
             guard let token = model.core.session.token, let mine = try? await model.core.api.getMyStickerPacks(token: token) else { return }
             packs = mine.filter { !$0.deleted }
             // «Недавние» открыты по умолчанию; пусто — первый пак
-            if model.core.recentStickers.isEmpty { selected = packs.first?.id }
+            if model.core.recentStickers.isEmpty, let first = packs.first?.id { selected = first }
+        }
+    }
+
+    private func tab<Title: View>(_ id: String, @ViewBuilder label: () -> Title) -> some View {
+        Button { open(id) } label: {
+            label().font(.subheadline).padding(.horizontal, 12).padding(.vertical, 6)
+                .background(selected == id ? model.theme.primary.opacity(0.2) : model.theme.surface, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .id(id)
+    }
+
+    /// Нажатие на пак: страница меняется без пролистывания через соседние и проявляется —
+    /// едва заметно, лишь бы не рывком.
+    private func open(_ id: String) {
+        guard id != selected else { return }
+        var instant = Transaction()
+        instant.disablesAnimations = true
+        withTransaction(instant) {
+            appear = 0
+            selected = id
+        }
+        withAnimation(.easeOut(duration: 0.16)) { appear = 1 }
+    }
+
+    @ViewBuilder private func grid(_ id: String) -> some View {
+        let ids = id == Self.recent ? model.core.recentStickers : packs.first { $0.id == id }?.stickers.map(\.id) ?? []
+        ScrollView {
+            if ids.isEmpty && id == Self.recent {
+                Text("sticker_recentEmpty").foregroundStyle(model.theme.textMuted).padding(40)
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                ForEach(ids, id: \.self) { sticker in
+                    StickerCell(stickerId: sticker)
+                        .onTapGesture {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            Task { await model.core.sendSticker(sticker, to: peer) }
+                            dismiss()
+                        }
+                }
+            }
+            .padding(12)
         }
     }
 }

@@ -101,6 +101,7 @@
     <string name="chat_negotiating">Negotiating with peer…</string>
     <string name="chat_openFileFailed">Failed to open file</string>
     <string name="chat_pinnedMessage">Pinned message</string>
+    <string name="chat_scrollToBottom">Scroll to latest messages</string>
     <string name="chat_queued">Queued</string>
     <string name="chat_replyDeleted">Deleted message</string>
     <string name="chat_replyYou">You</string>

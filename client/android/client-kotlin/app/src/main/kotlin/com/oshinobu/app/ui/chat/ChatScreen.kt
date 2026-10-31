@@ -18,11 +18,14 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -42,10 +45,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -58,6 +66,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -287,39 +297,58 @@ fun ChatScreen(
      * Telegram: лента разгоняется, едет, пока сообщение не покажется, и плавно
      * тормозит у него (со скорости, на которой ехала). Только совсем далёкое
      * (больше [JUMP_TELEPORT_ITEMS] сообщений) — сначала перескок на полтора
-     * экрана до него, иначе прокрутка шла бы секундами. Затем — подсветка.
+     * экрана до него, иначе прокрутка шла бы секундами. [target] — где
+     * окажется нижний край группы [index] над низом ленты; false — не доехали.
      */
+    suspend fun scrollSmoothlyTo(index: Int, target: Int): Boolean {
+        val viewport = listState.layoutInfo.viewportSize.height.coerceAtLeast(1)
+        fun shown() = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
+        // лента снизу вверх: индексы больше — выше (старее), туда — scrollBy(+)
+        if (shown() == null && abs(index - listState.firstVisibleItemIndex) > JUMP_TELEPORT_ITEMS) {
+            val above = index > listState.firstVisibleItemIndex
+            listState.scrollToItem(index, -(target + (if (above) 1 else -1) * viewport * 3 / 2))
+        }
+        val maxStep = viewport * JUMP_MAX_SPEED_PER_FRAME
+        var step = 0f
+        while (shown() == null) {
+            val dir = if (index > listState.firstVisibleItemIndex) 1f else -1f
+            step = minOf(maxStep, step + maxStep * 0.12f)
+            withFrameNanos { }
+            if (listState.scrollBy(dir * step) == 0f) break
+        }
+        val item = shown() ?: return false
+        val remaining = (item.offset - target).toFloat()
+        // тормозим до нуля со скорости [step] за кадр: путь = скорость · время / 2
+        val duration = if (step > 0f) (2f * abs(remaining) / step * 16.7f).toInt().coerceIn(250, 900) else JUMP_SCROLL_MS
+        listState.animateScrollBy(remaining, tween(duration, easing = if (step > 0f) LinearOutSlowInEasing else FastOutSlowInEasing))
+        return true
+    }
+
     fun jumpTo(messageId: String) {
         val index = groups.indexOfFirst { g -> g.any { it.messageId == messageId } }
         if (index < 0) return
         jumpJob?.cancel()
         jumpJob = scope.launch {
             // где окажется сообщение: его нижний край — на 160dp выше низа ленты
-            val target = with(density) { 160.dp.roundToPx() }
-            val viewport = listState.layoutInfo.viewportSize.height.coerceAtLeast(1)
-            fun shown() = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
-            // лента снизу вверх: индексы больше — выше (старее), туда — scrollBy(+)
-            if (shown() == null && abs(index - listState.firstVisibleItemIndex) > JUMP_TELEPORT_ITEMS) {
-                val above = index > listState.firstVisibleItemIndex
-                listState.scrollToItem(index, -(target + (if (above) 1 else -1) * viewport * 3 / 2))
-            }
-            val maxStep = viewport * JUMP_MAX_SPEED_PER_FRAME
-            var step = 0f
-            while (shown() == null) {
-                val dir = if (index > listState.firstVisibleItemIndex) 1f else -1f
-                step = minOf(maxStep, step + maxStep * 0.12f)
-                withFrameNanos { }
-                if (listState.scrollBy(dir * step) == 0f) break
-            }
-            val item = shown() ?: return@launch
-            val remaining = (item.offset - target).toFloat()
-            // тормозим до нуля со скорости [step] за кадр: путь = скорость · время / 2
-            val duration = if (step > 0f) (2f * abs(remaining) / step * 16.7f).toInt().coerceIn(250, 900) else JUMP_SCROLL_MS
-            listState.animateScrollBy(remaining, tween(duration, easing = if (step > 0f) LinearOutSlowInEasing else FastOutSlowInEasing))
+            if (!scrollSmoothlyTo(index, with(density) { 160.dp.roundToPx() })) return@launch
             flashId = groups.getOrNull(index)?.key()
             flashStartedAt = SystemClock.uptimeMillis()
         }
     }
+
+    /** Кнопка «вниз»: до самого нового сообщения той же прокруткой, что и переход к закрепу. */
+    fun jumpToBottom() {
+        jumpJob?.cancel()
+        jumpJob = scope.launch {
+            scrollSmoothlyTo(0, 0)
+            // добрать остаток, если нижнее сообщение выше экрана ленты
+            if (listState.firstVisibleItemIndex != 0 || listState.firstVisibleItemScrollOffset != 0) {
+                listState.animateScrollToItem(0)
+            }
+        }
+    }
+    // последнее сообщение целиком ушло за низ ленты — показать кнопку «вниз»
+    val showScrollDown by remember { derivedStateOf { positioned && listState.firstVisibleItemIndex > 0 } }
 
     val searchMatches = if (vm.searchQuery != null) vm.searchMatches() else emptyList()
     val currentMatch = searchMatches.getOrNull(searchIndex)
@@ -719,6 +748,17 @@ fun ChatScreen(
             )
         }
 
+        // Кнопка «вниз» — над полем ввода, когда последнее сообщение ушло из вида
+        AnimatedVisibility(
+            showScrollDown && !vm.selectionMode && !(vm.searchQuery != null && searchAsList),
+            modifier = Modifier.align(Alignment.BottomEnd)
+                .padding(end = 12.dp, bottom = with(density) { composerHeightPx.toDp() } + 12.dp),
+            enter = fadeIn(tween(160)) + scaleIn(tween(160), initialScale = 0.8f),
+            exit = fadeOut(tween(140)) + scaleOut(tween(140), targetScale = 0.8f),
+        ) {
+            ScrollDownButton(onClick = ::jumpToBottom)
+        }
+
         // Режим выбора: «Ответить»/«Переслать» — поверх ленты, над полем ввода;
         // в высоту поля не входят, поэтому ленту не сдвигают.
         AnimatedVisibility(
@@ -1001,3 +1041,16 @@ private const val JUMP_MAX_SPEED_PER_FRAME = 0.05f
 
 /** Окно двойного тапа (реакция) — от первого касания; одиночный тап (меню) — не раньше. Как в Telegram. */
 private const val DOUBLE_TAP_WINDOW_MS = 220L
+
+/** Квадратная кнопка со скруглёнными углами и стрелкой вниз — к последнему сообщению. */
+@Composable
+private fun ScrollDownButton(onClick: () -> Unit) {
+    val colors = LocalAppColors.current
+    Box(
+        Modifier.size(44.dp).shadow(4.dp, RoundedCornerShape(12.dp)).clip(RoundedCornerShape(12.dp))
+            .background(colors.surface).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Icons.Filled.KeyboardArrowDown, stringResource(R.string.chat_scrollToBottom), tint = colors.textPrimary)
+    }
+}

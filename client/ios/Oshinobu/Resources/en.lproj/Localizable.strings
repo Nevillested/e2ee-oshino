@@ -99,6 +99,7 @@
 "chat_negotiating" = "Negotiating with peer…";
 "chat_openFileFailed" = "Failed to open file";
 "chat_pinnedMessage" = "Pinned message";
+"chat_scrollToBottom" = "Scroll to latest messages";
 "chat_queued" = "Queued";
 "chat_replyDeleted" = "Deleted message";
 "chat_replyYou" = "You";
