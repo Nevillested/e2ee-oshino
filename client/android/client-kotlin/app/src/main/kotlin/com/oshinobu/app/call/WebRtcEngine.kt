@@ -198,7 +198,14 @@ class WebRtcEngine(private val context: Context, private val log: Logger) : RtcE
                 val source = factory.createVideoSource(false)
                 cam.initialize(helper, context, source.capturerObserver)
                 val track = factory.createVideoTrack("video0", source)
-                pc.addTrack(track, listOf("stream0"))
+                // своя камера — всегда новой строкой (addTransceiver), а не addTrack: тот по стандарту
+                // переиспользует видеостроку собеседника, если камеру первым включил он, и меняет
+                // её направление — Linux-клиент (GStreamer 1.20) смену направления не поддерживает,
+                // и наше видео до него не доходило
+                pc.addTransceiver(
+                    track,
+                    RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.SEND_RECV, listOf("stream0")),
+                )
                 capturer = cam
                 captureHelper = helper
                 videoSource = source
