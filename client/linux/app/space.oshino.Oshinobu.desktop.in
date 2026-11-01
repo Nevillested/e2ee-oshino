@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Oshinobu
+GenericName=Messenger
+GenericName[ru]=Мессенджер
+Comment=End-to-end encrypted messenger
+Comment[ru]=Мессенджер со сквозным шифрованием
+Exec=@CMAKE_INSTALL_PREFIX@/bin/oshinobu
+Icon=space.oshino.Oshinobu
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+StartupWMClass=oshinobu

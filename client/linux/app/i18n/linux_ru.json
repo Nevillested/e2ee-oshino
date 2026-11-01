@@ -1,0 +1,10 @@
+{
+ "linux_quit": "Выйти из Oshinobu",
+ "linux_quitHint": "Закрытие окна оставляет Oshinobu работать: сообщения и уведомления продолжают приходить.",
+ "linux_wallpaperHint": "Перетаскивайте картинку мышью, колесо — масштаб",
+ "linux_callMicrophone": "Микрофон",
+ "linux_callSpeaker": "Вывод звука",
+ "linux_callDevices": "Устройства звука",
+ "linux_callCamera": "Камера",
+ "linux_callNoDevices": "Устройства не найдены"
+}

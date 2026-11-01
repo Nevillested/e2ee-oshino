@@ -1,0 +1,10 @@
+{
+ "linux_quit": "Quit Oshinobu",
+ "linux_quitHint": "Closing the window keeps Oshinobu running so messages and notifications keep arriving.",
+ "linux_wallpaperHint": "Drag the picture with the mouse, scroll to zoom",
+ "linux_callMicrophone": "Microphone",
+ "linux_callSpeaker": "Sound output",
+ "linux_callDevices": "Audio devices",
+ "linux_callCamera": "Camera",
+ "linux_callNoDevices": "No devices found"
+}

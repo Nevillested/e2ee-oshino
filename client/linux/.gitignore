@@ -1,0 +1,6 @@
+# сборка CMake (см. README.md)
+/build/
+/build-*/
+# тестовый аккаунт test_linux (пароль, секрет TOTP) и его данные — не в git
+/.test-account
+/.test-data/
