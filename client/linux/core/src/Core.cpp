@@ -249,13 +249,17 @@ Task<void> Core::sendText(ChatPeer peer, QString text, std::optional<StoredMessa
 
 Task<void> Core::sendSticker(ChatPeer peer, StickerInfo sticker, std::optional<StoredMessage> replyTo) {
     stickers.recordRecent(sticker);
-    const InnerMessage inner = InnerMessage::sticker(sticker.id, std::nullopt, replyTo ? std::optional(replyTo->messageId) : std::nullopt,
+    co_await sendStickerMessage(peer, sticker.id, replyTo);
+}
+
+Task<void> Core::sendStickerMessage(ChatPeer peer, QString stickerId, std::optional<StoredMessage> replyTo) {
+    const InnerMessage inner = InnerMessage::sticker(stickerId, std::nullopt, replyTo ? std::optional(replyTo->messageId) : std::nullopt,
                                                      replyTo ? std::optional(replyTo->text.left(120)) : std::nullopt);
     StoredMessage m;
     m.messageId = inner.messageId;
     m.isMine = true;
     m.timestamp = inner.sentAt;
-    m.stickerId = sticker.id;
+    m.stickerId = stickerId;
     m.status = MessageStatus::Sending;
     m.replyToMessageId = inner.replyToMessageId;
     m.replyToPreview = inner.replyToPreview;
@@ -263,7 +267,69 @@ Task<void> Core::sendSticker(ChatPeer peer, StickerInfo sticker, std::optional<S
     co_await sendNetwork(peer, inner);
 }
 
-Task<void> Core::forwardText(ChatPeer peer, QString text) { co_await sendText(peer, text); }
+Task<bool> Core::forward(ChatPeer target, QString sourcePeerLogin, QList<StoredMessage> source) {
+    bool ok = true;
+    qsizetype i = 0;
+    while (i < source.size()) {
+        // альбом (общий groupId) — одним куском, остальное — по одному
+        QList<StoredMessage> group;
+        const std::optional<QString> gid = source[i].groupId;
+        if (!gid) {
+            group << source[i++];
+        } else {
+            while (i < source.size() && source[i].groupId == gid) group << source[i++];
+        }
+        QList<StoredMessage> media;
+        QString caption;
+        for (const StoredMessage &m : group) {
+            if (m.isMedia) media << m;
+            else if (caption.isEmpty() && !m.text.isEmpty()) caption = m.text;
+        }
+        if (!media.isEmpty()) {
+            try {
+                co_await forwardMedia(target, sourcePeerLogin, media, caption);
+            } catch (const std::exception &e) {
+                logError(QStringLiteral("forward media FAILED: %1").arg(what(e)));
+                ok = false;
+            }
+            continue;
+        }
+        for (const StoredMessage &m : group) {
+            if (m.isCallLog || m.isUndecryptable) continue;
+            if (m.stickerId) co_await sendStickerMessage(target, *m.stickerId, std::nullopt);
+            else if (!m.text.isEmpty()) co_await sendText(target, m.text);
+        }
+    }
+    co_return ok;
+}
+
+Task<void> Core::forwardMedia(ChatPeer target, QString sourcePeerLogin, QList<StoredMessage> media, QString caption) {
+    if (media.size() == 1 && (media.first().isVoice || media.first().isVideoNote)) {
+        const StoredMessage &m = media.first();
+        const QString file = co_await localFileOf(sourcePeerLogin, m);
+        // sendRecorded забирает запись себе (переносит) — отдаём копию
+        const QString copy = dirs.temp + "/fwd_" + newId() + (m.isVideoNote ? ".mp4" : ".m4a");
+        QDir().mkpath(dirs.temp);
+        if (!QFile::copy(file, copy)) throw std::runtime_error("не скопировать вложение для пересылки");
+        co_await sendRecorded(target, copy, m.durationMs.value_or(0), m.isVideoNote);
+        co_return;
+    }
+    QList<OutgoingFile> files;
+    for (const StoredMessage &m : media) {
+        const QString file = co_await localFileOf(sourcePeerLogin, m);
+        const QString name = m.fileName.value_or(m.isVideo ? QStringLiteral("video.mp4") : QStringLiteral("photo.jpg"));
+        files << OutgoingFile{file, m.isFile, m.isVideo, name}; // sendMedia копирует сам
+    }
+    const QList<OutgoingFile> rejected = co_await sendMedia(target, files, caption);
+    if (!rejected.isEmpty()) throw std::runtime_error("вложение больше 500 МБ");
+}
+
+Task<QString> Core::localFileOf(QString sourcePeerLogin, StoredMessage m) {
+    if (m.localSourcePath && QFile::exists(*m.localSourcePath)) co_return *m.localSourcePath;
+    const auto spec = DownloadSpec::of(m, sourcePeerLogin);
+    if (!spec) throw std::runtime_error("у вложения нет ключа — не переслать");
+    co_return co_await downloads.ensureDownloaded(*spec);
+}
 
 Task<QList<OutgoingFile>> Core::sendMedia(ChatPeer peer, QList<OutgoingFile> files, QString caption) {
     QList<OutgoingFile> accepted, rejected;

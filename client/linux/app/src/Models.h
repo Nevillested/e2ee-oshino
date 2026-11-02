@@ -26,6 +26,7 @@ public:
         AvatarRole,
         DeletedRole,
         BlockedRole,
+        BlockedByMeRole,
     };
     ChatListModel(osh::Core &core, AppModel &app, QObject *parent = nullptr);
     int rowCount(const QModelIndex &parent = {}) const override;
@@ -86,6 +87,11 @@ public:
     void refreshMedia(const QString &mediaId);
     void refreshMessage(const QString &messageId);
     Q_INVOKABLE int indexOf(const QString &id) const;
+    Q_INVOKABLE QString idAt(int row) const;
+    /// Для режима выбора: {kind, mine, text, fileName} сообщения.
+    Q_INVOKABLE QVariantMap brief(const QString &id) const;
+    /// Поиск по переписке: id сообщений с текстом, содержащим [query] (без учёта регистра), по порядку.
+    Q_INVOKABLE QStringList search(const QString &query) const;
 
 private:
     void requestSticker(const QString &stickerId);

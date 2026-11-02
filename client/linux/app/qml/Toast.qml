@@ -15,9 +15,11 @@ Rectangle {
         text = message
         isError = !!error
         opacity = 1
+        // обычное — 2 с и мягко гаснет; ошибку держим дольше
+        hide.interval = isError ? 3200 : 2000
         hide.restart()
     }
-    Behavior on opacity { NumberAnimation { duration: 180 } }
+    Behavior on opacity { NumberAnimation { duration: toast.opacity > 0.5 ? 400 : 180 } }
     transform: Translate { y: toast.opacity < 1 ? (1 - toast.opacity) * 16 : 0 }
     Text {
         id: label
@@ -28,5 +30,5 @@ Rectangle {
         wrapMode: Text.Wrap
         horizontalAlignment: Text.AlignHCenter
     }
-    Timer { id: hide; interval: 3200; onTriggered: toast.opacity = 0 }
+    Timer { id: hide; onTriggered: toast.opacity = 0 }
 }

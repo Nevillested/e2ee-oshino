@@ -9,10 +9,14 @@ import Qt5Compat.GraphicalEffects
 Item {
     id: root
     property bool flash: false
+    // режим выбора (как на Android): отметка у пузыря, клик — выбрать/снять
+    property bool selectionMode: false
+    property bool selected: false
     signal replyRequested(string id, string preview)
     signal editRequested(string id, string text)
     signal deleteRequested(string id, bool mine)
-    signal forwardRequested(string text)
+    signal forwardRequested(string id)
+    signal selectToggled(string id)
     signal saveRequested(string id, string name)
     signal replyClicked(string id)
     signal stickerClicked(string stickerId)
@@ -23,16 +27,42 @@ Item {
     readonly property color fg: mine ? Ui.c.onBubbleMine : Ui.c.textPrimary
     readonly property real maxBubble: Math.min(width * 0.72, 520)
 
-    implicitHeight: bubble.height + (reactions.visible ? reactions.height + 2 : 0) + 4
+    implicitHeight: bubble.height + 4
 
     Component.onCompleted: {
         if ((model.kind === "photo" || model.kind === "voice") && model.mediaPath === "") App.downloadMedia(model.messageId)
         if (model.kind === "videoNote" && model.videoPath === "") App.downloadMedia(model.messageId)
     }
 
+    // выбранное — подсветка во всю ширину ленты и отметка слева
+    Rectangle {
+        anchors.fill: parent
+        anchors.topMargin: -2
+        anchors.bottomMargin: -2
+        radius: 10
+        color: Qt.rgba(Ui.c.primary.r, Ui.c.primary.g, Ui.c.primary.b, 0.14)
+        opacity: root.selected ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 120 } }
+    }
+    Rectangle {
+        visible: opacity > 0
+        opacity: root.selectionMode && !root.centered ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 140 } }
+        x: 16
+        anchors.verticalCenter: bubble.verticalCenter
+        width: 22
+        height: 22
+        radius: 11
+        color: root.selected ? Ui.c.primary : "transparent"
+        border.width: root.selected ? 0 : 2
+        border.color: Ui.c.textMuted
+        Text { anchors.centerIn: parent; text: "✓"; color: Ui.c.onPrimary; font.pixelSize: 13; font.bold: true; visible: root.selected }
+    }
+
     Rectangle {
         id: bubble
-        x: root.centered ? (root.width - width) / 2 : root.mine ? root.width - width - 12 : 12
+        x: root.centered ? (root.width - width) / 2 : root.mine ? root.width - width - 12 : 12 + (root.selectionMode ? 36 : 0)
+        Behavior on x { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
         width: content.width + (root.bare ? 0 : 24)
         height: content.implicitHeight + (root.bare ? 0 : 16)
         radius: 16
@@ -321,7 +351,10 @@ Item {
                 font.pixelSize: 15
                 wrapMode: TextEdit.Wrap
                 readOnly: true
-                selectByMouse: true
+                // протяжка мышью выделяет сообщения (как на Android), текст копируется через меню;
+                // мышь тексту не нужна вовсе — иначе он забирает нажатие и выбор протяжкой не начинается
+                selectByMouse: false
+                enabled: false
                 selectionColor: root.mine ? Qt.rgba(1, 1, 1, 0.4) : Ui.c.primary
                 textFormat: TextEdit.PlainText
                 TextMetrics { id: metrics; font: textBody.font; text: model.text.split("\n").reduce((a, b) => a.length > b.length ? a : b, "") }
@@ -349,6 +382,16 @@ Item {
                     id: timeRow
                     anchors.centerIn: parent
                     spacing: 4
+                    // реакции — в уголке пузыря, рядом со временем: лента не сдвигается
+                    Text {
+                        visible: text.length > 0
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: model.peerReaction === model.myReaction ? (model.myReaction.length ? model.myReaction + "2" : "")
+                                                                      : model.myReaction + model.peerReaction
+                        font.pixelSize: 13
+                        scale: visible ? 1 : 0.5
+                        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
+                    }
                     Text { visible: model.edited; text: "✎"; color: root.bare ? Ui.c.textMuted : root.fg; opacity: 0.7; font.pixelSize: 11 }
                     Text { text: model.time; color: root.bare ? Ui.c.textMuted : root.fg; opacity: 0.7; font.pixelSize: 11 }
                     Ticks {
@@ -369,6 +412,7 @@ Item {
 
         TapHandler {
             acceptedButtons: Qt.RightButton
+            enabled: !root.selectionMode
             onTapped: menu.popup()
         }
         TapHandler {
@@ -377,28 +421,14 @@ Item {
         }
     }
 
-    // реакции под пузырём
-    Row {
-        id: reactions
-        visible: model.myReaction.length > 0 || model.peerReaction.length > 0
-        anchors.top: bubble.bottom
-        anchors.topMargin: -6
-        x: root.mine ? bubble.x + bubble.width - width - 6 : bubble.x + 6
-        spacing: 2
-        Rectangle {
-            radius: 11
-            height: 22
-            width: rtext.implicitWidth + 12
-            color: Ui.c.surface
-            border.color: Qt.rgba(0.5, 0.5, 0.5, 0.3)
-            Text {
-                id: rtext
-                anchors.centerIn: parent
-                text: model.peerReaction === model.myReaction ? model.myReaction + " 2" : model.myReaction + model.peerReaction
-                font.pixelSize: 13
-                color: Ui.c.textPrimary
-            }
-        }
+    // в режиме выбора клик по строке — выбрать/снять (а не открыть фото, играть и т.п.)
+    MouseArea {
+        anchors.fill: parent
+        enabled: root.selectionMode && !root.centered
+        visible: enabled
+        z: 10
+        cursorShape: Qt.PointingHandCursor
+        onClicked: root.selectToggled(model.messageId)
     }
 
     AppMenu {
@@ -422,7 +452,8 @@ Item {
         AppMenuItem { text: Ui.t("action_copy"); visible: model.text.length > 0; height: visible ? implicitHeight : 0; onTriggered: App.copyText(model.text) }
         AppMenuItem { text: Ui.t("action_edit"); visible: root.mine && model.kind === "text"; height: visible ? implicitHeight : 0; onTriggered: root.editRequested(model.messageId, model.text) }
         AppMenuItem { text: Ui.t("action_pin"); visible: !root.centered; height: visible ? implicitHeight : 0; onTriggered: App.pinMessage(model.messageId, true) }
-        AppMenuItem { text: Ui.t("action_forward"); visible: model.kind === "text"; height: visible ? implicitHeight : 0; onTriggered: root.forwardRequested(model.text) }
+        AppMenuItem { text: Ui.t("action_forward"); visible: !root.centered; height: visible ? implicitHeight : 0; onTriggered: root.forwardRequested(model.messageId) }
+        AppMenuItem { text: Ui.t("linux_select"); visible: !root.centered; height: visible ? implicitHeight : 0; onTriggered: root.selectToggled(model.messageId) }
         AppMenuItem {
             text: Ui.t("chat_saveToDevice")
             visible: model.kind === "photo" || model.kind === "video" || model.kind === "file" || model.kind === "voice"

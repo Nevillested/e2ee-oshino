@@ -1,10 +1,21 @@
 {
  "linux_quit": "Выйти из Oshinobu",
- "linux_quitHint": "Закрытие окна оставляет Oshinobu работать: сообщения и уведомления продолжают приходить.",
  "linux_wallpaperHint": "Перетаскивайте картинку мышью, колесо — масштаб",
  "linux_callMicrophone": "Микрофон",
  "linux_callSpeaker": "Вывод звука",
  "linux_callDevices": "Устройства звука",
  "linux_callCamera": "Камера",
- "linux_callNoDevices": "Устройства не найдены"
+ "linux_callNoDevices": "Устройства не найдены",
+ "linux_closeAction": "При закрытии окна",
+ "linux_closeToTray": "Сворачивать в трей",
+ "linux_closeQuit": "Закрывать приложение",
+ "linux_closeAskTitle": "Что делать при закрытии окна?",
+ "linux_closeAskBody": "В трее Oshinobu продолжит получать сообщения и звонки. Решение можно поменять в настройках — «При закрытии окна».",
+ "linux_trayOpen": "Открыть Oshinobu",
+ "linux_trayMute": "Выключить уведомления",
+ "linux_trayUnmute": "Включить уведомления",
+ "linux_closeToTrayShort": "В трей",
+ "linux_closeQuitShort": "Закрывать",
+ "linux_forwarded": "Переслано",
+ "linux_select": "Выбрать"
 }

@@ -12,6 +12,53 @@ Item {
     Component.onCompleted: appear.start()
     // другой чат: статус и кнопка «вниз» прошлого чата не должны проступать в новом
     property bool switching: false
+
+    // ---------------- выбор сообщений (как на Android) ----------------
+    property var selected: ({})
+    property int selectedCount: 0
+    readonly property bool selectionMode: selectedCount > 0
+    function isSelected(id) { return selected[id] === true }
+    function setSelected(id, on) {
+        if (!id || on === isSelected(id)) return
+        const next = Object.assign({}, selected)
+        if (on) next[id] = true
+        else delete next[id]
+        selected = next
+        selectedCount = Object.keys(next).length
+    }
+    function clearSelection() { selected = ({}); selectedCount = 0 }
+    function selectedIds() { return Object.keys(selected).sort((a, b) => App.messages.indexOf(a) - App.messages.indexOf(b)) }
+    function selectedBriefs() { return selectedIds().map(id => App.messages.brief(id)) }
+
+    // ---------------- поиск по переписке ----------------
+    property bool searching: false
+    property var searchHits: []
+    property int searchIndex: -1
+    function openSearch() {
+        clearSelection()
+        searching = true
+        searchHits = []
+        searchIndex = -1
+        searchField.text = ""
+        searchField.forceActiveFocus()
+    }
+    function closeSearch() { searching = false; searchHits = []; searchIndex = -1; list.flashId = "" }
+    function runSearch(q) {
+        searchHits = App.messages.search(q)
+        // как на Android: с самого свежего совпадения
+        searchIndex = searchHits.length - 1
+        if (searchIndex >= 0) list.jumpTo(searchHits[searchIndex])
+    }
+    function stepSearch(delta) {
+        if (searchHits.length === 0) return
+        searchIndex = Math.max(0, Math.min(searchHits.length - 1, searchIndex + delta))
+        list.jumpTo(searchHits[searchIndex])
+    }
+    Shortcut {
+        sequence: "Esc"
+        enabled: pane.selectionMode || pane.searching
+        onActivated: pane.selectionMode ? pane.clearSelection() : pane.closeSearch()
+    }
     Timer { id: switchTimer; interval: 300; onTriggered: pane.switching = false }
     Connections {
         target: App
@@ -19,6 +66,8 @@ Item {
             pane.switching = true
             switchTimer.restart()
             presenceFade.snap()
+            pane.clearSelection()
+            pane.closeSearch()
             // новый чат — с последних сообщений (высоты пузырей известны не сразу — после кадра)
             list.stickToEnd = true
             Qt.callLater(list.positionViewAtEnd)
@@ -54,7 +103,99 @@ Item {
         Item {
             Layout.fillWidth: true
             implicitHeight: 64
+            // шапка выбора: закрыть, «Выбрано: N», скачать (одно голосовое/кружок), копировать, переслать, удалить
             RowLayout {
+                anchors.fill: parent
+                anchors.margins: 8
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                visible: opacity > 0
+                opacity: pane.selectionMode ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 180 } }
+                spacing: 8
+                id: selectionHeader
+                readonly property var briefs: pane.selectionMode ? pane.selectedBriefs() : []
+                Pill {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 6
+                        anchors.rightMargin: 6
+                        spacing: 2
+                        IconButton { glyph: "✕"; tint: Ui.c.textPrimary; onClicked: pane.clearSelection() }
+                        Text { text: Ui.t("chat_selectedCount") + ": " + pane.selectedCount; color: Ui.c.textPrimary; font.pixelSize: 16; Layout.fillWidth: true; leftPadding: 4 }
+                        IconButton {
+                            readonly property var one: selectionHeader.briefs.length === 1 ? selectionHeader.briefs[0] : null
+                            visible: one !== null && (one.kind === "voice" || one.kind === "videoNote")
+                            glyph: "⬇"; tint: Ui.c.textPrimary; tip: Ui.t("chat_saveToDevice")
+                            onClicked: {
+                                const id = pane.selectedIds()[0]
+                                saveDialog.messageId = id
+                                saveDialog.currentFile = "file:///" + (one.kind === "voice" ? "voice.m4a" : "video_note.mp4")
+                                saveDialog.open()
+                                pane.clearSelection()
+                            }
+                        }
+                        IconButton {
+                            glyph: "⧉"; tint: Ui.c.textPrimary; tip: Ui.t("action_copy")
+                            onClicked: {
+                                const texts = pane.selectedBriefs().filter(b => b.kind === "text" && b.text.length > 0).map(b => b.text)
+                                if (texts.length > 0) App.copyText(texts.join("\n"))
+                                pane.clearSelection()
+                            }
+                        }
+                        IconButton { glyph: "↪"; tint: Ui.c.textPrimary; tip: Ui.t("action_forward"); onClicked: { forward.ids = pane.selectedIds(); forward.open() } }
+                        IconButton {
+                            glyph: "🗑"; tip: Ui.t("action_delete")
+                            onClicked: {
+                                deleteMsg.ids = pane.selectedIds()
+                                deleteMsg.mine = pane.selectedBriefs().every(b => b.mine)
+                                deleteMsg.open()
+                            }
+                        }
+                    }
+                }
+            }
+            // шапка поиска: назад и поле запроса
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 8
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                visible: opacity > 0
+                opacity: pane.searching ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 180 } }
+                spacing: 8
+                Pill {
+                    Layout.preferredWidth: 48
+                    Layout.fillHeight: true
+                    IconButton { anchors.centerIn: parent; glyph: "←"; tint: Ui.c.textPrimary; tip: Ui.t("common_back"); onClicked: pane.closeSearch() }
+                }
+                Pill {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    TextField {
+                        id: searchField
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        placeholderText: Ui.t("chat_searchHint")
+                        placeholderTextColor: Ui.c.textMuted
+                        color: Ui.c.textPrimary
+                        font.pixelSize: 15
+                        background: null
+                        verticalAlignment: TextInput.AlignVCenter
+                        onTextChanged: searchDelay.restart()
+                        Keys.onReturnPressed: pane.stepSearch(-1)
+                        Timer { id: searchDelay; interval: 250; onTriggered: pane.runSearch(searchField.text) }
+                    }
+                }
+            }
+            RowLayout {
+                visible: opacity > 0
+                opacity: pane.selectionMode || pane.searching ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: 180 } }
                 anchors.fill: parent
                 anchors.leftMargin: 12
                 anchors.rightMargin: 12
@@ -125,14 +266,11 @@ Item {
             }
             AppMenu {
                 id: menu
-                AppMenuItem { text: info.muted ? Ui.t("chatMenu_unmute") : Ui.t("chatMenu_mute"); onTriggered: App.setMuted(App.openChat, !info.muted) }
-                AppMenuItem { text: info.blockedByMe ? Ui.t("chatMenu_unblock") : Ui.t("chatMenu_block"); onTriggered: App.setBlocked(App.openChat, !info.blockedByMe) }
-                AppMenuItem { text: Ui.t("chat_wallpaperAction"); onTriggered: wallpaperDialog.open() }
-                AppMenuItem { text: Ui.t("chat_wallpaperRemove"); enabled: App.wallpaper.length > 0; onTriggered: App.removeWallpaper() }
+                // как на Android: поиск, фон, убрать фон, сброс шифрования (остальное — в меню чата в списке)
+                AppMenuItem { text: Ui.t("chat_searchAction"); onTriggered: pane.openSearch() }
+                AppMenuItem { text: Ui.t("chat_wallpaperAction"); visible: !info.deleted; height: visible ? implicitHeight : 0; onTriggered: wallpaperDialog.open() }
+                AppMenuItem { text: Ui.t("chat_wallpaperRemove"); visible: App.wallpaper.length > 0; height: visible ? implicitHeight : 0; onTriggered: App.removeWallpaper() }
                 AppMenuItem { text: Ui.t("chat_resetSessionAction"); onTriggered: resetSheet.open() }
-                AppMenuSeparator {}
-                AppMenuItem { text: Ui.t("chatMenu_clearHistory"); onTriggered: clearSheet.open() }
-                AppMenuItem { text: Ui.t("chatMenu_deleteChat"); onTriggered: deleteSheet.open() }
             }
         }
 
@@ -210,13 +348,67 @@ Item {
             delegate: MessageBubble {
                 width: ListView.view.width
                 flash: list.flashId === model.messageId
+                selectionMode: pane.selectionMode
+                selected: pane.selected[model.messageId] === true
+                onSelectToggled: (id) => pane.setSelected(id, !pane.isSelected(id))
                 onReplyRequested: (id, preview) => { pane.editingId = ""; pane.replyToId = id; pane.replyPreview = preview; input.forceActiveFocus() }
                 onEditRequested: (id, text) => { pane.replyToId = ""; pane.editingId = id; input.text = text; input.forceActiveFocus() }
                 onDeleteRequested: (id, mine) => { deleteMsg.ids = [id]; deleteMsg.mine = mine; deleteMsg.open() }
-                onForwardRequested: (text) => { forward.text = text; forward.open() }
+                onForwardRequested: (id) => { forward.ids = [id]; forward.open() }
                 onSaveRequested: (id, name) => { saveDialog.messageId = id; saveDialog.currentFile = "file:///" + name; saveDialog.open() }
                 onReplyClicked: (id) => list.jumpTo(id)
                 onStickerClicked: (id) => packSheet.show(id)
+            }
+
+            // выбор протяжкой: зажать на пузыре и вести вверх/вниз — первое сообщение задаёт, выделять
+            // или снимать, и так же со всеми, над которыми прошёл курсор; у края ленты — прокрутка
+            DragHandler {
+                id: selectDrag
+                target: null
+                xAxis.enabled: false
+                acceptedButtons: Qt.LeftButton
+                // порог меньше, чем у ленты, и ленте жест не отдаём — иначе она забирает протяжку
+                // себе на прокрутку (колесо мыши прокручивает как прежде)
+                dragThreshold: 4
+                grabPermissions: PointerHandler.CanTakeOverFromAnything
+                enabled: !pane.searching
+                property bool mode: true
+                property int last: -1
+                // обработчик живёт в contentItem ленты: его координаты уже с учётом прокрутки
+                function rowAt(y) { return list.indexAt(list.width / 2, y) }
+                // положение курсора в видимой части ленты — для прокрутки у краёв
+                readonly property real viewY: centroid.position.y - list.contentY
+                function sweep(to) {
+                    if (to < 0 || last < 0) return
+                    for (let i = Math.min(last, to); i <= Math.max(last, to); ++i) {
+                        const id = App.messages.idAt(i)
+                        const b = App.messages.brief(id)
+                        if (b.kind !== "call" && b.kind !== "undecryptable") pane.setSelected(id, mode)
+                    }
+                    last = to
+                }
+                onActiveChanged: {
+                    if (active) {
+                        last = rowAt(centroid.pressPosition.y)
+                        if (last < 0) return
+                        mode = !pane.isSelected(App.messages.idAt(last))
+                        sweep(last)
+                    } else {
+                        last = -1
+                    }
+                }
+                onCentroidChanged: if (active) sweep(rowAt(centroid.position.y))
+            }
+            Timer {
+                interval: 30
+                repeat: true
+                running: selectDrag.active && (selectDrag.viewY < 48 || selectDrag.viewY > list.height - 48)
+                onTriggered: {
+                    const up = selectDrag.viewY < 48
+                    list.contentY = up ? Math.max(list.originY, list.contentY - 14)
+                                       : Math.min(list.originY + list.contentHeight - list.height + list.bottomMargin, list.contentY + 14)
+                    selectDrag.sweep(selectDrag.rowAt(selectDrag.centroid.position.y))
+                }
             }
 
             // кнопка «вниз»: последнее сообщение ушло из вида
@@ -228,7 +420,7 @@ Item {
                 height: 44
                 radius: 12
                 color: Ui.c.surface
-                opacity: list.atEnd || pane.switching ? 0 : 1
+                opacity: list.atEnd || pane.switching || pane.selectionMode ? 0 : 1
                 visible: opacity > 0
                 scale: list.atEnd ? 0.8 : 1
                 Behavior on opacity { enabled: !pane.switching; NumberAnimation { duration: 160 } }
@@ -266,6 +458,66 @@ Item {
             }
         }
 
+        // режим выбора: «Ответить» (одно сообщение) и «Переслать» — над полем ввода
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 12
+            Layout.rightMargin: 12
+            Layout.bottomMargin: 10
+            visible: pane.selectionMode
+            spacing: 10
+            Pill {
+                Layout.fillWidth: true
+                implicitHeight: 44
+                visible: pane.selectedCount === 1 && !pane.blocked
+                FlatButton {
+                    anchors.fill: parent
+                    primary: false
+                    text: Ui.t("action_reply")
+                    onClicked: {
+                        const id = pane.selectedIds()[0]
+                        const b = App.messages.brief(id)
+                        pane.clearSelection()
+                        pane.editingId = ""
+                        pane.replyToId = id
+                        pane.replyPreview = b.text.length ? b.text : App.decodePreview("")
+                        input.forceActiveFocus()
+                    }
+                }
+            }
+            Pill {
+                Layout.fillWidth: true
+                implicitHeight: 44
+                FlatButton { anchors.fill: parent; primary: false; text: Ui.t("action_forward"); onClicked: { forward.ids = pane.selectedIds(); forward.open() } }
+            }
+        }
+
+        // поиск: «N из M» и переход по совпадениям — вместо поля ввода
+        Pill {
+            Layout.fillWidth: true
+            Layout.leftMargin: 12
+            Layout.rightMargin: 12
+            Layout.bottomMargin: 10
+            Layout.topMargin: 4
+            visible: pane.searching
+            implicitHeight: 52
+            radius: 24
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 18
+                anchors.rightMargin: 8
+                Text {
+                    Layout.fillWidth: true
+                    color: Ui.c.textMuted
+                    font.pixelSize: 14
+                    text: searchField.text.trim().length === 0 ? "" : pane.searchHits.length === 0 ? Ui.t("chat_searchNoResults")
+                          : (pane.searchHits.length - pane.searchIndex) + " / " + pane.searchHits.length
+                }
+                IconButton { glyph: "⌃"; tint: Ui.c.textPrimary; enabled: pane.searchIndex > 0; onClicked: pane.stepSearch(-1) }
+                IconButton { glyph: "⌄"; tint: Ui.c.textPrimary; enabled: pane.searchIndex < pane.searchHits.length - 1; onClicked: pane.stepSearch(1) }
+            }
+        }
+
         // ---------------- поле ввода ----------------
         // пузырь, а не полоса во всю ширину (как на Android)
         Pill {
@@ -274,6 +526,7 @@ Item {
             Layout.rightMargin: 12
             Layout.bottomMargin: 10
             Layout.topMargin: 4
+            visible: !pane.searching && !pane.selectionMode
             implicitHeight: composer.implicitHeight + 12
             radius: 24
             ColumnLayout {
@@ -575,28 +828,8 @@ Item {
         title: Ui.t("deleteMessage_title")
         ThemedCheck { id: delBoth; text: Ui.t("deleteMessage_alsoForPeer") + " " + App.openChat; checked: true }
         SheetButtons {
-            FlatButton { text: Ui.t("action_delete"); danger: true; onClicked: { App.deleteMessages(deleteMsg.ids, delBoth.checked); deleteMsg.close() } }
+            FlatButton { text: Ui.t("action_delete"); danger: true; onClicked: { App.deleteMessages(deleteMsg.ids, delBoth.checked); deleteMsg.close(); pane.clearSelection() } }
             FlatButton { text: Ui.t("common_cancel"); primary: false; onClicked: deleteMsg.close() }
-        }
-    }
-
-    Sheet {
-        id: clearSheet
-        title: Ui.t("chatMenu_clearHistoryTitle")
-        ThemedCheck { id: clearBoth; text: Ui.t("deleteMessage_alsoForPeer") + " " + App.openChat; checked: true }
-        SheetButtons {
-            FlatButton { text: Ui.t("chatMenu_clearHistoryConfirm"); danger: true; onClicked: { App.clearHistory(clearBoth.checked); clearSheet.close() } }
-            FlatButton { text: Ui.t("common_cancel"); primary: false; onClicked: clearSheet.close() }
-        }
-    }
-
-    Sheet {
-        id: deleteSheet
-        title: Ui.t("chatMenu_deleteChatTitle")
-        ThemedCheck { id: deleteBoth; text: Ui.t("deleteMessage_alsoForPeer") + " " + App.openChat; checked: true }
-        SheetButtons {
-            FlatButton { text: Ui.t("chatMenu_deleteChatConfirm"); danger: true; onClicked: { App.deleteChat(App.openChat, deleteBoth.checked); deleteSheet.close() } }
-            FlatButton { text: Ui.t("common_cancel"); primary: false; onClicked: deleteSheet.close() }
         }
     }
 
@@ -612,7 +845,7 @@ Item {
 
     Sheet {
         id: forward
-        property string text
+        property var ids: []
         title: Ui.t("forward_title")
         ListView {
             width: parent.width
@@ -627,7 +860,14 @@ Item {
                     Text { text: model.login; color: Ui.c.textPrimary; font.pixelSize: 15; Layout.fillWidth: true }
                 }
                 background: Rectangle { color: parent.hovered ? Qt.rgba(0.5, 0.5, 0.5, 0.12) : "transparent"; radius: 8 }
-                onClicked: { App.forwardText(forward.text, model.login); forward.close() }
+                // сначала закрыть: отправка обновляет список чатов, и обработчик мог не дожить до close()
+                onClicked: {
+                    const ids = forward.ids
+                    const to = model.login
+                    forward.close()
+                    pane.clearSelection()
+                    App.forwardMessages(ids, to)
+                }
             }
         }
     }

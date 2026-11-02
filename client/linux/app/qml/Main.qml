@@ -18,6 +18,50 @@ ApplicationWindow {
 
     onActiveChanged: App.setWindowActive(active)
 
+    // крестик: как решил пользователь (трей / закрыть); не решал — спросить один раз
+    onClosing: (close) => {
+        if (App.closeAction === "quit") {
+            App.quit()
+        } else if (App.closeAction === "tray") {
+            // трея в системе нет — иначе окно было бы нечем вернуть; просто свернуть
+            if (!App.trayAvailable) {
+                close.accepted = false
+                window.showMinimized()
+            }
+        } else {
+            close.accepted = false
+            closeAsk.open()
+        }
+    }
+    function applyCloseAction() {
+        if (App.closeAction === "quit") App.quit()
+        else if (App.trayAvailable) window.hide()
+        else window.showMinimized()
+    }
+
+    Sheet {
+        id: closeAsk
+        title: Ui.t("linux_closeAskTitle")
+        preferredWidth: 420
+        Text { text: Ui.t("linux_closeAskBody"); color: Ui.c.textMuted; wrapMode: Text.Wrap; width: parent.width; horizontalAlignment: Text.AlignHCenter }
+        Column {
+            width: parent.width
+            spacing: 8
+            FlatButton {
+                width: parent.width
+                text: Ui.t("linux_closeToTray")
+                onClicked: { App.closeAction = "tray"; closeAsk.close(); window.applyCloseAction() }
+            }
+            FlatButton {
+                width: parent.width
+                text: Ui.t("linux_closeQuit")
+                primary: false
+                outline: true
+                onClicked: { App.closeAction = "quit"; closeAsk.close(); window.applyCloseAction() }
+            }
+        }
+    }
+
     // смена экрана (заставка → вход → чаты) — плавно
     Loader {
         id: screen

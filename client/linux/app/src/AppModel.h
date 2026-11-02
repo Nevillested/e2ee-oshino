@@ -11,7 +11,11 @@
 #include <QObject>
 #include <QAudioOutput>
 #include <QMediaPlayer>
+#include <QSoundEffect>
 #include <QSystemTrayIcon>
+
+class QAction;
+class QMenu;
 #include <QTimer>
 #include <QVariantMap>
 #include <memory>
@@ -56,6 +60,12 @@ class AppModel : public QObject, public osh::RouterHost {
     Q_PROPERTY(QVariantList transfers READ transfers NOTIFY transfersChanged)
     Q_PROPERTY(QVariantMap call READ call NOTIFY callChanged)
     Q_PROPERTY(bool tgsSupported MEMBER tgsSupported_ CONSTANT)
+    /// Что делает крестик: «tray» — свернуть в трей, «quit» — закрыть приложение, пусто — ещё не
+    /// решено (спросить один раз и запомнить).
+    Q_PROPERTY(QString closeAction READ closeAction WRITE setCloseAction NOTIFY closeActionChanged)
+    /// Уведомления о сообщениях (всплывающие и звук) выключены из меню трея; звонки звонят всегда.
+    Q_PROPERTY(bool notificationsMuted READ notificationsMuted WRITE setNotificationsMuted NOTIFY notificationsMutedChanged)
+    Q_PROPERTY(bool trayAvailable READ trayAvailable CONSTANT)
     Q_PROPERTY(QVariantList emojiCategories READ emojiCategories CONSTANT)
 
 public:
@@ -126,6 +136,11 @@ public:
     Q_INVOKABLE void resetTotp(const QString &login, const QString &code);
     Q_INVOKABLE void logout();
     Q_INVOKABLE void quit();
+    QString closeAction() const { return closeAction_; }
+    void setCloseAction(const QString &action);
+    bool notificationsMuted() const { return notificationsMuted_; }
+    void setNotificationsMuted(bool muted);
+    bool trayAvailable() const { return tray_ != nullptr; }
     Q_INVOKABLE void deleteAccount();
 
     // настройки
@@ -164,9 +179,10 @@ public:
     Q_INVOKABLE void react(const QString &messageId, const QString &emoji);
     Q_INVOKABLE void pinMessage(const QString &messageId, bool pinned);
     Q_INVOKABLE void deleteMessages(const QStringList &ids, bool forPeer);
-    Q_INVOKABLE void forwardText(const QString &text, const QString &toLogin);
+    /// Переслать сообщения открытого чата (в порядке ленты) в чат [toLogin].
+    Q_INVOKABLE void forwardMessages(const QStringList &ids, const QString &toLogin);
     Q_INVOKABLE void copyText(const QString &text);
-    Q_INVOKABLE void clearHistory(bool forPeer);
+    Q_INVOKABLE void clearHistory(const QString &login, bool forPeer);
     Q_INVOKABLE void deleteChat(const QString &login, bool forPeer);
     Q_INVOKABLE void setMuted(const QString &login, bool muted);
     Q_INVOKABLE void setBlocked(const QString &login, bool blocked);
@@ -227,6 +243,8 @@ Q_SIGNALS:
     void recentStickersChanged();
     void stickerRevisionChanged();
     void previewStickerChanged();
+    void closeActionChanged();
+    void notificationsMutedChanged();
     void info(const QString &text);
     void totpReady(const QString &url, const QString &secret);
     void recoveryCodeSent();
@@ -285,12 +303,18 @@ private:
     bool tgsSupported_ = false;
     QSet<QString> stickerLoading_;
     QHash<QString, QVariantMap> profiles_;
-    QMediaPlayer sound_;
-    QAudioOutput soundOut_;
+    // короткий звук сообщения — QSoundEffect: QMediaPlayer в Qt 6.2 после конца файла второй раз
+    // «играет» мгновенно и молча — звук был только у первого сообщения за сеанс
+    QSoundEffect sound_;
     QMediaPlayer ring_;
     bool cameraAvailable_ = false;
     QAudioOutput ringOut_;
     void updateRinging();
     QSystemTrayIcon *tray_ = nullptr;
+    QMenu *trayMenu_ = nullptr;
+    QAction *trayOpen_ = nullptr, *trayMute_ = nullptr, *trayQuit_ = nullptr;
+    QString closeAction_;
+    bool notificationsMuted_ = false;
+    void updateTrayMenu();
     Notifier *notifier_ = nullptr;
 };

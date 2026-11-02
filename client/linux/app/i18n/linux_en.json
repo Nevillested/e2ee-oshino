@@ -1,10 +1,21 @@
 {
  "linux_quit": "Quit Oshinobu",
- "linux_quitHint": "Closing the window keeps Oshinobu running so messages and notifications keep arriving.",
  "linux_wallpaperHint": "Drag the picture with the mouse, scroll to zoom",
  "linux_callMicrophone": "Microphone",
  "linux_callSpeaker": "Sound output",
  "linux_callDevices": "Audio devices",
  "linux_callCamera": "Camera",
- "linux_callNoDevices": "No devices found"
+ "linux_callNoDevices": "No devices found",
+ "linux_closeAction": "On window close",
+ "linux_closeToTray": "Minimize to tray",
+ "linux_closeQuit": "Quit the app",
+ "linux_closeAskTitle": "What should closing the window do?",
+ "linux_closeAskBody": "In the tray Oshinobu keeps receiving messages and calls. You can change this later in Settings — “When closing the window”.",
+ "linux_trayOpen": "Open Oshinobu",
+ "linux_trayMute": "Turn off notifications",
+ "linux_trayUnmute": "Turn on notifications",
+ "linux_closeToTrayShort": "To tray",
+ "linux_closeQuitShort": "Quit",
+ "linux_forwarded": "Forwarded",
+ "linux_select": "Select"
 }

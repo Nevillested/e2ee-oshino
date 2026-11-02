@@ -209,7 +209,7 @@ Item {
                         MouseArea {
                             anchors.fill: parent
                             acceptedButtons: Qt.RightButton
-                            onClicked: { chatMenu.login = model.login; chatMenu.muted = model.muted; chatMenu.pinned = model.pinned; chatMenu.popup() }
+                            onClicked: { chatMenu.login = model.login; chatMenu.muted = model.muted; chatMenu.pinned = model.pinned; chatMenu.blocked = model.blockedByMe; chatMenu.popup() }
                         }
                     }
                 }
@@ -242,9 +242,25 @@ Item {
         property string login
         property bool muted
         property bool pinned
+        property bool blocked
+        // как на Android: закреп, звук, блокировка, очистить историю, удалить чат
         AppMenuItem { text: chatMenu.pinned ? Ui.t("chatMenu_unpin") : Ui.t("chatMenu_pin"); onTriggered: App.setChatPinned(chatMenu.login, !chatMenu.pinned) }
         AppMenuItem { text: chatMenu.muted ? Ui.t("chatMenu_unmute") : Ui.t("chatMenu_mute"); onTriggered: App.setMuted(chatMenu.login, !chatMenu.muted) }
-        AppMenuItem { text: Ui.t("chatMenu_deleteChat"); onTriggered: { deleteChat.login = chatMenu.login; deleteChat.open() } }
+        AppMenuItem { text: chatMenu.blocked ? Ui.t("chatMenu_unblock") : Ui.t("chatMenu_block"); onTriggered: App.setBlocked(chatMenu.login, !chatMenu.blocked) }
+        AppMenuSeparator {}
+        AppMenuItem { text: Ui.t("chatMenu_clearHistory"); danger: true; onTriggered: { clearChat.login = chatMenu.login; clearChat.open() } }
+        AppMenuItem { text: Ui.t("chatMenu_deleteChat"); danger: true; onTriggered: { deleteChat.login = chatMenu.login; deleteChat.open() } }
+    }
+
+    Sheet {
+        id: clearChat
+        property string login
+        title: Ui.t("chatMenu_clearHistoryTitle")
+        ThemedCheck { id: clearForBoth; text: Ui.t("deleteMessage_alsoForPeer") + " " + clearChat.login; checked: true }
+        SheetButtons {
+            FlatButton { text: Ui.t("chatMenu_clearHistoryConfirm"); danger: true; onClicked: { App.clearHistory(clearChat.login, clearForBoth.checked); clearChat.close() } }
+            FlatButton { text: Ui.t("common_cancel"); primary: false; onClicked: clearChat.close() }
+        }
     }
 
     Sheet {

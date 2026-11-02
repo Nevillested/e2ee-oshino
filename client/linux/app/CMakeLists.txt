@@ -63,7 +63,7 @@ qt_add_qml_module(oshinobu
         i18n/linux_ru.json
         icons/oshinobu.png
         emoji.json
-        sounds/msg_sound.mp3
+        sounds/msg_sound.wav
         sounds/ringtone.mp3
         sounds/ringback.mp3
 )

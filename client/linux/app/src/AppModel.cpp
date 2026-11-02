@@ -24,6 +24,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocale>
+#include <QMenu>
 #include <QMimeDatabase>
 #include <QSettings>
 #include <QStandardPaths>
@@ -118,9 +119,8 @@ AppModel::AppModel(QObject *parent) : QObject(parent) {
 #endif
     recTempDir_ = dirs.temp;
     loadStrings();
-    sound_.setAudioOutput(&soundOut_);
-    soundOut_.setVolume(0.6f);
-    sound_.setSource(QUrl("qrc:/qt/qml/Oshinobu/sounds/msg_sound.mp3"));
+    sound_.setSource(QUrl("qrc:/qt/qml/Oshinobu/sounds/msg_sound.wav"));
+    sound_.setVolume(0.5f); // ненавязчиво
 
     connect(&core_->chats, &ChatStore::changed, this, [this](const QString &peer) {
         chats_->reload();
@@ -252,15 +252,50 @@ AppModel::AppModel(QObject *parent) : QObject(parent) {
         Q_EMIT raiseRequested();
         if (core_->chats.peer(peer)) openChatWith(peer);
     });
+    closeAction_ = core_->prefs->getString("ui_close_action").value_or(QString());
+    notificationsMuted_ = core_->prefs->getString("ui_notifications_muted").value_or(QString()) == "1";
+    // иконка в трее — всегда, и при открытом окне: левый клик — открыть, правый — меню
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
         tray_ = new QSystemTrayIcon(QIcon(":/qt/qml/Oshinobu/icons/oshinobu.png"), this);
         tray_->setToolTip("Oshinobu");
-        connect(tray_, &QSystemTrayIcon::activated, this, [this] { Q_EMIT raiseRequested(); });
+        trayMenu_ = new QMenu();
+        trayOpen_ = trayMenu_->addAction(QString(), this, [this] { Q_EMIT raiseRequested(); });
+        trayMute_ = trayMenu_->addAction(QString(), this, [this] { setNotificationsMuted(!notificationsMuted_); });
+        trayMenu_->addSeparator();
+        trayQuit_ = trayMenu_->addAction(QString(), this, &AppModel::quit);
+        tray_->setContextMenu(trayMenu_);
+        connect(tray_, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
+            if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) Q_EMIT raiseRequested();
+        });
+        connect(this, &AppModel::langChanged, this, &AppModel::updateTrayMenu);
+        updateTrayMenu();
         tray_->show();
     }
 }
 
-AppModel::~AppModel() = default;
+AppModel::~AppModel() { delete trayMenu_; } // у QMenu нет родителя-виджета
+
+void AppModel::updateTrayMenu() {
+    if (!trayMenu_) return;
+    trayOpen_->setText(t("linux_trayOpen"));
+    trayMute_->setText(notificationsMuted_ ? t("linux_trayUnmute") : t("linux_trayMute"));
+    trayQuit_->setText(t("linux_quit"));
+}
+
+void AppModel::setCloseAction(const QString &action) {
+    if (action == closeAction_ || (action != "tray" && action != "quit")) return;
+    closeAction_ = action;
+    core_->prefs->setString("ui_close_action", action);
+    Q_EMIT closeActionChanged();
+}
+
+void AppModel::setNotificationsMuted(bool muted) {
+    if (muted == notificationsMuted_) return;
+    notificationsMuted_ = muted;
+    core_->prefs->setString("ui_notifications_muted", muted ? "1" : "0");
+    updateTrayMenu();
+    Q_EMIT notificationsMutedChanged();
+}
 
 void AppModel::loadStrings() {
     // строки Android + свои строки Linux-клиента (их нет в strings.xml)
@@ -496,13 +531,14 @@ void AppModel::runOp(Task<void> task, std::function<void()> onDone) {
 }
 
 void AppModel::playMessageSound() {
-    sound_.setPosition(0);
+    if (notificationsMuted_) return;
     sound_.play();
 }
 
 void AppModel::showMessageNotification(const QString &peerLogin, const QString &preview) {
     // как на Android: без текста сообщения — только от кого
     Q_UNUSED(preview)
+    if (notificationsMuted_) return;
     notifier_->show(peerLogin, peerLogin, t("push_newMessageBody"));
 }
 
@@ -868,8 +904,21 @@ void AppModel::deleteMessages(const QStringList &ids, bool forPeer) {
     if (const auto c = current()) spawn(core_->deleteMessages(core_->peerOf(*c), ids, forPeer));
 }
 
-void AppModel::forwardText(const QString &text, const QString &toLogin) {
-    if (const auto c = core_->chats.peer(toLogin)) spawn(core_->forwardText(core_->peerOf(*c), text));
+void AppModel::forwardMessages(const QStringList &ids, const QString &toLogin) {
+    const auto target = core_->chats.peer(toLogin);
+    if (!target || ids.isEmpty()) return;
+    QList<std::pair<int, StoredMessage>> picked;
+    for (const QString &id : ids) {
+        if (const auto m = messages_->find(id)) picked << std::pair{messages_->indexOf(id), *m};
+    }
+    std::sort(picked.begin(), picked.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+    QList<StoredMessage> ordered;
+    for (const auto &p : picked) ordered << p.second;
+    Q_EMIT info(t("linux_forwarded"));
+    spawn([](AppModel *self, ChatPeer to, QString from, QList<StoredMessage> list) -> Task<void> {
+        const bool ok = co_await self->core_->forward(to, from, list);
+        if (!ok) Q_EMIT self->error(self->t("chat_forwardFailed"));
+    }(this, core_->peerOf(*target), openChat_, ordered));
 }
 
 void AppModel::copyText(const QString &text) {
@@ -877,8 +926,8 @@ void AppModel::copyText(const QString &text) {
     Q_EMIT info(t("common_copied"));
 }
 
-void AppModel::clearHistory(bool forPeer) {
-    if (const auto c = current()) spawn(core_->clearOrDelete(*c, false, forPeer));
+void AppModel::clearHistory(const QString &login, bool forPeer) {
+    if (const auto c = core_->chats.peer(login)) spawn(core_->clearOrDelete(*c, false, forPeer));
 }
 
 void AppModel::deleteChat(const QString &login, bool forPeer) {
@@ -1149,8 +1198,13 @@ void AppModel::updateRinging() {
         ring_.stop();
         return;
     }
-    if (ring_.source() != want) ring_.setSource(want);
-    if (ring_.playbackState() != QMediaPlayer::PlayingState) ring_.play();
+    if (ring_.source() == want && ring_.playbackState() == QMediaPlayer::PlayingState) return;
+    // источник — заново: остановленный QMediaPlayer в Qt 6.2 повторно не играет (второй звонок
+    // за сеанс был бы без рингтона)
+    ring_.stop();
+    ring_.setSource(QUrl());
+    ring_.setSource(want);
+    ring_.play();
 }
 
 void AppModel::startCall() {

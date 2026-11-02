@@ -106,7 +106,11 @@ public:
     Task<void> react(ChatPeer peer, QString messageId, std::optional<QString> emoji);
     Task<void> setPinned(ChatPeer peer, QString messageId, bool pinned);
     Task<void> deleteMessages(ChatPeer peer, QStringList ids, bool forPeer);
-    Task<void> forwardText(ChatPeer peer, QString text);
+    /// Пересылка как на Android, по порядку: тексты и стикеры — как есть; альбом или одиночное
+    /// вложение (с подписью группы) — заново загруженными из кэша (нет — докачивается); голосовое
+    /// и кружок — записью. Звонки и нерасшифрованные не пересылаются. false — какое-то вложение
+    /// не удалось (остальное ушло).
+    Task<bool> forward(ChatPeer target, QString sourcePeerLogin, QList<StoredMessage> messages);
     Task<void> sendReadReceipts(ChatPeer peer);
     Task<void> clearOrDelete(ChatSummary chat, bool deleteChat, bool forPeer);
     Task<void> setMuted(ChatSummary chat, bool muted);
@@ -131,6 +135,10 @@ private:
     Task<void> uploadAndSend(ChatPeer peer, QList<std::pair<OutgoingFile, QString>> items, std::optional<QString> groupId,
                              std::optional<QString> caption, std::optional<QString> textMessageId);
     Task<void> uploadRecorded(ChatPeer peer, QString messageId, QString path, qint64 size, qint64 durationMs, bool videoNote);
+    Task<void> sendStickerMessage(ChatPeer peer, QString stickerId, std::optional<StoredMessage> replyTo);
+    Task<void> forwardMedia(ChatPeer target, QString sourcePeerLogin, QList<StoredMessage> media, QString caption);
+    /// Файл вложения на этом устройстве: своя запись/исходник или кэш (нет — докачать).
+    Task<QString> localFileOf(QString sourcePeerLogin, StoredMessage m);
     Task<void> syncFromServer(QString token);
     Task<void> syncBlocked(QString token);
     void failOrphanedSending();

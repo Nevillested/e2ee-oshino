@@ -81,7 +81,14 @@ Drawer {
             SettingsItem { glyph: "🧹"; tint: "#00C7BE"; label: Ui.t("settings_clearCache"); onClicked: cacheSheet.open() }
             SettingsItem { glyph: "ℹ"; tint: "#8E8E93"; label: Ui.t("settings_about"); onClicked: aboutSheet.open() }
             Rectangle { width: parent.width; height: 1; color: Qt.rgba(0.5, 0.5, 0.5, 0.15) }
-            SettingsItem { glyph: "🚪"; tint: "#636366"; label: Ui.t("linux_quit"); onClicked: App.quit() }
+            // вместо «Выйти из приложения» — что делает крестик (решение из вопроса при первом закрытии)
+            SettingsItem {
+                glyph: "🪟"; tint: "#636366"; label: Ui.t("linux_closeAction")
+                value: App.closeAction === "quit" ? Ui.t("linux_closeQuitShort") : App.closeAction === "tray" ? Ui.t("linux_closeToTrayShort") : ""
+                onClicked: choice.ask(Ui.t("linux_closeAction"),
+                                      [{ text: Ui.t("linux_closeToTray"), value: "tray" }, { text: Ui.t("linux_closeQuit"), value: "quit" }],
+                                      App.closeAction, v => App.closeAction = v)
+            }
             SettingsItem { glyph: "⇥"; tint: "#FF3B30"; label: Ui.t("settings_logout"); danger: true; onClicked: logoutSheet.open() }
             SettingsItem { glyph: "🗑"; tint: "#B00020"; label: Ui.t("settings_deleteAccount"); danger: true; onClicked: deleteSheet.open() }
             Item { width: 1; height: 16 }

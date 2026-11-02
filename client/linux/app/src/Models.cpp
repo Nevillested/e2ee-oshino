@@ -18,7 +18,7 @@ int ChatListModel::rowCount(const QModelIndex &parent) const { return parent.isV
 QHash<int, QByteArray> ChatListModel::roleNames() const {
     return {{LoginRole, "login"},     {AccountIdRole, "accountId"}, {PreviewRole, "preview"}, {TimeRole, "time"},
             {UnreadRole, "unread"},   {MutedRole, "muted"},         {PinnedRole, "pinned"},   {IsMineRole, "isMine"},
-            {IsReadRole, "isRead"},   {AvatarRole, "avatar"},       {DeletedRole, "deleted"}, {BlockedRole, "blocked"}};
+            {IsReadRole, "isRead"},   {AvatarRole, "avatar"},       {DeletedRole, "deleted"}, {BlockedRole, "blocked"}, {BlockedByMeRole, "blockedByMe"}};
 }
 
 QVariant ChatListModel::data(const QModelIndex &index, int role) const {
@@ -37,6 +37,7 @@ QVariant ChatListModel::data(const QModelIndex &index, int role) const {
     case AvatarRole: return c.lastKnownAccountId ? const_cast<AppModel &>(app_).avatarFor(*c.lastKnownAccountId) : QString();
     case DeletedRole: return c.isDeleted;
     case BlockedRole: return c.blockedByMe || c.blockingMe;
+    case BlockedByMeRole: return c.blockedByMe;
     }
     return {};
 }
@@ -246,6 +247,24 @@ std::optional<StoredMessage> MessageModel::find(const QString &id) const {
         if (m.messageId == id) return m;
     }
     return std::nullopt;
+}
+
+QString MessageModel::idAt(int row) const { return row >= 0 && row < items_.size() ? items_[row].messageId : QString(); }
+
+QVariantMap MessageModel::brief(const QString &id) const {
+    const auto m = find(id);
+    if (!m) return {};
+    return {{"kind", kindOf(*m)}, {"mine", m->isMine}, {"text", m->text}, {"fileName", m->fileName.value_or(QString())}};
+}
+
+QStringList MessageModel::search(const QString &query) const {
+    QStringList out;
+    const QString q = query.trimmed();
+    if (q.isEmpty()) return out;
+    for (const auto &m : items_) {
+        if (!m.isCallLog && m.text.contains(q, Qt::CaseInsensitive)) out << m.messageId;
+    }
+    return out;
 }
 
 int MessageModel::indexOf(const QString &id) const {
