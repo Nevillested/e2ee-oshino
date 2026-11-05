@@ -1,9 +1,11 @@
 package com.oshinobu.core.net
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -254,10 +256,21 @@ class ApiClient(
         },
     ).toString().toRequestBody(JSON_TYPE)
 
+    /**
+     * Ответ приходит асинхронно, но тело читается там, где продолжилась корутина. Звали с экрана —
+     * это главный поток, и на медленной сети тело (а то и ZIP пака стикеров) читалось на нём
+     * секундами: приложение не принимало касания и ввод с клавиатуры (ANR «Input dispatching timed
+     * out» на OnePlus, +74). Поэтому запрос и чтение тела — всегда на потоке ввода-вывода: через
+     * [call], [transfer] или [io].
+     */
     private suspend fun exec(client: OkHttpClient, request: Request): Response = client.newCall(request).await()
 
-    private suspend fun call(request: Request): Pair<Int, String> =
+    /** Сетевое чтение — не на вызывающем потоке (см. [exec]). */
+    private suspend fun <T> io(block: suspend () -> T): T = withContext(Dispatchers.IO) { block() }
+
+    private suspend fun call(request: Request): Pair<Int, String> = io {
         exec(http, request).use { it.code to (it.body?.string() ?: "") }
+    }
 
     private suspend fun callShort(request: Request): Pair<Int, String> =
         withTimeout(SHORT_TIMEOUT_MS) { call(request) }
@@ -532,7 +545,7 @@ class ApiClient(
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("file", "avatar.jpg", jpegBytes.toRequestBody("image/jpeg".toMediaType()))
             .build()
-        val code = exec(media, req("/account/avatar", token).post(body).build()).use { it.code }
+        val code = io { exec(media, req("/account/avatar", token).post(body).build()).use { it.code } }
         if (code != 200) fail("error.uploadFailed", code)
     }
 
@@ -541,12 +554,14 @@ class ApiClient(
     }
 
     private suspend fun avatarBytes(token: String, path: String): ByteArray? = withTimeout(SHORT_TIMEOUT_MS) {
-        exec(http, req(path, token).get().build()).use {
-            when (it.code) {
-                // пустое "фото" — сбой хранилища, а не новое фото: сохранённую копию не затираем
-                200 -> it.body!!.bytes().takeIf { bytes -> bytes.isNotEmpty() } ?: throw ApiException("error.avatarLoadFailed", 200)
-                404 -> null
-                else -> throw ApiException("error.avatarLoadFailed", it.code)
+        io {
+            exec(http, req(path, token).get().build()).use {
+                when (it.code) {
+                    // пустое "фото" — сбой хранилища, а не новое фото: сохранённую копию не затираем
+                    200 -> it.body!!.bytes().takeIf { bytes -> bytes.isNotEmpty() } ?: throw ApiException("error.avatarLoadFailed", 200)
+                    404 -> null
+                    else -> throw ApiException("error.avatarLoadFailed", it.code)
+                }
             }
         }
     }
@@ -592,7 +607,7 @@ class ApiClient(
     }
 
     /** JPEG обоев чата; null — обоев нет. */
-    suspend fun getChatWallpaper(token: String, peerAccountId: String): ByteArray? =
+    suspend fun getChatWallpaper(token: String, peerAccountId: String): ByteArray? = io {
         exec(media, req("/chats/wallpapers/$peerAccountId", token).get().build()).use {
             when (it.code) {
                 200 -> it.body!!.bytes().takeIf { bytes -> bytes.isNotEmpty() } ?: fail("error.wallpaperFailed", 200)
@@ -600,6 +615,7 @@ class ApiClient(
                 else -> fail("error.wallpaperFailed", it.code)
             }
         }
+    }
 
     /** Поставить обои чату ([forPeer] — и собеседнику); возвращает версию. */
     suspend fun setChatWallpaper(token: String, peerAccountId: String, jpegBytes: ByteArray, forPeer: Boolean): Long {
@@ -607,7 +623,7 @@ class ApiClient(
             .addFormDataPart("for_peer", if (forPeer) "1" else "0")
             .addFormDataPart("file", "wallpaper.jpg", jpegBytes.toRequestBody("image/jpeg".toMediaType()))
             .build()
-        val (code, text) = exec(media, req("/chats/wallpapers/$peerAccountId", token).put(body).build()).use { it.code to (it.body?.string() ?: "") }
+        val (code, text) = io { exec(media, req("/chats/wallpapers/$peerAccountId", token).put(body).build()).use { it.code to (it.body?.string() ?: "") } }
         if (code != 200) fail("error.wallpaperFailed", code)
         return (obj(text)["version"] as? JsonPrimitive)?.longOrNull ?: 0L
     }
@@ -645,7 +661,7 @@ class ApiClient(
     // ---------------- медиа: загрузка ----------------
 
     private suspend fun <T> transfer(errorKey: String, block: suspend () -> T): T = try {
-        block()
+        io(block)
     } catch (e: ApiException) {
         throw e
     } catch (e: kotlinx.coroutines.CancellationException) {
@@ -717,7 +733,7 @@ class ApiClient(
 
     /** Полный размер зашифрованного файла (HEAD); 0 при любой ошибке. */
     suspend fun probeEncryptedMediaSize(token: String, mediaId: String): Long = try {
-        exec(media, req("/media/$mediaId", token).head().build()).use { it.header("Content-Length")?.toLongOrNull() ?: 0L }
+        io { exec(media, req("/media/$mediaId", token).head().build()).use { it.header("Content-Length")?.toLongOrNull() ?: 0L } }
     } catch (_: Exception) {
         0L
     }

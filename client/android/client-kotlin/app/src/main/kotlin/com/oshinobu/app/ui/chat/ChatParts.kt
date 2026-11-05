@@ -76,7 +76,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -118,18 +117,6 @@ fun SelectionSlot(selectionMode: Boolean, selected: Boolean) {
     }
 }
 
-/** Пульсирующая подсветка поверх пузыря — текущее совпадение поиска. */
-@Composable
-fun HighlightFrame(highlighted: Boolean, content: @Composable () -> Unit) {
-    Box {
-        content()
-        if (highlighted) {
-            val a = pulsingHighlightAlpha()
-            Box(Modifier.matchParentSize().padding(vertical = 4.dp).clip(BubbleShape).background(Color.White.copy(alpha = a)))
-        }
-    }
-}
-
 private fun aggregateStatus(group: List<StoredMessage>): String = when {
     group.any { it.status == MessageStatus.FAILED } -> MessageStatus.FAILED
     group.any { it.status == MessageStatus.SENDING || it.status == MessageStatus.QUEUED } -> MessageStatus.SENDING
@@ -163,8 +150,11 @@ fun MessageBubble(
         val caption = group.firstOrNull { !it.isMedia }
         val isMine = group.first().isMine
         val last = group.maxBy { it.timestamp }
+        // пузырь — по ширине сетки вложений: нижняя строка (время) растягивается во всю ширину и
+        // раздувала пузырь до максимума, а фото с подписью съезжало вправо
+        val gridWidth = if (media.isEmpty()) maxBubble - 12.dp else albumGrid(media.size, maxBubble - 12.dp).second
         Column(
-            Modifier.padding(vertical = 4.dp).widthIn(max = maxBubble).background(colors.bubble(isMine), BubbleShape).padding(6.dp),
+            Modifier.padding(vertical = 4.dp).width(gridWidth + 12.dp).background(colors.bubble(isMine), BubbleShape).padding(6.dp),
             horizontalAlignment = Alignment.End,
         ) {
             Column {
@@ -555,7 +545,8 @@ fun SearchResultsList(matches: List<StoredMessage>, topPadding: Dp, bottomPaddin
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.chat_searchNoResults), color = colors.textMuted) }
         return
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = topPadding + 8.dp, bottom = bottomPadding + 8.dp)) {
+    // список — на фоне экрана: поверх обоев и пузырей прозрачные строки не читались
+    LazyColumn(Modifier.fillMaxSize().background(colors.background), contentPadding = PaddingValues(top = topPadding + 8.dp, bottom = bottomPadding + 8.dp)) {
         items(matches, key = { it.messageId }) { m ->
             Column(Modifier.fillMaxWidth().clickable { onPick(m) }.padding(horizontal = 16.dp, vertical = 10.dp)) {
                 Text(m.text, color = colors.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)

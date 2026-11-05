@@ -17,7 +17,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -452,6 +451,25 @@ private fun FileAttachment(
     }
 }
 
+/**
+ * Плитка альбома и ширина всей сетки: одно вложение — 180, несколько — по 2–3 в ряд, плитка
+ * 70…130 в целых пикселях с округлением вниз (иначе на некоторых плотностях ряд из трёх выходил
+ * на пиксель шире места, и третья плитка уезжала на новую строку). По ширине сетки — и пузырь.
+ */
+@Composable
+fun albumGrid(count: Int, maxWidth: Dp): Pair<Dp, Dp> {
+    if (count <= 1) return 180.dp to 180.dp
+    val density = LocalDensity.current
+    val columns = if (count >= 3) 3 else 2
+    return with(density) {
+        val spacing = AlbumSpacing.roundToPx()
+        val tilePx = ((maxWidth.roundToPx() - spacing * (columns - 1)) / columns).coerceIn(70.dp.roundToPx(), 130.dp.roundToPx())
+        tilePx.toDp() to (tilePx * columns + spacing * (columns - 1)).toDp()
+    }
+}
+
+private val AlbumSpacing = 3.dp
+
 /** Альбом: одно вложение — крупно, несколько — плитками по 2–3 в ряд. */
 @Composable
 fun MediaGrid(
@@ -464,29 +482,19 @@ fun MediaGrid(
     onOpenFile: (StoredMessage) -> Unit,
     onSaveFile: (StoredMessage) -> Unit,
 ) {
+    val (tile, _) = albumGrid(media.size, maxWidth)
     if (media.size == 1) {
         val m = media.single()
         Box(Modifier.clip(RoundedCornerShape(10.dp))) {
-            AttachmentBubble(vm, m, 180.dp, m.messageId in revealed, { onReveal(m.messageId) }, onOpenViewer, onOpenFile, onSaveFile)
+            AttachmentBubble(vm, m, tile, m.messageId in revealed, { onReveal(m.messageId) }, onOpenViewer, onOpenFile, onSaveFile)
         }
         return
     }
-    val spacing = 3.dp
     val columns = if (media.size >= 3) 3 else 2
-    // ширина — фактическая (после полей пузыря), плитка — в целых пикселях с округлением
-    // вниз: иначе на некоторых плотностях экрана ряд из трёх выходил на пиксель шире места,
-    // и третья плитка уезжала на новую строку
-    val widthLimit = maxWidth
-    BoxWithConstraints {
-        val density = LocalDensity.current
-        val available = minOf(constraints.maxWidth, with(density) { widthLimit.roundToPx() })
-        val tilePx = (available - with(density) { spacing.roundToPx() } * (columns - 1)) / columns
-        val tile = with(density) { tilePx.toDp() }.coerceIn(70.dp, 130.dp)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(spacing), verticalArrangement = Arrangement.spacedBy(spacing), maxItemsInEachRow = columns) {
-            media.forEach { m ->
-                Box(Modifier.clip(RoundedCornerShape(10.dp))) {
-                    AttachmentBubble(vm, m, tile, m.messageId in revealed, { onReveal(m.messageId) }, onOpenViewer, onOpenFile, onSaveFile)
-                }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(AlbumSpacing), verticalArrangement = Arrangement.spacedBy(AlbumSpacing), maxItemsInEachRow = columns) {
+        media.forEach { m ->
+            Box(Modifier.clip(RoundedCornerShape(10.dp))) {
+                AttachmentBubble(vm, m, tile, m.messageId in revealed, { onReveal(m.messageId) }, onOpenViewer, onOpenFile, onSaveFile)
             }
         }
     }

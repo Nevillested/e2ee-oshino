@@ -217,6 +217,8 @@ fun ChatScreen(
     var confirmReset by remember { mutableStateOf(false) }
     var searchAsList by remember { mutableStateOf(false) }
     var searchIndex by remember { mutableIntStateOf(0) }
+    // стрелка поиска всегда ведёт к совпадению — и когда оно то же самое (ленту увели в сторону)
+    var searchJump by remember { mutableIntStateOf(0) }
     var revealedSpoilers by remember { mutableStateOf(setOf<String>()) }
     var stickerPreview by remember { mutableStateOf<StickerInfo?>(null) }
     var stickerPackFor by remember { mutableStateOf<String?>(null) }
@@ -352,7 +354,7 @@ fun ChatScreen(
 
     val searchMatches = if (vm.searchQuery != null) vm.searchMatches() else emptyList()
     val currentMatch = searchMatches.getOrNull(searchIndex)
-    LaunchedEffect(currentMatch?.messageId, searchAsList) {
+    LaunchedEffect(currentMatch?.messageId, searchAsList, searchJump) {
         if (currentMatch != null && !searchAsList) {
             val index = groups.indexOfFirst { g -> g.any { it.messageId == currentMatch.messageId } }
             if (index >= 0) listState.animateScrollToItem(index, -with(density) { 160.dp.roundToPx() })
@@ -710,8 +712,14 @@ fun ChatScreen(
                     current = if (searchMatches.isEmpty()) 0 else searchIndex + 1,
                     total = searchMatches.size,
                     asList = searchAsList,
-                    onOlder = { if (searchIndex < searchMatches.size - 1) searchIndex++ },
-                    onNewer = { if (searchIndex > 0) searchIndex-- },
+                    onOlder = {
+                        if (searchIndex < searchMatches.size - 1) searchIndex++
+                        searchJump++
+                    },
+                    onNewer = {
+                        if (searchIndex > 0) searchIndex--
+                        searchJump++
+                    },
                     onToggleList = { searchAsList = !searchAsList },
                 )
             } else {
@@ -933,6 +941,8 @@ private fun MessageRow(
     val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
     val screenWidthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
     val flashA = flashAlpha(flash)
+    // совпадение поиска пульсирует на всю ширину строки, как подсветка перехода, а не только пузырь
+    val searchPulse = if (highlighted) pulsingHighlightAlpha() else 0f
     // жест не перезапускается от смены режима выбора посреди протяжки — читаем актуальные значения
     val currentSelectionMode by rememberUpdatedState(selectionMode)
     val g by rememberUpdatedState(gestures)
@@ -950,7 +960,7 @@ private fun MessageRow(
             .collapseOnDissolve(dissolving)
             .fillMaxWidth()
             .padding(vertical = 2.dp)
-            .jumpFlash(flashA, colors.primary)
+            .jumpFlash(maxOf(flashA, searchPulse), colors.primary)
             .onGloballyPositioned { c ->
                 coords[0] = c
                 rootCoords()?.let { root -> onBounds(root.localBoundingBoxOf(c)) }
@@ -1019,7 +1029,7 @@ private fun MessageRow(
         Box(Modifier.offset { IntOffset(animatedDx.toInt(), 0) }) {
             Dissolvable(dissolving) {
                 // реакции — в нижней строке самого сообщения, рядом со временем
-                HighlightFrame(highlighted) { bubble() }
+                bubble()
             }
         }
         if (!isMine) Spacer(Modifier.weight(1f))

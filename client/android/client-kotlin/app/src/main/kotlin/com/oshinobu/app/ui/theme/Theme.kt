@@ -11,6 +11,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.dp
 import com.oshinobu.app.R
 
@@ -39,6 +40,13 @@ data class AppColors(
     val linkOnMine: Color,
     val isDark: Boolean,
 ) {
+    /**
+     * Фон заставки с кошкой — фон темы с примесью её акцента: свой в каждой теме и больше нигде
+     * не встречается, поэтому раскрытие списка чатов кругом после заставки видно целиком (на фоне
+     * темы круг сливался с пустыми местами списка).
+     */
+    val splashBackground: Color get() = lerp(background, primary, 0.22f)
+
     companion object {
         /** Тёмно-синяя — прежняя тёмная, тема по умолчанию. */
         val Navy = AppColors(

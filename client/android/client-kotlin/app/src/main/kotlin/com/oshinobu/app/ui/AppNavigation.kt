@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,6 +96,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.hypot
 
@@ -195,6 +197,11 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
     var forwardDraft by remember { mutableStateOf<List<ForwardItem>>(emptyList()) }
     // заставка → список чатов: список раскрывается кругом из центра, где крутилась кошка
     var revealHome by remember { mutableStateOf(false) }
+    // Кошка — отдельным слоем под навигацией, а не внутри экрана заставки: экран заставки уходит из
+    // стека сразу, и круг раскрывался на пустом фоне темы — его не было видно, кошка просто пропадала.
+    // Слой держится, пока главный экран раскрывается над ним, и снимается по концу раскрытия.
+    var splashLayer by remember { mutableStateOf(!launchedForCall) }
+    var splashLoops by remember { mutableIntStateOf(0) }
     val str = listOf(navArgument("login") { type = NavType.StringType }, navArgument("url") { type = NavType.StringType })
     val dispatcher = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
     // со звонка свайпом не уходят — только кнопками экрана
@@ -214,6 +221,8 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
     val playback = remember { PlaybackCoordinator(scope) }
     DisposableEffect(Unit) { onDispose { playback.stop() } }
     // слой общих элементов: аватар перелетает между шапкой чата и профилем
+    Box(Modifier.fillMaxSize()) {
+    if (splashLayer) SplashLayer(onLoopsDone = { splashLoops = it })
     SharedTransitionLayout {
     CompositionLocalProvider(
         LocalSwipeBack provides swipeBack, LocalSharedTransitionScope provides this, LocalPlayback provides playback,
@@ -272,8 +281,17 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
             )
         }
         composable(Routes.SPLASH) {
+            LaunchedEffect(Unit) { splashLayer = true }
             SplashScreen(
-                onSignedOut = { nav.startOver(Routes.WELCOME) },
+                loopsDone = splashLoops,
+                onSignedOut = {
+                    nav.startOver(Routes.WELCOME)
+                    // приветствие въезжает поверх кошки (450 мс) — потом слой не нужен
+                    scope.launch {
+                        delay(500)
+                        splashLayer = false
+                    }
+                },
                 onSignedIn = {
                     revealHome = true
                     nav.startOver(Routes.HOME)
@@ -342,6 +360,8 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
                 // иначе раскрытие проигрывалось задом наперёд
                 if (reveal && state == EnterExitState.PreEnter) 0f else 1f
             }
+            // раскрылось целиком — кошка под ним больше не нужна
+            if (reveal) LaunchedEffect(fraction >= 1f) { if (fraction >= 1f) splashLayer = false }
             Box(
                 Modifier.graphicsLayer {
                     if (fraction < 1f) {
@@ -427,6 +447,7 @@ fun AppNavigation(callScreenRequests: SharedFlow<Unit>, launchedForCall: Boolean
     }
     }
     }
+    }
 }
 
 /** Раскрытие списка чатов после заставки. */
@@ -453,22 +474,31 @@ private const val PROFILE_CLOSE_MS = 300
  * и на приветствие; иначе (в т.ч. нет сети) → главный экран.
  */
 @Composable
-private fun SplashScreen(onSignedOut: () -> Unit, onSignedIn: () -> Unit) {
+private fun SplashScreen(loopsDone: Int, onSignedOut: () -> Unit, onSignedIn: () -> Unit) {
     val core = LocalContext.current.app.core
     var signedIn by remember { mutableStateOf<Boolean?>(null) }
-    var loopsDone by remember { mutableIntStateOf(0) }
+    val loops by rememberUpdatedState(loopsDone)
     LaunchedEffect(Unit) { signedIn = resumeSession(core) }
     // кошка докручивает хотя бы один полный круг, и экран меняется ровно на стыке кругов —
     // не посреди движения (анимация не загрузилась — не ждём дольше SPLASH_LOOP_WAIT_MS)
     LaunchedEffect(signedIn) {
         val result = signedIn ?: return@LaunchedEffect
-        val atReady = loopsDone
-        withTimeoutOrNull(SPLASH_LOOP_WAIT_MS) { snapshotFlow { loopsDone }.first { it >= 1 && it > atReady } }
+        val atReady = loops
+        withTimeoutOrNull(SPLASH_LOOP_WAIT_MS) { snapshotFlow { loops }.first { it >= 1 && it > atReady } }
         if (result) onSignedIn() else onSignedOut()
     }
-    // кошка — во всю ширину с полями по 10% слева и справа (в альбомной — не выше 80% экрана)
-    BoxWithConstraints(Modifier.fillMaxSize().background(LocalAppColors.current.background), contentAlignment = Alignment.Center) {
-        AppLoadingIndicator(size = minOf(maxWidth, maxHeight) * 0.8f, onLoopsDone = { loopsDone = it })
+    // сам экран прозрачный: кошку рисует слой под навигацией (SplashLayer)
+    Box(Modifier.fillMaxSize())
+}
+
+/**
+ * Кошка на цвете заставки — во всю ширину с полями по 10% слева и справа (в альбомной — не выше
+ * 80% экрана). Лежит под навигацией: главный экран раскрывается над ней кругом из её центра.
+ */
+@Composable
+private fun SplashLayer(onLoopsDone: (Int) -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(LocalAppColors.current.splashBackground), contentAlignment = Alignment.Center) {
+        AppLoadingIndicator(size = minOf(maxWidth, maxHeight) * 0.8f, onLoopsDone = onLoopsDone)
     }
 }
 

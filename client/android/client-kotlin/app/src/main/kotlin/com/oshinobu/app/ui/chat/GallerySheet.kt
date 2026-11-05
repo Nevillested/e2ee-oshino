@@ -349,9 +349,9 @@ private fun GalleryTile(item: GalleryItem, order: Int?, blurred: Boolean, onOpen
         if (item.isVideo) {
             Icon(Icons.Filled.PlayCircleFilled, null, tint = Color.White, modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).size(20.dp))
         }
-        // правая верхняя четверть плитки — зона выбора, остальное — просмотр
         Box(
-            Modifier.align(Alignment.TopEnd).fillMaxWidth(0.5f).fillMaxHeight(0.5f).clickable(onClick = onToggle),
+            // зона выбора — квадрат 44 вокруг кружка: четверть плитки забирала нажатия «открыть фото»
+            Modifier.align(Alignment.TopEnd).size(44.dp).clickable(onClick = onToggle),
             contentAlignment = Alignment.TopEnd,
         ) { Box(Modifier.padding(6.dp)) { OrderBadge(order, 24) } }
     }
