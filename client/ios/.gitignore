@@ -1,0 +1,10 @@
+# Генерирует XcodeGen из project.yml
+Oshinobu/Oshinobu.xcodeproj/
+Oshinobu/Sources/Info.plist
+Oshinobu/Sources/Oshinobu.entitlements
+
+# Сборка SwiftPM / Xcode
+OshinobuCore/.build/
+.swiftpm/
+DerivedData/
+xcuserdata/

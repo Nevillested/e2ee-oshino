@@ -34,7 +34,11 @@ final class WebRtcEngine: RtcEngine, @unchecked Sendable {
 
 final class WebRtcSession: NSObject, RtcSession, RTCPeerConnectionDelegate, @unchecked Sendable {
     private let pc: RTCPeerConnection
-    private weak var events: RtcEvents?
+    /// Держим сами: RTCPeerConnection хранит делегат слабо, а ядро отдаёт мост событий без владельца —
+    /// со слабыми ссылками оба сразу исчезали, и ни одно событие соединения не доходило
+    /// (ни ICE-кандидаты, ни «соединено», ни «нужно пересогласовать», ни дорожка собеседника).
+    private let events: RtcEvents
+    private let delegateProxy: DelegateProxy
     private var audioTrack: RTCAudioTrack?
     private var videoTrack: RTCVideoTrack?
     private var capturer: RTCCameraVideoCapturer?
@@ -51,6 +55,7 @@ final class WebRtcSession: NSObject, RtcSession, RTCPeerConnectionDelegate, @unc
         config.continualGatheringPolicy = .gatherContinually
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: ["DtlsSrtpKeyAgreement": "true"])
         let delegateProxy = DelegateProxy()
+        self.delegateProxy = delegateProxy
         pc = WebRtcEngine.factory.peerConnection(with: config, constraints: constraints, delegate: delegateProxy)!
         super.init()
         delegateProxy.target = self
@@ -142,18 +147,18 @@ final class WebRtcSession: NSObject, RtcSession, RTCPeerConnectionDelegate, @unc
     // MARK: RTCPeerConnectionDelegate
 
     func peerConnection(_ pc: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
-        events?.onIceCandidate(candidate.sdp, sdpMid: candidate.sdpMid, sdpMLineIndex: candidate.sdpMLineIndex)
+        events.onIceCandidate(candidate.sdp, sdpMid: candidate.sdpMid, sdpMLineIndex: candidate.sdpMLineIndex)
     }
 
     func peerConnection(_ pc: RTCPeerConnection, didChange newState: RTCPeerConnectionState) {
         switch newState {
-        case .connected: events?.onConnected()
-        case .failed: events?.onFailed()
+        case .connected: events.onConnected()
+        case .failed: events.onFailed()
         default: break
         }
     }
 
-    func peerConnectionShouldNegotiate(_ pc: RTCPeerConnection) { events?.onRenegotiationNeeded() }
+    func peerConnectionShouldNegotiate(_ pc: RTCPeerConnection) { events.onRenegotiationNeeded() }
 
     func peerConnection(_ pc: RTCPeerConnection, didAdd rtpReceiver: RTCRtpReceiver, streams: [RTCMediaStream]) {
         if let track = rtpReceiver.track as? RTCVideoTrack {

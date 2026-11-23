@@ -1,81 +1,91 @@
 import OshinobuCore
 import SwiftUI
 
-/**
- * Панель стикеров: «Недавние» (открыты по умолчанию), установленные паки (новые первыми)
- * и «+»; под строкой — страницы: свайп по сетке листает к соседнему паку, нажатие на пак
- * открывает его сразу, коротко проявляя (как на Android). Тап по стикеру — отправить.
- */
+private let recentPage = "recent"
+
+/// Панель стикеров (Stickers.kt на Android): сверху — строка-пузырь (прокручивается вбок): «Недавние»
+/// (часы), установленные паки — миниатюрой первого стикера (долгое нажатие — убрать из панели) и «+»;
+/// под ней — сетка выбранного. Свайп по сетке — соседний пак; нажатие на пак — сразу, с коротким проявлением.
 struct StickerPanel: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    let peer: ChatSummary
-    @State private var packs: [StickerPackInfo] = []
-    @State private var selected = Self.recent
+    let bottomPadding: CGFloat
+    let onSend: (String) -> Void
+    let onPreview: (String?) -> Void
+    /// Паки — из памяти сразу, с сервера — следом (строка паков не появляется с запозданием).
+    @State private var packs: [StickerPackInfo] = StickerPanel.cachedPacks
+    @State private var recent: [String] = []
+    @State private var selected = recentPage
+    @MainActor static var cachedPacks: [StickerPackInfo] = []
     @State private var uploading = false
-    /// Проявление пака, открытого нажатием: 0 → 1 за долю секунды.
-    @State private var appear = 1.0
+    @State private var appear: CGFloat = 1
 
-    private static let recent = "recent"
-    private var pages: [String] { [Self.recent] + packs.map(\.id) }
+    private var pages: [String] { [recentPage] + packs.map(\.id) }
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { tabs in
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        Button { uploading = true } label: {
-                            Image(systemName: "plus").font(.subheadline.bold()).padding(8).background(model.theme.surface, in: Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(Text("sticker_addPack"))
-                        tab(Self.recent) { Text("sticker_recent") }
+                    HStack(spacing: 4) {
+                        packTab(recentPage) { MIcon(.oSchedule, tint: selected == recentPage ? model.theme.primary : model.theme.textMuted) }
                         ForEach(packs, id: \.id) { pack in
-                            tab(pack.id) { Text(verbatim: pack.title) }
+                            packTab(pack.id, onLongPress: { askRemove(pack) }) {
+                                if let first = pack.stickers.first { StickerImage(stickerId: first.id) }
+                            }
                         }
+                        packTab("add", action: { uploading = true }) { MIcon(.add, tint: model.theme.primary) }
                     }
-                    .padding(12)
+                    .padding(.horizontal, 6)
                 }
+                .frame(height: 52)
+                .background(model.theme.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 18))
+                .noSwipeBack()
+                .padding(.horizontal, 8)
+                .padding(.top, 8)
                 // листают свайпом — строка подтягивает открытый пак в видимую часть
-                .onChange(of: selected) { id in withAnimation(.easeOut(duration: 0.2)) { tabs.scrollTo(id, anchor: .center) } }
+                .onChange(of: selected) { _, id in withAnimation(.easeOut(duration: 0.2)) { tabs.scrollTo(id) } }
             }
             TabView(selection: $selected) {
-                ForEach(pages, id: \.self) { id in
-                    grid(id).tag(id)
-                }
+                ForEach(pages, id: \.self) { id in grid(id).tag(id) }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            .noSwipeBack()
             .opacity(appear)
             .scaleEffect(0.97 + 0.03 * appear)
         }
-        .background(model.theme.background.ignoresSafeArea())
         .sheet(isPresented: $uploading) {
             StickerUploadView { pack in
-                // свой новый пак — первым в строке
                 packs.insert(pack, at: 0)
                 open(pack.id)
             }
             .environmentObject(model)
         }
-        .task {
-            guard let token = model.core.session.token, let mine = try? await model.core.api.getMyStickerPacks(token: token) else { return }
-            packs = mine.filter { !$0.deleted }
-            // «Недавние» открыты по умолчанию; пусто — первый пак
-            if model.core.recentStickers.isEmpty, let first = packs.first?.id { selected = first }
-        }
+        .task { await reload() }
     }
 
-    private func tab<Title: View>(_ id: String, @ViewBuilder label: () -> Title) -> some View {
-        Button { open(id) } label: {
-            label().font(.subheadline).padding(.horizontal, 12).padding(.vertical, 6)
-                .background(selected == id ? model.theme.primary.opacity(0.2) : model.theme.surface, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .id(id)
+    private func reload() async {
+        recent = model.core.recentStickers
+        guard let token = model.core.session.token, let mine = try? await model.core.api.getMyStickerPacks(token: token) else { return }
+        packs = mine.filter { !$0.deleted }
+        StickerPanel.cachedPacks = packs
+        for p in packs { await model.core.stickers.remember(p) }
+        if !pages.contains(selected) { selected = recentPage }
     }
 
-    /// Нажатие на пак: страница меняется без пролистывания через соседние и проявляется —
-    /// едва заметно, лишь бы не рывком.
+    /// Кнопка строки паков: выбранная — подсвеченная.
+    private func packTab<C: View>(_ id: String, action: (() -> Void)? = nil, onLongPress: (() -> Void)? = nil, @ViewBuilder content: () -> C) -> some View {
+        let on = selected == id
+        return content()
+            .padding(6)
+            .frame(width: 42, height: 42)
+            .background(on ? model.theme.primary.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 12))
+            .animation(.easeInOut(duration: 0.2), value: on)
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .onTapGesture { if let action { action() } else { open(id) } }
+            .onLongPressGesture(minimumDuration: 0.5) { onLongPress?() }
+            .id(id)
+    }
+
+    /// Нажатие на пак: страница меняется без пролистывания через соседние и проявляется.
     private func open(_ id: String) {
         guard id != selected else { return }
         var instant = Transaction()
@@ -84,37 +94,124 @@ struct StickerPanel: View {
             appear = 0
             selected = id
         }
-        withAnimation(.easeOut(duration: 0.16)) { appear = 1 }
+        withAnimation(.timingCurve(0.4, 0, 0.2, 1, duration: 0.16)) { appear = 1 }
     }
 
     @ViewBuilder private func grid(_ id: String) -> some View {
-        let ids = id == Self.recent ? model.core.recentStickers : packs.first { $0.id == id }?.stickers.map(\.id) ?? []
-        ScrollView {
-            if ids.isEmpty && id == Self.recent {
-                Text("sticker_recentEmpty").foregroundStyle(model.theme.textMuted).padding(40)
-            }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                ForEach(ids, id: \.self) { sticker in
-                    StickerCell(stickerId: sticker)
-                        .onTapGesture {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            Task { await model.core.sendSticker(sticker, to: peer) }
-                            dismiss()
+        let ids = id == recentPage ? recent : packs.first { $0.id == id }?.stickers.map(\.id) ?? []
+        if id == recentPage && ids.isEmpty {
+            Text("sticker_recentEmpty").font(.roboto(13)).foregroundStyle(model.theme.textMuted).multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.bottom, bottomPadding)
+        } else {
+            StickerGrid(ids: ids, bottomPadding: bottomPadding, onSend: { sticker in
+                onSend(sticker)
+                recent = model.core.recentStickers
+            }, onPreview: onPreview)
+        }
+    }
+
+    private func askRemove(_ pack: StickerPackInfo) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        model.popups.show {
+            AppDialog(title: "sticker_removeFromPanelTitle", onDismiss: { model.popups.dismiss() }) {
+                Text(verbatim: String(format: tr("sticker_removeFromPanelBody"), pack.title))
+            } buttons: {
+                DialogButton("common_cancel") { model.popups.dismiss() }
+                DialogButton("sticker_remove", color: errorRed) {
+                    model.popups.dismiss()
+                    Task {
+                        guard let token = model.core.session.token else { return }
+                        do {
+                            try await model.core.api.uninstallStickerPack(token: token, packId: pack.id)
+                            packs.removeAll { $0.id == pack.id }
+                            if selected == pack.id { selected = recentPage }
+                        } catch {
+                            model.toasts.show(tr("error_stickersFailed"))
                         }
+                    }
                 }
             }
-            .padding(12)
         }
     }
 }
 
-/// Клетка панели: стикер любого формата (пак скачивается при первом показе).
-struct StickerCell: View {
-    let stickerId: String
+/// Сетка стикеров по 5: нажатие — отправить, долгое нажатие — превью; не отрывая пальца, можно вести им
+/// по сетке — превью переключается на стикер под пальцем (с лёгкой вибрацией на каждое переключение).
+struct StickerGrid: View {
+    let ids: [String]
+    var bottomPadding: CGFloat = 8
+    let onSend: ((String) -> Void)?
+    let onPreview: (String?) -> Void
+    @State private var frames: [String: CGRect] = [:]
+    @State private var previewed: String?
 
     var body: some View {
-        StickerImage(stickerId: stickerId).frame(height: 76)
+        ScrollView {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 5), spacing: 0) {
+                ForEach(ids, id: \.self) { id in
+                    StickerImage(stickerId: id)
+                        .aspectRatio(1, contentMode: .fit)
+                        .padding(4)
+                        .contentShape(Rectangle())
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frames[id] = $0 }
+                        .gesture(PressGestures(onTap: {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            onSend?(id)
+                        }, onLong: { point in
+                            guard let point else { return show(nil) }
+                            // первое касание — этот стикер; дальше — тот, над которым палец (между ячейками — текущий)
+                            if previewed == nil { return show(id) }
+                            if let hit = frames.first(where: { ids.contains($0.key) && $0.value.contains(point) })?.key { show(hit) }
+                        }))
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 6)
+            .padding(.bottom, bottomPadding)
+        }
     }
+
+    private func show(_ next: String?) {
+        guard next != previewed else { return }
+        if next != nil {
+            if previewed == nil { UIImpactFeedbackGenerator(style: .medium).impactOccurred() } else { UISelectionFeedbackGenerator().selectionChanged() }
+        }
+        previewed = next
+        onPreview(next)
+    }
+}
+
+/// Увеличенный стикер поверх чата на время долгого нажатия: появляется «пружиной» из маленького,
+/// при переключении на другой стикер — сменяется с коротким «хлопком».
+struct StickerPreviewOverlay: View {
+    let stickerId: String?
+    @State private var shown: String?
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(stickerId != nil ? 0.45 : 0).ignoresSafeArea().animation(.easeOut(duration: 0.18), value: stickerId != nil)
+            if let id = stickerId ?? shown, stickerId != nil {
+                StickerImage(stickerId: id).frame(width: 240, height: 240)
+                    .id(id)
+                    .transition(.asymmetric(insertion: .scale(scale: 0.8).combined(with: .opacity), removal: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.55), value: stickerId)
+        .allowsHitTesting(false)
+        .onChange(of: stickerId) { _, id in if let id { shown = id } }
+    }
+}
+
+/// Стикер под пальцем — для превью на слое поверх всей шторки (затемняется и её ручка).
+@MainActor
+final class StickerPreviewState: ObservableObject {
+    @Published var id: String?
+}
+
+private struct StickerPreviewHost: View {
+    @ObservedObject var state: StickerPreviewState
+    var body: some View { StickerPreviewOverlay(stickerId: state.id) }
 }
 
 /// Загрузка своего пака: название, ZIP, живые шаги сервера; готово — пак в панели.
@@ -142,12 +239,12 @@ struct StickerUploadView: View {
         NavigationStack {
             Form {
                 Section("sticker_uploadName") {
-                    TextField(String(format: NSLocalizedString("sticker_uploadNameHint", comment: ""), Self.maxTitle), text: $title)
+                    TextField(String(format: tr("sticker_uploadNameHint"), Self.maxTitle), text: $title)
                 }
                 Section {
                     Text("sticker_uploadRules").font(.footnote).foregroundStyle(model.theme.textMuted)
                     Button { picking = true } label: {
-                        Label { Text(verbatim: archive?.lastPathComponent ?? NSLocalizedString("sticker_uploadPick", comment: "")) } icon: { Image(systemName: "doc.zipper") }
+                        Label { Text(verbatim: archive?.lastPathComponent ?? tr("sticker_uploadPick")) } icon: { Image(systemName: "doc.zipper") }
                     }
                 }
                 if let status {
@@ -198,7 +295,7 @@ struct StickerUploadView: View {
     }
 
     private func show(_ e: ApiClient.StickerUploadEvent) {
-        func f(_ key: String, _ args: CVarArg...) -> String { String(format: NSLocalizedString(key, comment: ""), arguments: args) }
+        func f(_ key: String, _ args: CVarArg...) -> String { String(format: tr(key), arguments: args) }
         let fraction = e.index.flatMap { i in e.total.map { $0 > 0 ? Double(i) / Double($0) : 0 } }
         let suffix = e.name.map { "\n\($0)" } ?? ""
         switch e.stage {
@@ -215,7 +312,7 @@ struct StickerUploadView: View {
 
     /// Причина отказа — по коду сервера (как uploadError на Android).
     private func message(_ e: ApiClient.StickerUploadError) -> String {
-        func f(_ key: String, _ args: CVarArg...) -> String { String(format: NSLocalizedString(key, comment: ""), arguments: args) }
+        func f(_ key: String, _ args: CVarArg...) -> String { String(format: tr(key), arguments: args) }
         let name = e.fileName ?? ""
         let limit = e.limit ?? 0
         switch e.code {
@@ -240,73 +337,123 @@ struct StickerUploadView: View {
     }
 }
 
-/// Лист пака (тап по стикеру в ленте): все стикеры; «Добавить»/«Убрать», у автора — «Удалить навсегда».
-/// Тап по стикеру — отправить в текущий чат.
+/// Лист пака (нажатие на стикер в ленте) — как StickerPackSheet на Android: название, число стикеров, сетка
+/// (нажатие — отправить, долгое — превью); «Добавить»/«Убрать», у автора — ещё «Удалить навсегда».
 struct StickerPackSheet: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var cover: SheetCover
+    @Environment(\.sheetClose) private var close
+    @StateObject private var previewState = StickerPreviewState()
     let stickerId: String
-    let peer: ChatSummary
+    let peer: ChatSummary?
+    /// Известный пак — сразу (паки панели в памяти), свежий с сервера — следом, без загрузки на экране.
     @State private var pack: StickerPackInfo?
-    @State private var confirmDelete = false
+
+    init(stickerId: String, peer: ChatSummary?) {
+        self.stickerId = stickerId
+        self.peer = peer
+        _pack = State(initialValue: StickerPanel.cachedPacks.first { $0.stickers.contains { $0.id == stickerId } })
+    }
+    @State private var deleted = false
     @State private var failed = false
+    @State private var busy = false
+    @State private var confirming: StickerPackInfo?
+    @State private var showLoader = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            if let pack {
-                Text(verbatim: pack.title).font(.headline).padding(.top, 16)
-                Text(String(format: NSLocalizedString("sticker_count", comment: ""), pack.stickers.count)).font(.caption).foregroundStyle(model.theme.textMuted)
-                ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                        ForEach(pack.stickers, id: \.id) { s in
-                            StickerCell(stickerId: s.id).onTapGesture {
-                                Task { await model.core.sendSticker(s.id, to: peer) }
-                                dismiss()
+        ZStack {
+            if deleted || failed {
+                Text(deleted ? "sticker_packDeleted" : "error_stickersFailed").font(.roboto(16)).foregroundStyle(model.theme.textMuted)
+                    .multilineTextAlignment(.center).padding(24)
+            } else if let p = pack {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(verbatim: p.title).font(.roboto(18, .semibold)).foregroundStyle(model.theme.textPrimary).lineLimit(1).padding(.horizontal, 20)
+                    Text(verbatim: String(format: tr("sticker_count"), p.stickers.count)).font(.roboto(13)).foregroundStyle(model.theme.textMuted)
+                        .padding(.horizontal, 20)
+                    StickerGrid(ids: p.stickers.map(\.id), onSend: peer.map { target in
+                        { (id: String) in
+                            Task { await model.core.sendSticker(id, to: target) }
+                            close()
+                        }
+                    }, onPreview: { previewState.id = $0 })
+                    let label: LocalizedStringKey = p.installed ? "sticker_remove" : "sticker_add"
+                    Group {
+                        if p.isOwner {
+                            HStack(spacing: 10) {
+                                SecondaryButton(label, enabled: !busy) { toggleInstall(p) }
+                                Button { if !busy { confirmDelete(p) } } label: {
+                                    Text("sticker_deleteForever").font(.roboto(14, .semibold)).foregroundStyle(errorRed).lineLimit(1)
+                                        .frame(maxWidth: .infinity, minHeight: 52)
+                                        .overlay(RoundedRectangle(cornerRadius: cardRadius).strokeBorder(errorRed, lineWidth: 1))
+                                }
+                                .buttonStyle(RippleStyle(shape: RoundedRectangle(cornerRadius: cardRadius), color: errorRed))
                             }
+                        } else if p.installed {
+                            SecondaryButton(label, enabled: !busy) { toggleInstall(p) }
+                        } else {
+                            PrimaryButton(label, loading: busy) { toggleInstall(p) }
                         }
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
                 }
-                HStack(spacing: 12) {
-                    Button { Task { await toggleInstall(pack) } } label: {
-                        Text(pack.installed ? "sticker_remove" : "sticker_add").frame(maxWidth: .infinity).padding(.vertical, 12)
-                            .overlay(Capsule().stroke(model.theme.primary))
-                    }
-                    if pack.isOwner {
-                        Button(role: .destructive) { confirmDelete = true } label: {
-                            Text("sticker_deleteForever").frame(maxWidth: .infinity).padding(.vertical, 12).overlay(Capsule().stroke(.red))
+            } else if showLoader {
+                // пак с диска приходит за доли секунды — кошка только для пака, которого на телефоне нет
+                AppLoadingIndicator(size: 56)
+            }
+            if let p = confirming {
+                // окно — внутри листа: общий слой окон приложения лежит под листом
+                Color.black.opacity(0.6).ignoresSafeArea().onTapGesture { confirming = nil }
+                AppDialog(title: "sticker_deleteForeverTitle", onDismiss: { confirming = nil }) {
+                    Text(verbatim: String(format: tr("sticker_deleteForeverBody"), p.title))
+                } buttons: {
+                    DialogButton("common_cancel") { confirming = nil }
+                    DialogButton("sticker_deleteForeverConfirm", color: errorRed) {
+                        confirming = nil
+                        Task {
+                            if let token = model.core.session.token { try? await model.core.api.deleteStickerPack(token: token, packId: p.id) }
+                            close()
                         }
                     }
                 }
-                .padding(.horizontal, 16).padding(.bottom, 12)
-            } else if failed {
-                Text("sticker_packDeleted").foregroundStyle(model.theme.textMuted).padding(40)
-            } else {
-                ProgressView().padding(40)
             }
         }
-        .background(model.theme.background.ignoresSafeArea())
-        .confirmationDialog("sticker_deleteForeverTitle", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("sticker_deleteForeverConfirm", role: .destructive) {
-                Task {
-                    if let token = model.core.session.token, let id = pack?.id { try? await model.core.api.deleteStickerPack(token: token, packId: id) }
-                    dismiss()
-                }
-            }
-        }
+        .animation(.easeOut(duration: 0.14), value: confirming?.id)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { cover.view = AnyView(StickerPreviewHost(state: previewState)) }
         .task {
+            if pack == nil { pack = await model.core.stickers.pack(of: stickerId) }
+            if pack == nil {
+                Task {
+                    try? await Task.sleep(for: .milliseconds(300))
+                    showLoader = true
+                }
+            }
             guard let token = model.core.session.token else { return }
-            pack = try? await model.core.api.getStickerPackBySticker(token: token, stickerId: stickerId)
-            if pack == nil || pack?.deleted == true { failed = true; pack = nil }
+            do {
+                let p = try await model.core.api.getStickerPackBySticker(token: token, stickerId: stickerId)
+                if let p, !p.deleted { await model.core.stickers.remember(p) }
+                if p == nil || p?.deleted == true { deleted = true } else { pack = p }
+            } catch {
+                failed = pack == nil
+            }
         }
     }
 
-    private func toggleInstall(_ p: StickerPackInfo) async {
+    private func toggleInstall(_ p: StickerPackInfo) {
         guard let token = model.core.session.token else { return }
-        do {
-            if p.installed { try await model.core.api.uninstallStickerPack(token: token, packId: p.id) }
-            else { try await model.core.api.installStickerPack(token: token, packId: p.id) }
-            pack = try? await model.core.api.getStickerPack(token: token, packId: p.id)
-        } catch {}
+        busy = true
+        Task {
+            do {
+                if p.installed { try await model.core.api.uninstallStickerPack(token: token, packId: p.id) }
+                else { try await model.core.api.installStickerPack(token: token, packId: p.id) }
+                pack = try? await model.core.api.getStickerPack(token: token, packId: p.id)
+            } catch {
+                model.toasts.show(tr("error_stickersFailed"))
+            }
+            busy = false
+        }
     }
+
+    private func confirmDelete(_ p: StickerPackInfo) { confirming = p }
 }

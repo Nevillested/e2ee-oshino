@@ -37,8 +37,9 @@ final class SampleBufferVideoView: UIView, RTCVideoRenderer {
             let angle = CGFloat(frame.rotation.rawValue) * .pi / 180
             DispatchQueue.main.async { self.transform = CGAffineTransform(rotationAngle: angle) }
         }
-        if displayLayer.status == .failed { displayLayer.flush() }
-        displayLayer.enqueue(sample)
+        let renderer = displayLayer.sampleBufferRenderer
+        if renderer.status == .failed { renderer.flush() }
+        renderer.enqueue(sample)
     }
 
     private func pixelBuffer(_ buffer: RTCVideoFrameBuffer) -> CVPixelBuffer? {

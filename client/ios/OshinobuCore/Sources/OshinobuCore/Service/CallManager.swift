@@ -116,7 +116,7 @@ public actor CallManager {
     public var callId: String? { currentCallId }
 
     /// Соединение текущего звонка — экрану звонка для видео (реализация платформы).
-    public var session: RtcSession? { rtc }
+    public var rtcSession: RtcSession? { rtc }
 
     public init(signaling: CallSignaling, messenger: PeerMessenger, router: MessageRouter, api: ApiClient, session: Session, chats: ChatStore,
                 engine: RtcEngine, log: Logger = NoopLogger(), now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },

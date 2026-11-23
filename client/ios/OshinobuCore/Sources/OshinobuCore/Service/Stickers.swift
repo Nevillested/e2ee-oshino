@@ -26,14 +26,30 @@ public actor Stickers {
         let pack: StickerPackInfo
         if let known = packOf[stickerId] { pack = known } else {
             guard let p = try? await api.getStickerPackBySticker(token: token, stickerId: stickerId) else { return nil }
-            for s in p.stickers { packOf[s.id] = p }
+            remember(p)
             pack = p
         }
         guard await ensurePack(pack.id, token: token) else { return nil }
         return local(stickerId)
     }
 
-    public func pack(of stickerId: String) -> StickerPackInfo? { packOf[stickerId] }
+    /// Известный пак стикера — из памяти или с диска (описание лежит рядом с файлами пака), без сети.
+    public func pack(of stickerId: String) -> StickerPackInfo? {
+        if let known = packOf[stickerId] { return known }
+        guard let packDir = local(stickerId)?.deletingLastPathComponent(),
+              let data = try? Data(contentsOf: packDir.appendingPathComponent("pack.json")),
+              let p = try? JSONDecoder().decode(StickerPackInfo.self, from: data) else { return nil }
+        for s in p.stickers { packOf[s.id] = p }
+        return p
+    }
+
+    /// Свежее описание пака (с сервера) — в память и на диск, чтобы в следующий раз открыть без сети.
+    public func remember(_ p: StickerPackInfo) {
+        for s in p.stickers { packOf[s.id] = p }
+        let packDir = dir.appendingPathComponent(p.id, isDirectory: true)
+        try? FileManager.default.createDirectory(at: packDir, withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(p) { try? data.write(to: packDir.appendingPathComponent("pack.json"), options: .atomic) }
+    }
 
     private func local(_ stickerId: String) -> URL? {
         guard let packs = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return nil }
@@ -60,6 +76,9 @@ public actor Stickers {
         loading[packId] = nil
         return ok
     }
+
+    /// Сколько занимают скачанные паки (байты).
+    public func cacheSize() -> Int64 { directorySize(dir) }
 
     /// Очистка кэша: паки скачаются заново при показе.
     public func clearCache() {

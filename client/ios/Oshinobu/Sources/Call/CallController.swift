@@ -235,11 +235,8 @@ final class CallController: NSObject, CXProviderDelegate, @unchecked Sendable {
     /// Режим голосового чата: эхоподавление, у уха — разговорный динамик, датчик приближения — сам iOS.
     private func configureAudioSession() {
         let s = AVAudioSession.sharedInstance()
-        try? s.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .allowBluetoothA2DP])
+        try? s.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP, .allowBluetoothA2DP])
     }
 
     /// Громкая связь (кнопка на экране звонка).
-    func setSpeaker(_ on: Bool) {
-        try? AVAudioSession.sharedInstance().overrideOutputAudioPort(on ? .speaker : .none)
-    }
 }

@@ -77,14 +77,14 @@ public struct PrivacySettings: Sendable {
     }
 }
 
-public struct StickerInfo: Sendable, Hashable {
+public struct StickerInfo: Sendable, Hashable, Codable {
     public let id: String
     public let format: String
     public let packId: String
     public var animated: Bool { format == "tgs" }
 }
 
-public struct StickerPackInfo: Sendable {
+public struct StickerPackInfo: Sendable, Codable {
     public let id: String
     public let title: String
     public let isOwner: Bool

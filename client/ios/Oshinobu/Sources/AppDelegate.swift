@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         Self.shared = self
+        // запуск пушем, когда приложение было закрыто, — в фоне, без сцены: смена scenePhase не придёт,
+        // и без этого приложение считало бы себя на экране (сообщения из фона — без уведомлений)
+        model.foregroundChanged(application.applicationState != .background)
         UNUserNotificationCenter.current().delegate = self
         _ = model.callController // CallKit — до первого VoIP-пуша
         let registry = PKPushRegistry(queue: .main)
@@ -30,7 +33,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     // MARK: APNs (сообщения, отмена звонка)
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        model.core.setPushToken(deviceToken.hex, voip: false)
+        model.core.setPushToken(deviceToken.hex, voip: false, sandbox: ApnsEnvironment.isSandbox)
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
@@ -53,7 +56,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     nonisolated func pushRegistry(_ registry: PKPushRegistry, didUpdate pushCredentials: PKPushCredentials, for type: PKPushType) {
         let hex = pushCredentials.token.hex
-        MainActor.assumeIsolated { model.core.setPushToken(hex, voip: true) }
+        MainActor.assumeIsolated { model.core.setPushToken(hex, voip: true, sandbox: ApnsEnvironment.isSandbox) }
     }
 
     nonisolated func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload, for type: PKPushType,
@@ -77,4 +80,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
 private extension Data {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
+}
+
+/// Среда APNs, в которой выданы токены: её задаёт профиль подписи (`aps-environment`). Сборки из
+/// Xcode несут профиль разработчика — development (sandbox); у TestFlight и App Store профиля внутри
+/// нет — production.
+enum ApnsEnvironment {
+    static let isSandbox: Bool = {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url),
+              // профиль — подписанный CMS-контейнер, внутри открытым текстом plist
+              let start = data.range(of: Data("<?xml".utf8)),
+              let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex),
+              let plist = try? PropertyListSerialization.propertyList(from: data[start.lowerBound..<end.upperBound], format: nil) as? [String: Any],
+              let entitlements = plist["Entitlements"] as? [String: Any]
+        else { return false }
+        return entitlements["aps-environment"] as? String == "development"
+    }()
 }

@@ -89,6 +89,9 @@ public final class OshinobuCore: @unchecked Sendable {
     public let chatService: ChatService
     public let appLock: AppLockStore
     public let avatars: Avatars
+    public let peerProfiles: PeerProfiles
+    public let settings: UiSettings
+    public let myAccount: MyAccount
     public let wallpapers: Wallpapers
     public let stickers: Stickers
 
@@ -125,6 +128,9 @@ public final class OshinobuCore: @unchecked Sendable {
         chatService = ChatService(chats: chats, messenger: messenger, router: router, cleanup: media)
         appLock = AppLockStore(secure: secure)
         avatars = Avatars(api: api, session: session, dirs: dirs)
+        peerProfiles = PeerProfiles(api: api, session: session, dirs: dirs)
+        settings = UiSettings(secure: secure, prefs: prefs)
+        myAccount = MyAccount(api: api, session: session, dirs: dirs)
         wallpapers = Wallpapers(api: api, session: session, dirs: dirs)
         stickers = Stickers(api: api, session: session, dirs: dirs)
         installCrashReporter()
@@ -201,30 +207,54 @@ public final class OshinobuCore: @unchecked Sendable {
         ws.connect(token: token, deviceId: deviceId)
         sessionActive.value = true
         followProfileChanges()
+        Task { await myAccount.load() }
         await deviceSetup.ensurePrekeysTopped(token: token, deviceId: deviceId)
         await syncFromServer(token: token)
-        await registerPushTokens()
+        await schedulePushRegistration(force: true).value
     }
 
     /// Токены APNs приходят от системы когда угодно (и до входа) — храним и отправляем,
     /// как только есть сессия. Сервер нового токена не знает, пока не отправили.
-    public func setPushToken(_ hex: String, voip: Bool) {
+    /// [sandbox] — токен из development APNs: так подписаны сборки из Xcode (определяет приложение
+    /// по профилю подписи, не по DEBUG — release-сборка из Xcode тоже получает development-токены).
+    public func setPushToken(_ hex: String, voip: Bool, sandbox: Bool) {
         let key = voip ? "apns_voip_token" : "apns_alert_token"
-        guard prefs.string(key) != hex else { return }
+        guard prefs.string(key) != hex || prefs.bool("apns_sandbox") != sandbox else { return }
+        if prefs.bool("apns_sandbox") != sandbox {
+            // сменилась среда APNs (сборка из Xcode → TestFlight): токены прежней недействительны —
+            // не отправлять их вместе с новым, иначе сервер сохранит мёртвый токен
+            prefs.remove("apns_alert_token")
+            prefs.remove("apns_voip_token")
+        }
         prefs.set(key, hex)
+        prefs.set("apns_sandbox", sandbox)
         prefs.remove("apns_sent")
-        Task { await registerPushTokens() }
+        schedulePushRegistration(force: false)
     }
 
-    private func registerPushTokens() async {
-        guard prefs.bool("apns_sent") != true, let token = session.token, let deviceId = keys.deviceId() else { return }
+    private let pushLock = NSLock()
+    private var pushRegistration: Task<Void, Never>?
+
+    /// Отправки токенов — строго по очереди: каждая читает токены на момент своего запуска, и
+    /// запоздавший ответ прежней не перезапишет на сервере более новые (два токена — звонков и
+    /// сообщений — система выдаёт почти одновременно).
+    @discardableResult
+    private func schedulePushRegistration(force: Bool) -> Task<Void, Never> {
+        pushLock.lock()
+        defer { pushLock.unlock() }
+        let previous = pushRegistration
+        let task = Task { await previous?.value; await self.registerPushTokens(force: force) }
+        pushRegistration = task
+        return task
+    }
+
+    /// [force] — отправить, даже если уже отправляли: при каждом запуске сессии, чтобы сервер
+    /// получил токены заново, если удалил их (Apple ответила, что токен недействителен).
+    private func registerPushTokens(force: Bool) async {
+        guard force || prefs.bool("apns_sent") != true, let token = session.token, let deviceId = keys.deviceId() else { return }
         let alert = prefs.string("apns_alert_token"), voip = prefs.string("apns_voip_token")
         guard alert != nil || voip != nil else { return }
-        #if DEBUG
-        let sandbox = true
-        #else
-        let sandbox = false
-        #endif
+        let sandbox = prefs.bool("apns_sandbox") ?? false
         if await api.registerApnsTokens(token: token, deviceId: deviceId, alert: alert, voip: voip, sandbox: sandbox) {
             prefs.set("apns_sent", true)
             logger.log("Push: APNs tokens registered (alert=\(alert != nil) voip=\(voip != nil))")
@@ -250,12 +280,14 @@ public final class OshinobuCore: @unchecked Sendable {
 
     private var profileTask: Task<Void, Never>?
 
-    /// profile_updated — фото собеседника перезапрашивается.
+    /// profile_updated — фото или профиль собеседника перезапрашивается.
     private func followProfileChanges() {
         guard profileTask == nil else { return }
         profileTask = Task { [weak self] in
             guard let self else { return }
-            for await change in ws.profileChanges.stream() where change.field == "avatar" { await avatars.invalidate(change.accountId) }
+            for await change in ws.profileChanges.stream() {
+                if change.field == "avatar" { await avatars.invalidate(change.accountId) } else { await peerProfiles.invalidate(change.accountId) }
+            }
         }
         Task { [weak self] in
             guard let self else { return }
@@ -272,18 +304,22 @@ public final class OshinobuCore: @unchecked Sendable {
         }
     }
 
-    public func login(login: String, password: String, totpCode: String) async throws {
+    /// Вход; возвращает язык интерфейса из аккаунта ("ru"/"en").
+    @discardableResult
+    public func login(login: String, password: String, totpCode: String) async throws -> String {
         let result = try await api.login(login: login, password: password, totpCode: totpCode)
         session.token = result.token
         session.login = login
         if let me = await api.getMyAccountInfo(token: result.token) { session.accountId = me.accountId }
         try await startSession()
+        return result.language == "ru" ? "ru" : "en"
     }
 
     /// Выход: ключи, сессии и переписка стираются (как на Android).
     public func signOutLocally() {
         ws.disconnect()
         sessionActive.value = false
+        myAccount.reset()
         keys.wipeAll()
         chats.wipeAll()
         session.token = nil
@@ -322,11 +358,14 @@ public final class OshinobuCore: @unchecked Sendable {
         public let name: String
         public let isVideo: Bool
         public let isFile: Bool
-        public init(url: URL, name: String, isVideo: Bool, isFile: Bool) {
+        /// Фото/видео под спойлером (у получателя — размыто, пока не нажмут).
+        public let isSpoiler: Bool
+        public init(url: URL, name: String, isVideo: Bool, isFile: Bool, isSpoiler: Bool = false) {
             self.url = url
             self.name = name
             self.isVideo = isVideo
             self.isFile = isFile
+            self.isSpoiler = isSpoiler && !isFile
         }
     }
 
@@ -365,6 +404,7 @@ public final class OshinobuCore: @unchecked Sendable {
             m.isMedia = true
             m.isVideo = f.isVideo
             m.isFile = f.isFile
+            m.isSpoiler = f.isSpoiler
             m.fileName = f.name
             m.fileSize = sz
             m.chunked = sz > StreamingFileCipher.streamingThresholdBytes
@@ -393,7 +433,7 @@ public final class OshinobuCore: @unchecked Sendable {
                 }
                 if let groupId {
                     let files: [[String: JSONValue]] = refs.map { f, id, ref in
-                        var body = InnerMessage.media(ref, fileName: f.name, isFile: f.isFile, isVideo: f.isVideo, messageId: id).bodyJSON()
+                        var body = InnerMessage.media(ref, fileName: f.name, isFile: f.isFile, isVideo: f.isVideo, spoiler: f.isSpoiler, messageId: id).bodyJSON()
                         body["message_id"] = .string(id)
                         return body
                     }
@@ -402,7 +442,7 @@ public final class OshinobuCore: @unchecked Sendable {
                         for id in ids { chats.updateMessageStatus(peer.peerLogin, id, MessageStatus.sent) }
                     }
                 } else if case let (f, id, ref)? = refs.first {
-                    try await messenger.send(to: deviceId, .media(ref, fileName: f.name, isFile: f.isFile, isVideo: f.isVideo, messageId: id), peerLogin: peer.peerLogin)
+                    try await messenger.send(to: deviceId, .media(ref, fileName: f.name, isFile: f.isFile, isVideo: f.isVideo, spoiler: f.isSpoiler, messageId: id), peerLogin: peer.peerLogin)
                 }
             } catch {
                 logger.log("sendMedia FAILED to=\(deviceId): \(error)")
@@ -416,8 +456,9 @@ public final class OshinobuCore: @unchecked Sendable {
     public var recentStickers: [String] { prefs.stringList("recent_stickers") ?? [] }
 
     /// Стикер — только его id; получатель берёт файл из пака на сервере.
-    public func sendSticker(_ stickerId: String, to peer: ChatSummary) async {
-        prefs.set("recent_stickers", Array(([stickerId] + recentStickers.filter { $0 != stickerId }).prefix(15)))
+    /// rememberRecent — стикер выбран в панели (пересланный в «недавние» не попадает).
+    public func sendSticker(_ stickerId: String, to peer: ChatSummary, rememberRecent: Bool = true) async {
+        if rememberRecent { prefs.set("recent_stickers", Array(([stickerId] + recentStickers.filter { $0 != stickerId }).prefix(15))) }
         let inner = InnerMessage.sticker(stickerId)
         var m = StoredMessage(messageId: inner.messageId, text: "", isMine: true, timestamp: inner.sentAt)
         m.stickerId = stickerId
@@ -430,6 +471,14 @@ public final class OshinobuCore: @unchecked Sendable {
 
     /// Очистить кэш: расшифрованные вложения и паки стикеров (скачаются заново). Возвращает освобождённые байты.
     @discardableResult
+    /// Кэш — вложения и стикеры (стикеры потом скачаются заново), байты.
+    public func cacheSize() async -> Int64 {
+        let files = (try? FileManager.default.contentsOfDirectory(at: dirs.temp, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        let media = files.filter { $0.lastPathComponent.hasPrefix("media_cache_") }
+            .reduce(Int64(0)) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+        return media + (await stickers.cacheSize())
+    }
+
     public func clearCache() async -> Int64 {
         let fm = FileManager.default
         var freed: Int64 = 0

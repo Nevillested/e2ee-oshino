@@ -2,8 +2,13 @@ import LocalAuthentication
 import OshinobuCore
 import SwiftUI
 
-/// Замок поверх приложения: при возврате дольше таймаута — Face ID или PIN
-/// (как AppLockGate на Android). Встаёт и перед экраном звонка — безопасность важнее.
+// Блокировка приложения — как у Android (ui/lock/AppLock.kt): экран с PIN и биометрией,
+// цифровая клавиатура 3×4, установка PIN с повтором.
+
+private let lockErrorColor = Color(hex: 0xFF5252)
+
+/// Замок поверх всего приложения: при запуске, если блокировка включена, и после
+/// возвращения из фона, если там провели не меньше заданного времени.
 struct AppLockGate<Content: View>: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
@@ -14,15 +19,12 @@ struct AppLockGate<Content: View>: View {
     var body: some View {
         ZStack {
             content()
-            if locked {
-                LockScreen { locked = false }
-                    .transition(.opacity)
-                    .zIndex(1)
+            if locked && model.core.appLock.state.value.enabled {
+                AppLockScreen { locked = false }.zIndex(1)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: locked)
         .onAppear { locked = model.core.appLock.state.value.enabled }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             let s = model.core.appLock.state.value
             guard s.enabled else { return }
             switch phase {
@@ -36,149 +38,170 @@ struct AppLockGate<Content: View>: View {
     }
 }
 
-struct LockScreen: View {
+/// Системный запрос Face ID / Touch ID; true — подтверждено.
+private func authenticateBiometric() async -> Bool {
+    let ctx = LAContext()
+    ctx.localizedCancelTitle = tr("applock_usePinInstead")
+    guard ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) else { return false }
+    return (try? await ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: tr("applock_useBiometricReason"))) ?? false
+}
+
+/// Экран блокировки: PIN (проверяется, как только введено нужное число цифр) и, если
+/// включено, биометрия — сразу при показе и по кнопке; после трёх неудач остаётся только PIN.
+struct AppLockScreen: View {
     @EnvironmentObject private var model: AppModel
-    let onUnlock: () -> Void
+    let onUnlocked: () -> Void
     @State private var pin = ""
-    @State private var wrong = false
+    @State private var error = false
+    @State private var biometricFails = 0
 
     var body: some View {
         let s = model.core.appLock.state.value
-        VStack(spacing: 24) {
-            Image(systemName: "lock.fill").font(.system(size: 44)).foregroundStyle(model.theme.primary)
-            Text("applock_enterPin").font(.title3).foregroundStyle(model.theme.textPrimary)
-            HStack(spacing: 14) {
-                ForEach(0..<s.pinLength, id: \.self) { i in
-                    Circle().fill(i < pin.count ? model.theme.primary : model.theme.textMuted.opacity(0.3)).frame(width: 14, height: 14)
+        VStack(spacing: 0) {
+            MIcon(.oLock, size: 48, tint: model.theme.primary)
+            Gap(12)
+            Text(error ? "applock_wrongPin" : "applock_enterPin").font(.roboto(16)).foregroundStyle(error ? lockErrorColor : model.theme.textPrimary)
+            Gap(24)
+            PinPad(value: pin, maxLength: s.pinLength, showError: error) { value in
+                pin = value
+                error = false
+                if value.count == s.pinLength {
+                    if model.core.appLock.checkPin(value) {
+                        onUnlocked()
+                    } else {
+                        error = true
+                        pin = ""
+                    }
                 }
             }
-            .modifier(Shake(animatable: wrong ? 1 : 0))
-            if wrong { Text("applock_wrongPin").foregroundStyle(.red).font(.footnote) }
-            PinPad(
-                onDigit: { digit in
-                    guard pin.count < s.pinLength else { return }
-                    pin += digit
-                    wrong = false
-                    if pin.count == s.pinLength {
-                        if model.core.appLock.checkPin(pin) { onUnlock() } else {
-                            UINotificationFeedbackGenerator().notificationOccurred(.error)
-                            withAnimation(.default) { wrong = true }
-                            pin = ""
-                        }
+            if s.biometricEnabled && biometricFails < 3 {
+                Gap(12)
+                Button { tryBiometric() } label: {
+                    HStack(spacing: 8) {
+                        MIcon(.fingerprint, tint: model.theme.primary)
+                        Text("applock_unlockWithBiometric").font(.roboto(14, .medium)).foregroundStyle(model.theme.primary)
                     }
-                },
-                onDelete: { if !pin.isEmpty { pin.removeLast() } },
-                onBiometric: s.biometricEnabled ? { biometric() } : nil
-            )
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 40)
+                }
+                .buttonStyle(RippleStyle(shape: Capsule(), color: model.theme.primary))
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(model.theme.background.ignoresSafeArea())
-        .onAppear { if s.biometricEnabled { biometric() } }
+        .contentShape(Rectangle())
+        .onAppear { tryBiometric() }
     }
 
-    private func biometric() {
-        let ctx = LAContext()
-        guard ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) else { return }
-        ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: NSLocalizedString("applock_useBiometricReason", comment: "")) { ok, _ in
-            if ok { Task { @MainActor in onUnlock() } }
+    private func tryBiometric() {
+        let s = model.core.appLock.state.value
+        guard s.biometricEnabled, biometricFails < 3 else { return }
+        Task {
+            if await authenticateBiometric() { onUnlocked() } else { biometricFails += 1 }
         }
     }
 }
 
+/// Точки введённых цифр и цифровая клавиатура 3×4.
 struct PinPad: View {
     @EnvironmentObject private var model: AppModel
-    let onDigit: (String) -> Void
-    let onDelete: () -> Void
-    let onBiometric: (() -> Void)?
+    let value: String
+    let maxLength: Int
+    let showError: Bool
+    let onChange: (String) -> Void
 
     var body: some View {
-        VStack(spacing: 16) {
-            ForEach([["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"]], id: \.self) { row in
-                HStack(spacing: 28) { ForEach(row, id: \.self) { d in key(d) } }
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(0..<value.count, id: \.self) { _ in
+                    Circle().fill(showError ? lockErrorColor : model.theme.primary).frame(width: 12, height: 12).padding(.horizontal, 5)
+                }
             }
-            HStack(spacing: 28) {
-                Button { onBiometric?() } label: { Image(systemName: "faceid").font(.title2).frame(width: 72, height: 72) }
-                    .opacity(onBiometric == nil ? 0 : 1).disabled(onBiometric == nil)
-                key("0")
-                Button(action: onDelete) { Image(systemName: "delete.left").font(.title2).frame(width: 72, height: 72) }
+            .frame(height: 16)
+            Gap(32)
+            VStack(spacing: 14) {
+                ForEach([["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["", "0", "⌫"]], id: \.self) { row in
+                    HStack(spacing: 0) {
+                        ForEach(row, id: \.self) { key in
+                            keyView(key).frame(maxWidth: .infinity)
+                        }
+                    }
+                    .frame(width: 280)
+                }
             }
-            .foregroundStyle(model.theme.textPrimary)
         }
     }
 
-    private func key(_ d: String) -> some View {
-        Button { UIImpactFeedbackGenerator(style: .light).impactOccurred(); onDigit(d) } label: {
-            Text(d).font(.title).frame(width: 72, height: 72).foregroundStyle(model.theme.textPrimary)
-                .background(model.theme.surface, in: Circle())
+    @ViewBuilder private func keyView(_ key: String) -> some View {
+        switch key {
+        case "":
+            Color.clear.frame(width: 72, height: 72)
+        case "⌫":
+            Button { if !value.isEmpty { onChange(String(value.dropLast())) } } label: {
+                MIcon(.oBackspace, tint: model.theme.textMuted).frame(width: 72, height: 72)
+            }
+            .buttonStyle(RippleStyle(shape: Circle(), color: model.theme.textPrimary))
+            .disabled(value.isEmpty)
+        default:
+            Button { if value.count < maxLength { onChange(value + key) } } label: {
+                Text(verbatim: key).font(.roboto(26)).foregroundStyle(model.theme.textPrimary)
+                    .frame(width: 72, height: 72).background(model.theme.surface, in: Circle())
+            }
+            .buttonStyle(RippleStyle(shape: Circle(), color: model.theme.textPrimary))
+            .disabled(value.count >= maxLength)
         }
     }
 }
 
-/// Тряска полоски точек при неверном PIN.
-struct Shake: GeometryEffect {
-    var animatable: CGFloat
-    var animatableData: CGFloat { get { animatable } set { animatable = newValue } }
-    func effectValue(size: CGSize) -> ProjectionTransform {
-        ProjectionTransform(CGAffineTransform(translationX: 10 * sin(animatable * .pi * 6), y: 0))
-    }
-}
-
-/// Настройка блокировки: PIN (ввод дважды), Face ID, таймаут.
-struct AppLockSettingsView: View {
+/// Новый PIN: 4–8 цифр, затем повтор; совпало — сохраняем и onDone(true). Во весь экран.
+struct PinSetupDialog: View {
     @EnvironmentObject private var model: AppModel
-    @State private var settings = AppLockSettings()
-    @State private var settingPin = false
-    @State private var first = ""
-    @State private var second = ""
+    let onDone: (Bool) -> Void
+    @State private var first: String?
+    @State private var pin = ""
     @State private var mismatch = false
 
     var body: some View {
-        Form {
-            Section {
-                Toggle("applock_title", isOn: Binding(get: { settings.enabled }, set: { on in
-                    if on && !settings.hasPin { settingPin = true } else { model.core.appLock.setEnabled(on); reload() }
-                }))
-                if settings.hasPin {
-                    Toggle("applock_unlockWithBiometric", isOn: Binding(get: { settings.biometricEnabled }, set: { model.core.appLock.setBiometric($0); reload() }))
-                    Picker("applock_timeout", selection: Binding(get: { settings.timeoutSeconds }, set: { model.core.appLock.setTimeout($0); reload() })) {
-                        ForEach([0, 60, 300, 900, 3600], id: \.self) { s in Text(s == 0 ? "0" : "\(s / 60) min").tag(s) }
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                IconButtonM(.arrowBack) { onDone(false) }
+                Text("applock_pin").font(.roboto(20)).foregroundStyle(model.theme.textPrimary)
+                Spacer()
+            }
+            .padding(4)
+            VStack(spacing: 0) {
+                let entering = first == nil
+                Text(entering ? "applock_newPin" : mismatch ? "applock_pinMismatch" : "applock_confirmPin")
+                    .font(.roboto(16)).foregroundStyle(mismatch && !entering ? lockErrorColor : model.theme.textPrimary)
+                    .multilineTextAlignment(.center)
+                Gap(24)
+                if entering {
+                    PinPad(value: pin, maxLength: 8, showError: false) { pin = $0 }
+                    Gap(24)
+                    PrimaryButton("common_next", enabled: (4...8).contains(pin.count)) {
+                        first = pin
+                        pin = ""
                     }
-                    Button("applock_changePin") { settingPin = true }
-                    Button("applock_removePin", role: .destructive) { model.core.appLock.removePin(); reload() }
+                    .padding(.horizontal, 48)
+                } else {
+                    let target = first ?? ""
+                    PinPad(value: pin, maxLength: target.count, showError: mismatch) { value in
+                        pin = value
+                        mismatch = false
+                        if value.count == target.count {
+                            if value == target {
+                                model.core.appLock.setPin(value)
+                                onDone(true)
+                            } else {
+                                mismatch = true
+                                pin = ""
+                            }
+                        }
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .scrollContentBackground(.hidden)
         .background(model.theme.background.ignoresSafeArea())
-        .navigationTitle("applock_title")
-        .onAppear(perform: reload)
-        .sheet(isPresented: $settingPin) {
-            VStack(spacing: 20) {
-                Text(first.count < 4 ? "applock_newPin" : "applock_confirmPin").font(.title3)
-                SecureField("applock_pin", text: first.count < 4 ? $first : $second).keyboardType(.numberPad).textContentType(.oneTimeCode)
-                    .multilineTextAlignment(.center).font(.title)
-                if mismatch { Text("applock_pinMismatch").foregroundStyle(.red) }
-                Button("common_save") {
-                    guard first.count >= 4 else { return }
-                    if second.isEmpty { return }
-                    if first == second {
-                        model.core.appLock.setPin(first)
-                        model.core.appLock.setEnabled(true)
-                        settingPin = false
-                        reload()
-                    } else {
-                        mismatch = true
-                        first = ""
-                        second = ""
-                    }
-                }
-                .disabled(second.count < 4)
-            }
-            .padding(32)
-            .presentationDetents([.medium])
-            .onDisappear { first = ""; second = ""; mismatch = false }
-        }
     }
-
-    private func reload() { settings = model.core.appLock.state.value }
 }

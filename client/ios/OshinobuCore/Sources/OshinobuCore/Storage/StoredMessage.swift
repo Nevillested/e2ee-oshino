@@ -106,7 +106,7 @@ public struct StoredMessage: Codable, Equatable, Identifiable, Sendable {
 }
 
 /// Строка списка чатов.
-public struct ChatSummary: Codable, Equatable, Identifiable, Sendable {
+public struct ChatSummary: Codable, Hashable, Identifiable, Sendable {
     public var peerLogin: String
     public var lastMessage: String
     public var lastTimestamp: Int64

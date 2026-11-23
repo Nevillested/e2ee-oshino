@@ -20,7 +20,10 @@ public struct DownloadSpec: Codable, Sendable, Equatable {
     }
 }
 
-public struct DownloadFailedError: Error { public let reason: String }
+public struct DownloadFailedError: Error {
+    public let reason: String
+    public init(reason: String) { self.reason = reason }
+}
 
 /// Очереди скачивания — для панели «Передачи».
 public struct DownloadQueues: Sendable, Equatable {
@@ -28,6 +31,12 @@ public struct DownloadQueues: Sendable, Equatable {
     public var auto: [DownloadSpec] = []
     /// Качаются прямо сейчас (по одному в каждой очереди).
     public var active: Set<String> = []
+
+    public init(manual: [DownloadSpec] = [], auto: [DownloadSpec] = [], active: Set<String> = []) {
+        self.manual = manual
+        self.auto = auto
+        self.active = active
+    }
 }
 
 /**
@@ -182,7 +191,7 @@ public actor MediaDownloadManager {
         let id = spec.mediaId
         _ = try await retryWithBackoff(maxAttempts: 3) {
             try await self.api.downloadEncryptedMediaResumable(token: token, mediaId: id, dest: part) { pct in
-                Task { await self.setProgress(id, pct * 0.95) }
+                Task { self.setProgress(id, pct * 0.95) }
             }
         }
         try Task.checkCancellation()
