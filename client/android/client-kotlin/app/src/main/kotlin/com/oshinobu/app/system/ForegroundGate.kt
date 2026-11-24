@@ -26,6 +26,14 @@ class ForegroundGate(private val service: Class<out Service>) {
     /** Остановку попросили, пока служба ещё не ушла на передний план. */
     private var stopPending = false
 
+    /** Служба запрошена и её не просили остановить (уже на переднем плане или поднимается). */
+    @get:Synchronized
+    val isActive: Boolean get() = requested && !stopPending
+
+    /** Служба уже на переднем плане — её уведомление можно обновлять. */
+    @get:Synchronized
+    val isForeground: Boolean get() = foreground
+
     /** false — Android не дал запустить (например, из фона без исключения). */
     @Synchronized
     fun start(context: Context, intent: Intent): Boolean {

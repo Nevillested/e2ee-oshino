@@ -70,8 +70,13 @@ class CallController(private val context: Context, private val core: OshinobuCor
                 }
                 audio.setConnected(state == CallState.CONNECTED)
 
-                if (state == CallState.CONNECTED) OngoingCallService.start(context, peerName())
-                else OngoingCallService.stop(context)
+                // Служба микрофона — уже с гудков: звонящий сейчас в приложении, а ответить
+                // могут, когда оно свёрнуто, и из фона Android 14+ её не запустит.
+                when (state) {
+                    CallState.OUTGOING_RINGING, CallState.CONNECTED ->
+                        OngoingCallService.show(context, peerName(), connected = state == CallState.CONNECTED)
+                    else -> OngoingCallService.stop(context)
+                }
                 if (state == CallState.IDLE) audio.stop()
             }
         }

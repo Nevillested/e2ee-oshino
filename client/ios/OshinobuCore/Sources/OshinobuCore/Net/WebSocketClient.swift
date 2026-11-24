@@ -76,7 +76,7 @@ public final class WebSocketClient: NSObject, Transport, CallSignaling, URLSessi
     private var lastKnownForeground = false
 
     public init(api: ApiClient, readyTimeout: Duration = .seconds(8), reconnectDelay: Duration = .seconds(3),
-                callSignalWait: Duration = .seconds(5), log: @escaping (String) -> Void = { _ in }) {
+                callSignalWait: Duration = .seconds(15), log: @escaping (String) -> Void = { _ in }) {
         self.api = api
         self.readyTimeout = readyTimeout
         self.reconnectDelay = reconnectDelay

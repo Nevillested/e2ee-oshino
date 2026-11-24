@@ -260,16 +260,54 @@ class OngoingCallService : Service() {
     companion object {
         private const val CHANNEL_ID = "ongoing_call"
         private const val NOTIFICATION_ID = 900
-        private const val EXTRA_PEER_NAME = "oshinobu.PEER_NAME"
 
         private val gate = ForegroundGate(OngoingCallService::class.java)
 
-        fun start(context: Context, peerName: String?) {
-            val intent = Intent(context, OngoingCallService::class.java).putExtra(EXTRA_PEER_NAME, peerName)
-            if (!gate.start(context, intent)) context.app.core.logger.log("OngoingCallService start not allowed")
+        // то, что показывает уведомление; служба читает при подъёме
+        @Volatile
+        private var peerName: String? = null
+
+        @Volatile
+        private var connected = false
+
+        /**
+         * Исходящий звонит ([connected] = false) или идёт разговор. Служба
+         * поднимается один раз — на гудках, пока звонящий в приложении; при
+         * ответе только обновляется уведомление (повторный старт из фона
+         * Android 14+ запрещает).
+         */
+        fun show(context: Context, peerName: String?, connected: Boolean) {
+            this.peerName = peerName
+            this.connected = connected
+            if (gate.isActive) {
+                if (gate.isForeground) {
+                    context.getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(context))
+                }
+                return
+            }
+            if (!gate.start(context, Intent(context, OngoingCallService::class.java))) {
+                context.app.core.logger.log("OngoingCallService start not allowed")
+            }
         }
 
         fun stop(context: Context) = gate.stop(context)
+
+        private fun notification(context: Context): Notification {
+            val strings = context.app.localized()
+            val peer = peerName ?: strings.getString(R.string.call_otherParty)
+            val text = if (connected) R.string.call_ongoingWith else R.string.call_outgoingTo
+            val open = CallIntents.activity(context, 20) { putExtra(CallIntents.EXTRA_OPEN_CALL_SCREEN, true) }
+            return NotificationCompat.Builder(context, CHANNEL_ID)
+                .setContentTitle("Oshinobu")
+                .setContentText(strings.getString(text, peer))
+                .setSmallIcon(context.callIcon())
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(open)
+                .addAction(0, strings.getString(R.string.call_endAction), CallActionReceiver.intent(context, CallActionReceiver.ACTION_END, null, null))
+                .build()
+        }
     }
 
     override fun onDestroy() {
@@ -280,23 +318,13 @@ class OngoingCallService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val strings = app.localized()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val strings = app.localized()
             val channel = NotificationChannel(CHANNEL_ID, strings.getString(R.string.call_ongoingChannelName), NotificationManager.IMPORTANCE_LOW)
             channel.description = strings.getString(R.string.call_ongoingChannelDescription)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
-        val peer = intent?.getStringExtra(EXTRA_PEER_NAME) ?: strings.getString(R.string.call_otherParty)
-        val open = CallIntents.activity(this, 20) { putExtra(CallIntents.EXTRA_OPEN_CALL_SCREEN, true) }
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Oshinobu")
-            .setContentText(strings.getString(R.string.call_ongoingWith, peer))
-            .setSmallIcon(callIcon())
-            .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setOngoing(true)
-            .setContentIntent(open)
-            .addAction(0, strings.getString(R.string.call_endAction), CallActionReceiver.intent(this, CallActionReceiver.ACTION_END, null, null))
-            .build()
+        val notification = notification(this)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -312,7 +340,10 @@ class OngoingCallService : Service() {
         if (gate.onForeground()) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
+            return START_NOT_STICKY
         }
+        // пока служба поднималась, звонок мог перейти в разговор — показать актуальное
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(this))
         return START_NOT_STICKY
     }
 }

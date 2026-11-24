@@ -68,6 +68,29 @@ class ServicesE2ETest {
     }
 
     @Test
+    fun `повтор конверта прошлой эпохи (потерялся ack отправителя) — не сбой и не сброс сессии`() = runBlocking {
+        val alice = net.device("alice")
+        val bob = net.device("bob")
+        val m1 = alice.sendText(bob, "раз")
+        net.eventually("Боб получил m1") { bob.chats.getMessages("alice").any { it.messageId == m1.messageId } }
+        val oldEpoch = net.relay.delivered.last { it.first == bob.deviceId }.second
+
+        // ответ Боба и новое сообщение Алисы — у Боба цепочка приёма уже новой эпохи
+        val r1 = bob.sendText(alice, "два")
+        net.eventually("Алиса получила ответ") { alice.chats.getMessages("bob").any { it.messageId == r1.messageId } }
+        val m2 = alice.sendText(bob, "три")
+        net.eventually("Боб получил m2") { bob.chats.getMessages("alice").any { it.messageId == m2.messageId } }
+        val sessionBefore = bob.sessions.get(alice.deviceId)!!.toJson()
+
+        // очередь Алисы не дождалась ack на m1 и повторила его — сервер передоставляет трижды
+        repeat(3) { bob.transport.messagesFlow.tryEmit(IncomingEnvelope(oldEpoch.envelope, "srv-redelivery-$it")) }
+        delay(300)
+        assertEquals(sessionBefore, bob.sessions.get(alice.deviceId)!!.toJson())
+        assertTrue(bob.chats.getMessages("alice").none { it.messageId.startsWith("undecryptable_") })
+        assertEquals(3, bob.chats.getMessages("alice").size)
+    }
+
+    @Test
     fun `офлайн-получатель, потеря сессии и самолечение`() = runBlocking {
         val alice = net.device("alice")
         val bob = net.device("bob")

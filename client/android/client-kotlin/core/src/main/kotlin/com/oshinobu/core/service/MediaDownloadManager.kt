@@ -168,12 +168,26 @@ class MediaDownloadManager(
             specs[spec.mediaId] = spec
             userCancelled.remove(spec.mediaId)
             failedAt.remove(spec.mediaId)
-            auto.queue.remove(spec.mediaId)
-            if (spec.mediaId !in manual.queue) manual.queue.addLast(spec.mediaId)
+            val lane = toManualLocked(spec.mediaId)
             publishLocked()
+            lane
+        }.let { lane ->
+            persist()
+            kick(lane)
         }
-        persist()
-        kick(manual)
+    }
+
+    /**
+     * Файл нужен пользователю — в ручную очередь. Но если его уже качает
+     * авто-очередь, пусть докачивает она: вторая загрузка того же файла шла бы
+     * параллельно в тот же хвост на диске, байты перемешивались — и файл не
+     * расшифровывался (BAD_DECRYPT). Под [lock]; возвращает очередь, где файл.
+     */
+    private fun toManualLocked(id: String): Lane {
+        if (auto.active == id) return auto
+        auto.queue.remove(id)
+        if (id !in manual.queue) manual.queue.addLast(id)
+        return manual
     }
 
     /** Эти вложения сейчас видны на экране — мелкие уходят в авто-очередь. */
@@ -245,9 +259,7 @@ class MediaDownloadManager(
             waiters.getOrPut(id) { mutableListOf() } += waiter
             val target = if (userInitiated) {
                 failedAt.remove(id)
-                auto.queue.remove(id)
-                if (id !in manual.queue) manual.queue.addLast(id)
-                manual
+                toManualLocked(id)
             } else {
                 if (id !in manual.queue && id !in auto.queue) auto.queue.addLast(id)
                 auto

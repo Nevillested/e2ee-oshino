@@ -76,7 +76,9 @@ class WebSocketClient(
     private val okHttp: OkHttpClient = OkHttpClient.Builder().pingInterval(45, TimeUnit.SECONDS).build(),
     private val readyTimeoutMs: Long = 8_000,
     private val reconnectDelayMs: Long = 3_000,
-    private val callSignalWaitMs: Long = 5_000,
+    // звонят часто сразу после открытия приложения, пока соединение ещё поднимается:
+    // на мобильной сети до Москвы 5 с не хватало (offer выбрасывался за секунды до подключения)
+    private val callSignalWaitMs: Long = 15_000,
     private val log: (String) -> Unit = {},
 ) : Transport, CallSignaling {
     private val _status = MutableStateFlow(ConnectionStatus.CONNECTING)

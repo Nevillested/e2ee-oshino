@@ -143,6 +143,74 @@ class CallManagerTest {
     }
 
     @Test
+    fun midCallConnectionLossRecoversByIceRestart() = runBlocking {
+        TestNetwork().use { net ->
+            val alice = net.device("alice")
+            val bob = net.device("bob")
+            net.callAnswered(alice, bob)
+            // сеть сменилась посреди разговора — трубку не кладём, а поднимаем соединение заново
+            alice.rtc.last.fail()
+            net.eventually("restart offer answered") { alice.rtc.last.remoteDescriptions.size == 2 }
+            assertEquals(1, alice.rtc.last.iceRestarts)
+            assertTrue(bob.rtc.last.remoteDescriptions.contains("offer:offer-1"), "restart offer reached bob")
+            Thread.sleep(2_000) // дольше таймаута восстановления — звонок жив
+            assertEquals(CallState.CONNECTED, alice.calls.state.value)
+            assertEquals(CallState.CONNECTED, bob.calls.state.value)
+        }
+    }
+
+    @Test
+    fun midCallConnectionLossNotRecoveredEndsCall() = runBlocking {
+        TestNetwork().use { net ->
+            val alice = net.device("alice")
+            val bob = net.device("bob")
+            net.callAnswered(alice, bob)
+            val problems = net.scope.async(start = CoroutineStart.UNDISPATCHED) { alice.calls.problems.first() }
+            // собеседник пропал совсем: offer восстановления уходит, ответа нет
+            bob.transport.statusFlow.value = ConnectionStatus.RECONNECTING
+            alice.rtc.last.fail()
+            net.eventually("call ended after recovery timeout") { alice.calls.state.value == CallState.IDLE }
+            assertTrue(withTimeout(1_000) { problems.await() }.contains("ICE restart did not recover"))
+        }
+    }
+
+    @Test
+    fun answerWhileCallerBrieflyOfflineReachesHimOnReconnect() = runBlocking {
+        TestNetwork().use { net ->
+            val alice = net.device("alice")
+            val bob = net.device("bob")
+            alice.calls.startCall(bob.callPeer())
+            net.eventually("bob rings") { bob.calls.state.value == CallState.INCOMING_RINGING }
+            // у звонящего на секунды оборвалась связь — а собеседник как раз отвечает
+            alice.transport.statusFlow.value = ConnectionStatus.RECONNECTING
+            bob.calls.acceptCall()
+            net.eventually("bob answered") { bob.calls.state.value == CallState.CONNECTED }
+            Thread.sleep(300)
+            assertEquals(CallState.CONNECTED, bob.calls.state.value, "сервер сохранил ответ — трубку не кладём")
+            alice.transport.statusFlow.value = ConnectionStatus.CONNECTED
+            net.relay.flush(alice.deviceId)
+            net.eventually("alice got the answer") { alice.calls.state.value == CallState.CONNECTED }
+            assertTrue(alice.rtc.last.remoteDescriptions.any { it.startsWith("answer:") })
+        }
+    }
+
+    @Test
+    fun answeredButCallerNeverReturnsEndsByTimeout() = runBlocking {
+        TestNetwork().use { net ->
+            val alice = net.device("alice")
+            val bob = net.device("bob")
+            alice.calls.startCall(bob.callPeer())
+            net.eventually("bob rings") { bob.calls.state.value == CallState.INCOMING_RINGING }
+            val problems = net.scope.async(start = CoroutineStart.UNDISPATCHED) { bob.calls.problems.first() }
+            alice.transport.statusFlow.value = ConnectionStatus.RECONNECTING
+            bob.rtc.autoConnect = false // звонящий так и не вернулся — его кандидатов нет
+            bob.calls.acceptCall()
+            net.eventually("bob gave up waiting for the connection") { bob.calls.state.value == CallState.IDLE }
+            assertTrue(withTimeout(1_000) { problems.await() }.contains("call ended before media connected"))
+        }
+    }
+
+    @Test
     fun serverSideDeclineWithoutSenderEndsOutgoingCall() = runBlocking {
         TestNetwork().use { net ->
             val alice = net.device("alice")

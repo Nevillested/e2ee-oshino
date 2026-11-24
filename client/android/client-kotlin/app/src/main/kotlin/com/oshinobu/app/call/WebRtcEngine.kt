@@ -1,6 +1,11 @@
 package com.oshinobu.app.call
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.oshinobu.core.service.IceServer
 import com.oshinobu.core.service.Logger
 import com.oshinobu.core.service.RtcEngine
@@ -98,6 +103,14 @@ class WebRtcEngine(private val context: Context, private val log: Logger) : RtcE
 
     override fun createSession(iceServers: List<IceServer>, events: RtcEvents): RtcSession = Session(iceServers, events)
 
+    private val main = Handler(Looper.getMainLooper())
+
+    private companion object {
+        const val CAPTURE_WIDTH = 1280
+        const val CAPTURE_HEIGHT = 720
+        const val CAPTURE_FPS = 30
+    }
+
     private inner class Session(iceServers: List<IceServer>, private val events: RtcEvents) : RtcSession, PeerConnection.Observer {
         private val pc: PeerConnection = factory.createPeerConnection(
             PeerConnection.RTCConfiguration(
@@ -112,6 +125,8 @@ class WebRtcEngine(private val context: Context, private val log: Logger) : RtcE
         ) ?: error("WebRTC: не удалось создать соединение")
 
         init {
+            // наблюдатель жизненного цикла процесса добавляется только с главного потока
+            main.post { if (!closed) ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver) }
             log.log("WebRTC peer connection created, ice servers: ${iceServers.joinToString { s -> s.urls.joinToString("|") { it.substringBefore('?') } }}")
         }
 
@@ -121,8 +136,43 @@ class WebRtcEngine(private val context: Context, private val log: Logger) : RtcE
         private var videoTrack: VideoTrack? = null
         private var capturer: CameraVideoCapturer? = null
         private var captureHelper: SurfaceTextureHelper? = null
-        private var capturing = false
+        @Volatile private var capturing = false
         @Volatile private var closed = false
+
+        /**
+         * Камеру отобрала система: у свёрнутого приложения Android её отключает,
+         * WebRTC при этом сам останавливает захват. Флаг видео остаётся включённым,
+         * и у собеседника замирала картинка, пока звонок не кончится
+         * («camera is not running» при смене камеры, Samsung A14, +75).
+         */
+        @Volatile private var cameraLost = false
+
+        private val cameraEvents = object : CameraVideoCapturer.CameraEventsHandler {
+            override fun onCameraError(error: String?) {
+                cameraLost = true
+                log.error("WebRTC camera error: $error")
+            }
+
+            override fun onCameraDisconnected() {
+                cameraLost = true
+                log.log("WebRTC camera disconnected (taken by the system or another app)")
+            }
+
+            override fun onCameraFreezed(error: String?) = log.log("WebRTC camera frozen: $error")
+            override fun onCameraOpening(cameraName: String?) = log.log("WebRTC camera opening")
+            override fun onFirstFrameAvailable() = log.log("WebRTC camera first frame")
+            override fun onCameraClosed() = log.log("WebRTC camera closed")
+        }
+
+        /** Приложение снова на экране — камеру можно вернуть. */
+        private val foregroundObserver = object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                if (closed || !capturing || !cameraLost) return
+                cameraLost = false
+                log.log("WebRTC camera restarted after returning to foreground")
+                capturer?.startCapture(CAPTURE_WIDTH, CAPTURE_HEIGHT, CAPTURE_FPS)
+            }
+        }
 
         override val signalingState: SignalingState
             get() = when (pc.signalingState()) {
@@ -193,7 +243,7 @@ class WebRtcEngine(private val context: Context, private val log: Logger) : RtcE
                 val enumerator = Camera2Enumerator(context)
                 val front = enumerator.deviceNames.firstOrNull(enumerator::isFrontFacing) ?: enumerator.deviceNames.firstOrNull()
                     ?: error("нет камеры")
-                val cam = enumerator.createCapturer(front, null)
+                val cam = enumerator.createCapturer(front, cameraEvents)
                 val helper = SurfaceTextureHelper.create("CallCapture", egl.eglBaseContext)
                 val source = factory.createVideoSource(false)
                 cam.initialize(helper, context, source.capturerObserver)
@@ -213,8 +263,11 @@ class WebRtcEngine(private val context: Context, private val log: Logger) : RtcE
                 _localVideo.value = track
             }
             val cam = capturer ?: return
-            if (enabled && !capturing) cam.startCapture(1280, 720, 30)
-            if (!enabled && capturing) cam.stopCapture()
+            if (enabled && !capturing) {
+                cameraLost = false
+                cam.startCapture(CAPTURE_WIDTH, CAPTURE_HEIGHT, CAPTURE_FPS)
+            }
+            if (!enabled && capturing && !cameraLost) cam.stopCapture()
             capturing = enabled
             videoTrack?.setEnabled(enabled)
         }
@@ -229,12 +282,17 @@ class WebRtcEngine(private val context: Context, private val log: Logger) : RtcE
             }
         }
 
+        override fun restartIce() {
+            if (!closed) pc.restartIce()
+        }
+
         override fun close() {
             if (closed) return
             closed = true
+            main.post { ProcessLifecycleOwner.get().lifecycle.removeObserver(foregroundObserver) }
             _localVideo.value = null
             _remoteVideo.value = null
-            runCatching { if (capturing) capturer?.stopCapture() }
+            runCatching { if (capturing && !cameraLost) capturer?.stopCapture() }
             capturer?.dispose()
             captureHelper?.dispose()
             videoSource?.dispose()

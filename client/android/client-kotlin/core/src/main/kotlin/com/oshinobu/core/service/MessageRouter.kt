@@ -202,6 +202,10 @@ class MessageRouter(
      * Вызывать под [sendLock] отправителя.
      */
     private suspend fun open(senderDeviceId: String, envelope: JsonObject): Opened {
+        if (alreadyDecrypted(senderDeviceId, envelope)) {
+            log.log("Router IGNORING redelivery from=$senderDeviceId (envelope already decrypted)")
+            return Opened.Duplicate
+        }
         val current = sessions.get(senderDeviceId)
         if (current != null) {
             try {
@@ -415,6 +419,17 @@ class MessageRouter(
     // ---------------- заглушка "не удалось дешифровать" ----------------
 
     /** Журнал nonce расшифрованных конвертов: отличает повтор прочитанного от настоящей потери. */
+    /**
+     * Этот конверт уже расшифрован (его nonce в журнале): отправитель не дождался
+     * ack и повторил его. Расшифровывать заново нельзя и не нужно — сессия могла
+     * уйти в новую эпоху, и повтор выглядел бы сбоем: три таких повтора сервера
+     * сбрасывали здоровую сессию и оставляли заглушку «не удалось расшифровать».
+     */
+    private fun alreadyDecrypted(deviceId: String, envelope: JsonObject): Boolean {
+        val nonce = envelope.optString("nonce") ?: return false
+        return prefs.getStringList(decryptedNoncesKey(deviceId))?.contains(nonce) == true
+    }
+
     private fun rememberDecrypted(deviceId: String, envelope: JsonObject) {
         val nonce = envelope.optString("nonce") ?: return
         val list = prefs.getStringList(decryptedNoncesKey(deviceId)).orEmpty()

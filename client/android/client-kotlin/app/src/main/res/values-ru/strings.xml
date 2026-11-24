@@ -360,6 +360,7 @@
     <string name="call_ongoingChannelName">Активный звонок</string>
     <string name="call_ongoingChannelDescription">Показывается, пока идёт разговор</string>
     <string name="call_ongoingWith">Идёт разговор с %1$s</string>
+    <string name="call_outgoingTo">Вызов: %1$s</string>
     <string name="call_endAction">Завершить звонок</string>
     <string name="call_minimize">Свернуть</string>
     <string name="call_overlayTitle">Звонки на весь экран</string>

@@ -360,6 +360,7 @@
     <string name="call_ongoingChannelName">Active call</string>
     <string name="call_ongoingChannelDescription">Shown while a call is in progress</string>
     <string name="call_ongoingWith">Call in progress with %1$s</string>
+    <string name="call_outgoingTo">Calling %1$s</string>
     <string name="call_endAction">End call</string>
     <string name="call_minimize">Minimize</string>
     <string name="call_overlayTitle">Full-screen incoming calls</string>

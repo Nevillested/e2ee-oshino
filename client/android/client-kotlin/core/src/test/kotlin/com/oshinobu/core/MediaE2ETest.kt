@@ -65,6 +65,25 @@ class MediaE2ETest {
     }
 
     @Test
+    fun `тап по файлу, который уже качает авто-очередь, — второй загрузки того же файла нет`() = runBlocking {
+        val alice = net.device("alice")
+        val bob = net.device("bob")
+        val bytes = Random(3).nextBytes(400_000)
+        val id = alice.sendFile(bob, "фото.jpg", bytes)
+        net.eventually("Боб получил файл") { bob.chats.getMessages("alice").any { it.messageId == id } }
+        val msg = bob.chats.getMessages("alice").single()
+        val spec = DownloadSpec.of(msg, "alice", msg.fileName ?: "")!!
+
+        net.slowMediaDownloads = true
+        bob.downloads.setVisible(listOf(spec))
+        net.eventually("авто-очередь начала качать") { (bob.downloads.progress.value[spec.mediaId] ?: 0.0) > 0.0 }
+        // пользователь открыл файл, пока он качается: раньше ручная очередь начинала ту же
+        // загрузку параллельно, и обе дописывали один хвост — файл не расшифровывался
+        assertContentEquals(bytes, bob.downloads.ensureDownloaded(spec).readBytes())
+        assertEquals(1, net.mediaDownloads.getValue(spec.mediaId).get())
+    }
+
+    @Test
     fun `большой файл — частями, с повтором упавшей части`() = runBlocking {
         val alice = net.device("alice")
         val bob = net.device("bob")

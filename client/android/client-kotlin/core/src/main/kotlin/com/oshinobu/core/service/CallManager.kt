@@ -68,6 +68,9 @@ interface RtcSession {
     /** Сменить камеру; true — теперь фронтальная. */
     suspend fun switchCamera(): Boolean
 
+    /** Новые ICE-параметры (сменилась сеть): просит renegotiation, offer несёт новые ufrag/pwd. */
+    fun restartIce()
+
     fun close()
 }
 
@@ -121,6 +124,16 @@ class CallManager(
     private val ringTimeoutMs: Long = 120_000,
     /** Сколько ждать один шаг установки соединения (WebRTC), прежде чем считать, что он завис. */
     private val stepTimeoutMs: Long = 20_000,
+    /** Соединение посреди разговора рухнуло (сменилась сеть) — столько ждём восстановления по ICE restart. */
+    private val iceRecoveryTimeoutMs: Long = 30_000,
+    /** Пауза между повторами offer восстановления, пока до сервера не достучаться. */
+    private val iceRecoveryResendMs: Long = 3_000,
+    /**
+     * Ответили, а соединение так и не поднялось — столько ждём. Собеседник мог на
+     * секунды выпасть из сети: сервер держит сигналы для него столько же
+     * (CallSignalBuffer) и отдаёт при переподключении.
+     */
+    private val mediaConnectTimeoutMs: Long = 30_000,
     /** Подготовить к показу то, что о звонящем уже есть на устройстве (фото, профиль — с диска в память). */
     private val warmPeer: suspend (CallPeer) -> Unit = {},
 ) {
@@ -184,6 +197,12 @@ class CallManager(
     private var started = false
     private var ringTimeout: Job? = null
 
+    /** Идёт восстановление после обрыва посреди разговора; по таймауту звонок завершается. */
+    private var iceRecovery: Job? = null
+
+    /** Ответили, ждём соединения ([mediaConnectTimeoutMs]). */
+    private var mediaConnectTimeout: Job? = null
+
     /** Вежливая сторона уступает при встречных offer — это принимающая звонок. */
     private val polite: Boolean get() = !isOutgoing
 
@@ -221,6 +240,16 @@ class CallManager(
     private fun setState(s: CallState) {
         log.log("CallManager state ${_state.value} -> $s")
         _state.value = s
+        if (s == CallState.CONNECTED && _connectedAt.value == null && mediaConnectTimeout == null) {
+            mediaConnectTimeout = scope.launch(dispatcher) {
+                delay(mediaConnectTimeoutMs)
+                mediaConnectTimeout = null
+                if (_state.value != CallState.CONNECTED || _connectedAt.value != null) return@launch
+                log.log("CallManager media did not connect within ${mediaConnectTimeoutMs}ms after answer — ending call")
+                send("call_end", JsonObject(emptyMap()))
+                resetLocal() // сам сообщит "call ended before media connected"
+            }
+        }
     }
 
     // ---------------- действия пользователя ----------------
@@ -417,6 +446,13 @@ class CallManager(
 
             override fun onConnected() {
                 scope.launch(dispatcher) {
+                    iceRecovery?.let {
+                        it.cancel()
+                        iceRecovery = null
+                        log.log("CallManager connection recovered by ICE restart")
+                    }
+                    mediaConnectTimeout?.cancel()
+                    mediaConnectTimeout = null
                     if (_connectedAt.value == null) _connectedAt.value = now()
                     if (_state.value != CallState.CONNECTED && _state.value != CallState.IDLE) setState(CallState.CONNECTED)
                 }
@@ -424,12 +460,17 @@ class CallManager(
 
             override fun onFailed() {
                 scope.launch(dispatcher) {
-                    log.log("CallManager connection FAILED — ending call")
-                    if (_state.value != CallState.IDLE) {
-                        problem("WebRTC connection failed, media ${if (_connectedAt.value != null) "was connected" else "never connected"}")
-                        send("call_end", JsonObject(emptyMap()))
-                        resetLocal()
+                    if (_state.value == CallState.IDLE) return@launch
+                    // разговор уже шёл — обычно это смена сети (Wi-Fi ↔ мобильная): не кладём
+                    // трубку, а поднимаем соединение заново
+                    if (_state.value == CallState.CONNECTED && _connectedAt.value != null) {
+                        startIceRecovery()
+                        return@launch
                     }
+                    log.log("CallManager connection FAILED — ending call")
+                    problem("WebRTC connection failed, media never connected")
+                    send("call_end", JsonObject(emptyMap()))
+                    resetLocal()
                 }
             }
 
@@ -444,18 +485,45 @@ class CallManager(
         return session
     }
 
+    /**
+     * ICE restart: новый offer с новыми ICE-параметрами (через renegotiation —
+     * у собеседника это обычный повторный offer). Не восстановилось за
+     * [iceRecoveryTimeoutMs] — звонок завершается, как раньше сразу.
+     */
+    private fun startIceRecovery() {
+        val session = rtc ?: return
+        if (iceRecovery == null) {
+            log.log("CallManager connection FAILED mid-call — ICE restart (${iceRecoveryTimeoutMs}ms to recover)")
+            iceRecovery = scope.launch(dispatcher) {
+                delay(iceRecoveryTimeoutMs)
+                iceRecovery = null
+                if (_state.value == CallState.IDLE) return@launch
+                log.log("CallManager ICE restart did not recover the connection — ending call")
+                problem("WebRTC connection failed, media was connected; ICE restart did not recover")
+                send("call_end", JsonObject(emptyMap()))
+                resetLocal()
+            }
+        }
+        session.restartIce()
+    }
+
     private suspend fun renegotiate() {
         val session = rtc ?: return
         makingOffer = true
         try {
             val offer = session.createOffer()
-            send(
-                "call_offer",
-                buildJsonObject {
-                    put("sdp", offer)
-                    put("renegotiation", true)
-                },
-            )
+            val payload = buildJsonObject {
+                put("sdp", offer)
+                put("renegotiation", true)
+            }
+            // во время восстановления связь с сервером обычно тоже переподключается —
+            // offer повторяем, пока не уйдёт (или пока его не сменил встречный)
+            while (!send("call_offer", payload) && iceRecovery != null && rtc === session &&
+                session.signalingState == SignalingState.HAVE_LOCAL_OFFER
+            ) {
+                log.log("CallManager ICE restart offer not sent — retrying")
+                delay(iceRecoveryResendMs)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -500,6 +568,13 @@ class CallManager(
     private suspend fun handleSignal(envelope: JsonObject) {
         val type = envelope.optString("type") ?: return
         if (type == "call_unavailable") {
+            // собеседник на секунды выпал из сети, но звонок уже идёт: сервер сохранил наш
+            // сигнал и отдаст при переподключении — трубку не кладём (ждут таймауты:
+            // соединения после ответа, восстановления, гудков)
+            if (envelope.optBool("buffered") == true) {
+                log.log("CallManager peer briefly offline — signal kept by the server, call continues")
+                return
+            }
             if (_state.value != CallState.IDLE) resetLocal(peerWasUnavailable = true)
             return
         }
@@ -660,6 +735,10 @@ class CallManager(
         if (_state.value == CallState.CONNECTED && _connectedAt.value == null) problem("call ended before media connected")
         ringTimeout?.cancel() // сам таймер перед сбросом уже обнулил ссылку на себя
         ringTimeout = null
+        iceRecovery?.cancel() // то же
+        iceRecovery = null
+        mediaConnectTimeout?.cancel() // то же
+        mediaConnectTimeout = null
         logCall(peerWasUnavailable)
         rtc?.close()
         rtc = null

@@ -51,6 +51,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import com.oshinobu.core.optString
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.MultipartReader
@@ -85,6 +86,11 @@ class TestNetwork : AutoCloseable {
     val mediaBlobs = ConcurrentHashMap<String, ByteArray>()
     private val chunkedUploads = ConcurrentHashMap<String, ConcurrentHashMap<Int, ByteArray>>()
     val receivedConfirmations = CopyOnWriteArrayList<String>()
+    /** Сколько раз файл запрашивали целиком или с Range (GET /media/<id>). */
+    val mediaDownloads = ConcurrentHashMap<String, AtomicInteger>()
+    /** Отдавать файлы медленно — чтобы застать скачивание "на лету". */
+    @Volatile
+    var slowMediaDownloads = false
     /** Сколько раз подряд ответить 500 на следующую загрузку части (проверка повторов). */
     val failNextParts = AtomicInteger(0)
 
@@ -140,14 +146,16 @@ class TestNetwork : AutoCloseable {
             path.startsWith("/media/") -> {
                 val blob = mediaBlobs[path.removePrefix("/media/")] ?: return MockResponse().setResponseCode(404)
                 if (request.method == "HEAD") return MockResponse().setHeader("Content-Length", blob.size)
+                mediaDownloads.getOrPut(path.removePrefix("/media/")) { AtomicInteger() }.incrementAndGet()
                 val range = request.getHeader("Range")?.removePrefix("bytes=")?.removeSuffix("-")?.toInt()
-                if (range == null) {
+                val response = if (range == null) {
                     MockResponse().setBody(Buffer().write(blob))
                 } else {
                     MockResponse().setResponseCode(206)
                         .setHeader("Content-Range", "bytes $range-${blob.size - 1}/${blob.size}")
                         .setBody(Buffer().write(blob.copyOfRange(range, blob.size)))
                 }
+                if (slowMediaDownloads) response.throttleBody(16 * 1024, 50, java.util.concurrent.TimeUnit.MILLISECONDS) else response
             }
             else -> MockResponse().setResponseCode(404)
         }
@@ -189,6 +197,8 @@ class TestNetwork : AutoCloseable {
         /** Все кадры, когда-либо разосланные получателям. */
         val delivered = CopyOnWriteArrayList<Pair<String, IncomingEnvelope>>()
         private val serverDelivery = AtomicInteger()
+        /** Как CallSignalBuffer на сервере: сигналы идущего звонка устройству не в сети. */
+        val callBuffer = ConcurrentHashMap<String, MutableList<JsonObject>>()
         /** Устройства, которых на сервере больше нет (переустановка): конверты им сервер отклоняет. */
         val goneDevices: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -208,9 +218,10 @@ class TestNetwork : AutoCloseable {
             pending.remove(deliveryId)
         }
 
-        /** Реконнект клиента: сервер досылает всё неподтверждённое. */
+        /** Реконнект клиента: сервер досылает всё неподтверждённое и сигналы звонка из буфера. */
         fun flush(deviceId: String) {
             val c = clients[deviceId] ?: return
+            callBuffer.remove(deviceId)?.forEach { c.callSignalsFlow.tryEmit(it) }
             pending.values.filter { it.first == deviceId }.forEach { c.messagesFlow.tryEmit(it.second) }
         }
     }
@@ -224,7 +235,15 @@ class TestNetwork : AutoCloseable {
         // не в сети — сигнал "ушёл" (дальше это забота сервера: очередь, пуш, call_unavailable)
         override suspend fun sendCallSignal(toDeviceId: String, type: String, payload: JsonObject): Boolean {
             if (!isConnected) return false
-            relay.clients[toDeviceId]?.takeIf { it.isConnected }?.callSignalsFlow?.tryEmit(JsonObject(payload + ("type" to JsonPrimitive(type))))
+            val signal = JsonObject(payload + ("type" to JsonPrimitive(type)))
+            val receiver = relay.clients[toDeviceId]
+            if (receiver != null && receiver.isConnected) {
+                receiver.callSignalsFlow.tryEmit(signal)
+            } else if (type != "call_offer" && payload.optString("call_id") != null) {
+                // как сервер: звонок уже идёт — кадр ждёт получателя, отправителю call_unavailable с buffered
+                relay.callBuffer.getOrPut(toDeviceId) { CopyOnWriteArrayList() } += signal
+                callSignalsFlow.tryEmit(buildJsonObject { put("type", "call_unavailable"); put("buffered", true) })
+            }
             return true
         }
 
@@ -291,7 +310,10 @@ class TestNetwork : AutoCloseable {
         )
         val chatService = ChatService(chats, messenger, router, cleanup, pendingStore, retrier)
         val rtc = FakeRtcEngine()
-        val calls = CallManager(transport, messenger, router, api, session, chats, rtc, scope, now = { clock }, endReasonDelayMs = 50)
+        val calls = CallManager(
+            transport, messenger, router, api, session, chats, rtc, scope, now = { clock }, endReasonDelayMs = 50,
+            iceRecoveryTimeoutMs = 1_500, iceRecoveryResendMs = 100, mediaConnectTimeoutMs = 1_500,
+        )
         fun peerOf(other: Device) = ChatPeer(other.login, other.accountId, other.deviceId)
         val downloads = MediaDownloadManager(api, session, media, DownloadQueueStore(secure), scope, now = { clock }, firstRetryDelayMs = 50)
         /** Публичные части одноразовых ключей, уже выданных сервером в бандлах. */

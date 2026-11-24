@@ -140,6 +140,20 @@ class ChatViewModel(
     private var typingClear: Job? = null
     private var lastTypingSentAt = 0L
 
+    /**
+     * Уже рассыпавшиеся — больше не показываются никогда, даже если запоздалое
+     * перечитывание (начатое ещё до удаления) вернёт их из хранилища: иначе
+     * удалённое на долю секунды мелькало целым после анимации.
+     */
+    private val removedIds = mutableSetOf<String>()
+
+    /** Реакцию поставили (я или собеседник, пока чат открыт) — экран отзывается вибрацией. */
+    val reactionPulses = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+
+    // Всё, чем пользуется init, объявлено выше него: init запускает reload() на
+    // Main.immediate, и тот выполняется прямо в конструкторе — поле, объявленное
+    // ниже init, в этот момент ещё null (NPE в withGhosts, Samsung A14, +71).
+
     init {
         routerHost.openChatPeerLogin = login
         viewModelScope.launch { core.chats.clearUnread(login) }
@@ -215,13 +229,6 @@ class ChatViewModel(
         core.chatService.sendReadReceipts(peer, messages)
     }
 
-    /**
-     * Уже рассыпавшиеся — больше не показываются никогда, даже если запоздалое
-     * перечитывание (начатое ещё до удаления) вернёт их из хранилища: иначе
-     * удалённое на долю секунды мелькало целым после анимации.
-     */
-    private val removedIds = mutableSetOf<String>()
-
     /** Рассыпающиеся сообщения остаются на своих местах (по времени), пока идёт анимация. */
     private fun withGhosts(loaded: List<StoredMessage>): List<StoredMessage> {
         val stored = if (removedIds.isEmpty()) loaded else loaded.filter { it.messageId !in removedIds }
@@ -268,9 +275,6 @@ class ChatViewModel(
         blockingMe = peer.accountId in blocked.blockingMe
         core.chats.syncBlockedFromServer(blocked.blockedByMe.toSet(), blocked.blockingMe.toSet())
     }
-
-    /** Реакцию поставили (я или собеседник, пока чат открыт) — экран отзывается вибрацией. */
-    val reactionPulses = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
 
     private fun markJustReacted(messageId: String) {
         reactionPulses.tryEmit(Unit)

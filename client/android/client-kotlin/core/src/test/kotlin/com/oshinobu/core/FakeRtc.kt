@@ -15,13 +15,16 @@ import java.util.concurrent.CopyOnWriteArrayList
 class FakeRtcEngine : RtcEngine {
     val sessions = CopyOnWriteArrayList<FakeRtcSession>()
 
+    /** false — медиа не соединяется само (как без ICE-кандидатов собеседника). */
+    @Volatile var autoConnect = true
+
     override fun createSession(iceServers: List<IceServer>, events: RtcEvents): RtcSession =
-        FakeRtcSession(events).also { sessions += it }
+        FakeRtcSession(events) { autoConnect }.also { sessions += it }
 
     val last: FakeRtcSession get() = sessions.last()
 }
 
-class FakeRtcSession(private val events: RtcEvents) : RtcSession {
+class FakeRtcSession(private val events: RtcEvents, private val autoConnect: () -> Boolean = { true }) : RtcSession {
     @Volatile override var signalingState = SignalingState.STABLE
         private set
     val remoteCandidates = CopyOnWriteArrayList<String>()
@@ -33,7 +36,7 @@ class FakeRtcSession(private val events: RtcEvents) : RtcSession {
     @Volatile var closed = false
     private var hasVideoTrack = false
     private var offers = 0
-    private var connected = false
+    @Volatile private var connected = false
 
     override suspend fun createOffer(): String {
         signalingState = SignalingState.HAVE_LOCAL_OFFER
@@ -82,12 +85,27 @@ class FakeRtcSession(private val events: RtcEvents) : RtcSession {
 
     override suspend fun switchCamera(): Boolean = false
 
+    @Volatile var iceRestarts = 0
+        private set
+
+    override fun restartIce() {
+        iceRestarts++
+        connected = false
+        events.onRenegotiationNeeded()
+    }
+
+    /** Связь пропала (сменилась сеть) — как PeerConnectionState.FAILED. */
+    fun fail() {
+        connected = false
+        events.onFailed()
+    }
+
     override fun close() {
         closed = true
     }
 
     private fun connect() {
-        if (connected) return
+        if (connected || !autoConnect()) return
         connected = true
         events.onConnected()
     }
