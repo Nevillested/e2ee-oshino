@@ -49,6 +49,9 @@ type WSMsgRelay struct {
 
 type WSMsgTo struct {
 	Type string `json:"Type"`
+	// Ciphertext — только у call_unavailable с buffered (см. respondCallUnavailable):
+	// клиенты читают поля сигнала звонка из него
+	Ciphertext string `json:"Ciphertext,omitempty"`
 }
 
 // WSMsgPresence — статус устройства (онлайн/офлайн + когда было видно в
@@ -152,8 +155,23 @@ func isForeignKeyViolation(err error) bool {
 }
 
 func respondCallUnavailable(ctx context.Context, ws_object *websocket.Conn) error {
+	return writeCallUnavailable(ctx, ws_object, false)
+}
+
+// respondCallBuffered — собеседник сейчас не в сети, но звонок уже идёт: кадр
+// сохранён в CallSignalBuffer и уйдёт ему при переподключении. Тот же
+// call_unavailable (старые клиенты кладут трубку, как и раньше), но с
+// {"buffered":true} — новые клиенты трубку не кладут и ждут своим таймаутом.
+func respondCallBuffered(ctx context.Context, ws_object *websocket.Conn) error {
+	return writeCallUnavailable(ctx, ws_object, true)
+}
+
+func writeCallUnavailable(ctx context.Context, ws_object *websocket.Conn, buffered bool) error {
 	var NewWSMsgTo WSMsgTo
 	NewWSMsgTo.Type = "call_unavailable"
+	if buffered {
+		NewWSMsgTo.Ciphertext = `{"buffered":true}`
+	}
 	respBytes, marshalErr := json.Marshal(NewWSMsgTo)
 	if marshalErr != nil {
 		log.Printf("ошибка кодирования ответа: %v", marshalErr)
@@ -502,7 +520,7 @@ func startPendingMessageSweeper(registry *ConnectionRegistry, queries *db.Querie
 	}()
 }
 
-func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks *AckRegistry, pendingCalls *PendingCallRegistry) func(http.ResponseWriter, *http.Request) {
+func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks *AckRegistry, pendingCalls *PendingCallRegistry, callSignals *CallSignalBuffer) func(http.ResponseWriter, *http.Request) {
 	startPendingMessageSweeper(registry, queries, acks)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -626,6 +644,18 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 							log.Printf("получатель не подтвердил отложенный call_offer за 5с, оставляем в очереди")
 						}
 					}()
+				}
+			}
+		}
+
+		// Сигналы уже идущего звонка, пришедшие, пока это устройство на секунды
+		// выпало из сети (ответ собеседника, ICE, завершение) — см. CallSignalBuffer.
+		if frames := callSignals.Take(DeviceID); len(frames) > 0 {
+			log.Printf("call signals: %d буферных кадр(ов) звонка -> %s после переподключения", len(frames), DeviceID)
+			for _, frame := range frames {
+				if err := ws_object.Write(r.Context(), websocket.MessageText, frame); err != nil {
+					log.Printf("ошибка доставки буферного кадра звонка: %v", err)
+					break
 				}
 			}
 		}
@@ -974,6 +1004,11 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 						// читать следующий кадр отправителя.
 						log.Printf("ошибка доставки %s получателю (зомби-соединение): %v", MessageType, write_error)
 						registry.DropZombie(NewWSMsgFrom.ToDeviceId, ConnReceiver)
+						// кадр уйдёт, когда получатель переподключится
+						var zombieCall CallSignalPayload
+						if json.Unmarshal([]byte(NewWSMsgFrom.Ciphertext), &zombieCall) == nil && zombieCall.CallID != "" {
+							callSignals.Add(NewWSMsgFrom.ToDeviceId, message)
+						}
 					}
 				} else {
 					var callPayload CallSignalPayload
@@ -1003,7 +1038,14 @@ func NewWebSocketHandler(queries *db.Queries, registry *ConnectionRegistry, acks
 					}
 
 					if !handled {
-						if write_error := respondCallUnavailable(r.Context(), ws_object); write_error != nil {
+						// звонок уже идёт, собеседник на секунды выпал из сети — кадр ждёт его
+						respond := respondCallUnavailable
+						if callPayload.CallID != "" {
+							callSignals.Add(NewWSMsgFrom.ToDeviceId, message)
+							log.Printf("call signals: %s для %s сохранён до переподключения", MessageType, NewWSMsgFrom.ToDeviceId)
+							respond = respondCallBuffered
+						}
+						if write_error := respond(r.Context(), ws_object); write_error != nil {
 							log.Printf("ошибка отправки ответа отправителю: %v", write_error)
 							break readLoop
 						}

@@ -70,6 +70,7 @@ private:
     Task<bool> onDecryptFailure(QString senderDeviceId, QString deliveryId);
     void resetLocked(const QString &deviceId, const QString &reason);
     bool giveUpIfNoSessionTooLong(const QString &deviceId);
+    bool alreadyDecrypted(const QString &deviceId, const QJsonObject &envelope) const;
     void rememberDecrypted(const QString &deviceId, const QJsonObject &envelope);
     Task<void> recordUndecryptable(QString deviceId, QJsonObject envelope, bool requireKnownHistory = false);
     void apply(const InnerMessage &inner, const DeviceOwnerRef &owner, bool chatIsOpen);

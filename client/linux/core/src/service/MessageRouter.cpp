@@ -129,6 +129,10 @@ MessageRouter::Opened MessageRouter::opened(const QString &senderDeviceId, const
 }
 
 MessageRouter::Opened MessageRouter::open(const QString &senderDeviceId, const QJsonObject &envelope) {
+    if (alreadyDecrypted(senderDeviceId, envelope)) {
+        log(QStringLiteral("Router IGNORING redelivery from=%1 (envelope already decrypted)").arg(senderDeviceId));
+        return Opened{Opened::Duplicate, {}, std::nullopt, false};
+    }
     std::optional<RatchetState> current = sessions_.get(senderDeviceId);
     if (current) {
         RatchetState attempt = *current;
@@ -292,6 +296,16 @@ bool MessageRouter::giveUpIfNoSessionTooLong(const QString &deviceId) {
         return false;
     }
     return now() - *firstSeen > NoSessionGiveUpMs;
+}
+
+// Этот конверт уже расшифрован (nonce в журнале): отправитель не дождался ack и повторил его.
+// Заново не расшифровываем — сессия могла уйти в новую эпоху, и повтор выглядел бы сбоем
+// (три таких повтора сбрасывали здоровую сессию). Как на Android.
+bool MessageRouter::alreadyDecrypted(const QString &deviceId, const QJsonObject &envelope) const {
+    const auto nonce = json::optString(envelope, "nonce");
+    if (!nonce) return false;
+    const auto list = prefs_.getStringList(decryptedNoncesKey(deviceId));
+    return list && list->contains(*nonce);
 }
 
 void MessageRouter::rememberDecrypted(const QString &deviceId, const QJsonObject &envelope) {

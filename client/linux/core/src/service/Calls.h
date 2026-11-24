@@ -137,6 +137,7 @@ private:
     Task<void> logCall(bool peerWasUnavailable);
     Task<void> resolvePeer();
     Task<void> ringTimeout(std::optional<QString> callId, CallState ringing);
+    Task<void> mediaConnectTimeout(std::optional<QString> callId);
     Task<void> cancelCall();
     Task<void> endCall();
     void armRingTimeout();
@@ -171,6 +172,7 @@ private:
     std::optional<qint64> startedAt_;
     bool isOutgoing_ = false, makingOffer_ = false, accepting_ = false, started_ = false;
     int ringGeneration_ = 0;
+    int mediaGeneration_ = 0;
 };
 
 /// Движок без медиа (сборка без GStreamer): сессию создать нельзя — звонок честно не состоится.

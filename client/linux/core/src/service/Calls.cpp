@@ -12,6 +12,9 @@ namespace osh {
 namespace {
 constexpr int EndReasonDelayMs = 1800;
 constexpr int RingTimeoutMs = 120000;
+// ответили, а соединение не поднялось — столько ждём: собеседник мог на секунды выпасть
+// из сети, сервер держит сигналы для него столько же (CallSignalBuffer); как на Android
+constexpr int MediaConnectTimeoutMs = 30000;
 constexpr int StepTimeoutMs = 20000;
 const char *Stun = "stun:stun.l.google.com:19302";
 
@@ -109,7 +112,17 @@ void CallManager::reportProblem(const QString &text) {
 void CallManager::setState(CallState s) {
     log(QStringLiteral("CallManager state %1 -> %2").arg(QLatin1String(stateName(state_)), QLatin1String(stateName(s))));
     state_ = s;
+    if (s == CallState::Connected && !connectedAt_) spawn(mediaConnectTimeout(currentCallId_));
     Q_EMIT changed();
+}
+
+Task<void> CallManager::mediaConnectTimeout(std::optional<QString> callId) {
+    const int generation = ++mediaGeneration_;
+    co_await delay{MediaConnectTimeoutMs};
+    if (generation != mediaGeneration_ || state_ != CallState::Connected || connectedAt_ || currentCallId_ != callId) co_return;
+    log(QStringLiteral("CallManager media did not connect within %1ms after answer — ending call").arg(MediaConnectTimeoutMs));
+    co_await send("call_end", QJsonObject());
+    co_await resetLocal(); // сам сообщит "call ended before media connected"
 }
 
 void CallManager::setStatus(const QString &s) {
@@ -360,6 +373,12 @@ Task<void> CallManager::handleSignal(QJsonObject envelope) {
     const QString type = envelope.value("type").toString();
     if (type.isEmpty()) co_return;
     if (type == "call_unavailable") {
+        // собеседник на секунды выпал из сети, но звонок уже идёт: сервер сохранил наш сигнал
+        // и отдаст при переподключении — трубку не кладём (ждут таймауты), как на Android
+        if (envelope.value("buffered").toBool()) {
+            log("CallManager peer briefly offline — signal kept by the server, call continues");
+            co_return;
+        }
         if (state_ != CallState::Idle) co_await resetLocal(true);
         co_return;
     }
@@ -502,6 +521,7 @@ Task<void> CallManager::resetLocal(bool peerWasUnavailable) {
     if (state_ == CallState::Idle && !rtc_) co_return;
     if (state_ == CallState::Connected && !connectedAt_) reportProblem("call ended before media connected");
     ++ringGeneration_;
+    ++mediaGeneration_;
     co_await logCall(peerWasUnavailable);
     if (rtc_) rtc_->close();
     rtc_.reset();

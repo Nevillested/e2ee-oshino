@@ -103,7 +103,7 @@ func main() {
 	mux.HandleFunc("GET /app/version", api.NewAppVersionHandler(appVersion))
 	mux.HandleFunc("GET "+api.ApkPath, api.NewAppApkHandler(appVersion))
 	mux.HandleFunc("GET /health", api.NewHealthHandler(queries))
-	mux.HandleFunc("GET /ws", api.NewWebSocketHandler(queries, registry, ackRegistry, pendingCalls))
+	mux.HandleFunc("GET /ws", api.NewWebSocketHandler(queries, registry, ackRegistry, pendingCalls, api.NewCallSignalBuffer(api.CallSignalBufferTTL)))
 	mux.HandleFunc("POST /register", api.NewRegisterHandler(queries, pg_connect))
 	mux.HandleFunc("POST /verify-totp", api.NewVerifyTOTPHandler(queries))
 	mux.HandleFunc("POST /login", api.NewLoginHandler(queries, loginLimiter))
