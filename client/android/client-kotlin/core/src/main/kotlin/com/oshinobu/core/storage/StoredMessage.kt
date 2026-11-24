@@ -65,6 +65,27 @@ data class StoredMessage(
 ) {
     val isSticker: Boolean get() = stickerId != null
 
+    /**
+     * Содержимое сообщения для жалобы: переписку сервер не видит, поэтому
+     * клиент описывает её сам. У вложения текста нет — уходят тип, имя файла
+     * и id медиа (плюс подпись, если есть); пустой текст сервер отклоняет.
+     */
+    val reportText: String
+        get() {
+            stickerId?.let { return "sticker:$it" }
+            if (!isMedia) return text
+            val kind = when {
+                isVoice -> "voice"
+                isVideoNote -> "video_note"
+                isVideo -> "video"
+                isFile -> "file"
+                else -> "photo"
+            }
+            val parts = listOfNotNull(kind, fileName?.takeIf { isFile && it.isNotEmpty() }, mediaId?.let { "media:$it" })
+            val head = "[${parts.joinToString(" ")}]"
+            return if (text.isEmpty()) head else "$head $text"
+        }
+
     fun toJson(): JsonObject = buildJsonObject {
         put("id", messageId)
         put("text", text)

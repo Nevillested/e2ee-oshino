@@ -648,8 +648,7 @@ struct ChatView: View {
             model.popups.show {
                 ReportDialog { comment in
                     guard let token = core.session.token, let deviceId = current.lastKnownDeviceId else { throw ApiError("error.notSignedIn") }
-                    try await core.api.reportMessage(token: token, reportedDeviceId: deviceId,
-                                                     messageText: m.stickerId.map { "sticker:\($0)" } ?? m.text, reason: comment)
+                    try await core.api.reportMessage(token: token, reportedDeviceId: deviceId, messageText: m.reportText, reason: comment)
                 } onSent: {
                     toasts.show(tr("report_sent"))
                 }

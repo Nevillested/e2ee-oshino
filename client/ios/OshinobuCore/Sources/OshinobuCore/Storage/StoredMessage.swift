@@ -57,6 +57,20 @@ public struct StoredMessage: Codable, Equatable, Identifiable, Sendable {
     public var id: String { messageId }
     public var isSticker: Bool { stickerId != nil }
 
+    /// Содержимое сообщения для жалобы: переписку сервер не видит, поэтому
+    /// клиент описывает её сам. У вложения текста нет — уходят тип, имя файла
+    /// и id медиа (плюс подпись, если есть); пустой текст сервер отклоняет.
+    public var reportText: String {
+        if let stickerId { return "sticker:\(stickerId)" }
+        guard isMedia else { return text }
+        let kind = isVoice ? "voice" : isVideoNote ? "video_note" : isVideo ? "video" : isFile ? "file" : "photo"
+        var parts = [kind]
+        if isFile, let fileName, !fileName.isEmpty { parts.append(fileName) }
+        if let mediaId { parts.append("media:\(mediaId)") }
+        let head = "[\(parts.joined(separator: " "))]"
+        return text.isEmpty ? head : "\(head) \(text)"
+    }
+
     public init(messageId: String, text: String, isMine: Bool, timestamp: Int64) {
         self.messageId = messageId
         self.text = text

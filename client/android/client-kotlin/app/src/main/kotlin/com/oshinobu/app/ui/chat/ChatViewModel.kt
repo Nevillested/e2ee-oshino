@@ -488,8 +488,7 @@ class ChatViewModel(
         viewModelScope.launch {
             val error = runCatching {
                 val token = core.session.token ?: error("no session")
-                // у стикера текста нет — в жалобу уходит его id (по нему сервер найдёт пак)
-                core.api.reportMessage(token, peer.deviceId, msg.stickerId?.let { "sticker:$it" } ?: msg.text, comment)
+                core.api.reportMessage(token, peer.deviceId, msg.reportText, comment)
             }.exceptionOrNull()
             onDone(error)
         }
