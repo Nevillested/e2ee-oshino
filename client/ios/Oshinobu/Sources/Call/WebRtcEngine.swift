@@ -139,6 +139,8 @@ final class WebRtcSession: NSObject, RtcSession, RTCPeerConnectionDelegate, @unc
         try await capturer.startCapture(with: device, format: format, fps: 30)
     }
 
+    func restartIce() { pc.restartIce() }
+
     func close() {
         capturer?.stopCapture()
         pc.close()

@@ -96,6 +96,9 @@ public actor MediaDownloadManager {
     public func requestUserDownload(_ spec: DownloadSpec) {
         specs[spec.mediaId] = spec
         failedAt[spec.mediaId] = nil
+        // уже качает авто-очередь — пусть докачивает она: вторая загрузка шла бы
+        // параллельно в тот же хвост на диске, и файл не расшифровывался (как на Android)
+        if auto.active == spec.mediaId { return }
         auto.queue.removeAll { $0 == spec.mediaId }
         if !manual.queue.contains(spec.mediaId) { manual.queue.append(spec.mediaId) }
         kick(manual: true)

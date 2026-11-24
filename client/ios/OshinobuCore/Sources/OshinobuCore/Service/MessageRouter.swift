@@ -149,6 +149,10 @@ public final class MessageRouter: @unchecked Sendable {
     /// Текущая сессия → архивные (удачная снова текущая) → новая из X3DH-полей
     /// (прежняя текущая — в архив). Вызывать под [sendLock] отправителя.
     private func open(_ sender: String, _ envelope: Envelope) throws -> Opened {
+        if alreadyDecrypted(sender, envelope) {
+            log.log("Router IGNORING redelivery from=\(sender) (envelope already decrypted)")
+            return .duplicate
+        }
         var current = sessions.get(sender)
         if var state = current {
             do {
@@ -327,6 +331,14 @@ public final class MessageRouter: @unchecked Sendable {
     }
 
     // MARK: - заглушка "не удалось дешифровать"
+
+    /// Этот конверт уже расшифрован (его nonce в журнале): отправитель не дождался ack и
+    /// повторил его. Заново не расшифровываем — сессия могла уйти в новую эпоху, и повтор
+    /// выглядел бы сбоем (три таких повтора сбрасывали здоровую сессию). Как на Android.
+    private func alreadyDecrypted(_ d: String, _ envelope: Envelope) -> Bool {
+        guard let nonce = envelope["nonce"]?.string else { return false }
+        return prefs.stringList(Self.decryptedNoncesKey(d))?.contains(nonce) ?? false
+    }
 
     /// Журнал nonce расшифрованных конвертов: отличает повтор прочитанного от настоящей потери.
     private func rememberDecrypted(_ d: String, _ envelope: Envelope) {

@@ -34,7 +34,7 @@ targets:
       properties:
         CFBundleDisplayName: Oshinobu
         CFBundleShortVersionString: "1.0.0"
-        CFBundleVersion: "5"
+        CFBundleVersion: "6"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

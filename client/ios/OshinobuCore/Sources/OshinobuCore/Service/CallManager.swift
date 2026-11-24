@@ -23,6 +23,8 @@ public protocol RtcSession: AnyObject, Sendable {
     func setVideoEnabled(_ enabled: Bool) async throws
     /// Сменить камеру; true — теперь фронтальная.
     func switchCamera() async throws -> Bool
+    /// Новые ICE-параметры (сменилась сеть): просит renegotiation, offer несёт новые ufrag/pwd.
+    func restartIce()
     func close()
 }
 
@@ -81,6 +83,11 @@ public actor CallManager {
     private let endReasonDelay: Duration
     private let ringTimeout: Duration
     private let stepTimeout: Duration
+    private let iceRecoveryTimeout: Duration
+    private let iceRecoveryResend: Duration
+    /// Ответили, а соединение так и не поднялось — столько ждём (собеседник мог на секунды
+    /// выпасть из сети: сервер держит сигналы для него столько же, CallSignalBuffer).
+    private let mediaConnectTimeout: Duration
 
     public nonisolated let state = StateValue<CallState>(.idle)
     /// Этап установки или причина завершения — ключ локализации ("call.ringing"…).
@@ -109,6 +116,10 @@ public actor CallManager {
     private var autoAcceptPending = false
     private var started = false
     private var ringTimer: Task<Void, Never>?
+    /// Идёт восстановление после обрыва посреди разговора; по таймауту звонок завершается.
+    private var iceRecovery: Task<Void, Never>?
+    /// Ответили, ждём соединения (mediaConnectTimeout).
+    private var mediaConnectTimer: Task<Void, Never>?
 
     /// Вежливая сторона уступает при встречных offer — принимающая звонок.
     private var polite: Bool { !isOutgoing }
@@ -120,7 +131,9 @@ public actor CallManager {
 
     public init(signaling: CallSignaling, messenger: PeerMessenger, router: MessageRouter, api: ApiClient, session: Session, chats: ChatStore,
                 engine: RtcEngine, log: Logger = NoopLogger(), now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },
-                endReasonDelay: Duration = .milliseconds(1800), ringTimeout: Duration = .seconds(120), stepTimeout: Duration = .seconds(20)) {
+                endReasonDelay: Duration = .milliseconds(1800), ringTimeout: Duration = .seconds(120), stepTimeout: Duration = .seconds(20),
+                iceRecoveryTimeout: Duration = .seconds(30), iceRecoveryResend: Duration = .seconds(3),
+                mediaConnectTimeout: Duration = .seconds(30)) {
         self.signaling = signaling
         self.messenger = messenger
         self.router = router
@@ -133,6 +146,9 @@ public actor CallManager {
         self.endReasonDelay = endReasonDelay
         self.ringTimeout = ringTimeout
         self.stepTimeout = stepTimeout
+        self.iceRecoveryTimeout = iceRecoveryTimeout
+        self.iceRecoveryResend = iceRecoveryResend
+        self.mediaConnectTimeout = mediaConnectTimeout
     }
 
     public func start() {
@@ -150,6 +166,22 @@ public actor CallManager {
     private func setState(_ s: CallState) {
         log.log("CallManager state \(state.value) -> \(s)")
         state.value = s
+        if s == .connected && connectedAt.value == nil && mediaConnectTimer == nil {
+            let timeout = mediaConnectTimeout
+            mediaConnectTimer = Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard !Task.isCancelled else { return }
+                await self?.mediaConnectTimedOut()
+            }
+        }
+    }
+
+    private func mediaConnectTimedOut() async {
+        mediaConnectTimer = nil
+        guard state.value == .connected, connectedAt.value == nil else { return }
+        log.log("CallManager media did not connect within \(mediaConnectTimeout) after answer — ending call")
+        _ = await send("call_end", [:])
+        await resetLocal() // сам сообщит "call ended before media connected"
     }
 
     private func problem(_ what: String) {
@@ -345,14 +377,52 @@ public actor CallManager {
     }
 
     private func markConnected() {
+        if let recovery = iceRecovery {
+            recovery.cancel()
+            iceRecovery = nil
+            log.log("CallManager connection recovered by ICE restart")
+        }
+        mediaConnectTimer?.cancel()
+        mediaConnectTimer = nil
         if connectedAt.value == nil { connectedAt.value = now() }
         if state.value != .connected && state.value != .idle { setState(.connected) }
     }
 
     private func connectionFailed() async {
-        log.log("CallManager connection FAILED — ending call")
         guard state.value != .idle else { return }
-        problem("WebRTC connection failed, media \(connectedAt.value != nil ? "was connected" : "never connected")")
+        // разговор уже шёл — обычно это смена сети (Wi-Fi ↔ мобильная): не кладём трубку,
+        // а поднимаем соединение заново (как на Android)
+        if state.value == .connected && connectedAt.value != nil {
+            startIceRecovery()
+            return
+        }
+        log.log("CallManager connection FAILED — ending call")
+        problem("WebRTC connection failed, media never connected")
+        _ = await send("call_end", [:])
+        await resetLocal()
+    }
+
+    /// ICE restart: новый offer с новыми ICE-параметрами (у собеседника — обычный повторный
+    /// offer). Не восстановилось за iceRecoveryTimeout — звонок завершается.
+    private func startIceRecovery() {
+        guard let rtc else { return }
+        if iceRecovery == nil {
+            log.log("CallManager connection FAILED mid-call — ICE restart (\(iceRecoveryTimeout) to recover)")
+            let timeout = iceRecoveryTimeout
+            iceRecovery = Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard !Task.isCancelled else { return }
+                await self?.iceRecoveryTimedOut()
+            }
+        }
+        rtc.restartIce()
+    }
+
+    private func iceRecoveryTimedOut() async {
+        iceRecovery = nil
+        guard state.value != .idle else { return }
+        log.log("CallManager ICE restart did not recover the connection — ending call")
+        problem("WebRTC connection failed, media was connected; ICE restart did not recover")
         _ = await send("call_end", [:])
         await resetLocal()
     }
@@ -363,7 +433,13 @@ public actor CallManager {
         defer { makingOffer = false }
         do {
             let offer = try await rtc.createOffer()
-            _ = await send("call_offer", ["sdp": .string(offer), "renegotiation": .bool(true)])
+            let payload: [String: JSONValue] = ["sdp": .string(offer), "renegotiation": .bool(true)]
+            // во время восстановления связь с сервером обычно тоже переподключается —
+            // offer повторяем, пока не уйдёт (или пока его не сменил встречный)
+            while await !send("call_offer", payload), iceRecovery != nil, self.rtc === rtc, rtc.signalingState == .haveLocalOffer {
+                log.log("CallManager ICE restart offer not sent — retrying")
+                try await Task.sleep(for: iceRecoveryResend)
+            }
         } catch {
             log.error("CallManager renegotiate FAILED: \(error)")
         }
@@ -405,6 +481,12 @@ public actor CallManager {
     private func handleSignal(_ envelope: [String: JSONValue]) async {
         guard let type = envelope["type"]?.string else { return }
         if type == "call_unavailable" {
+            // собеседник на секунды выпал из сети, но звонок уже идёт: сервер сохранил наш сигнал
+            // и отдаст при переподключении — трубку не кладём (ждут таймауты), как на Android
+            if envelope["buffered"]?.bool == true {
+                log.log("CallManager peer briefly offline — signal kept by the server, call continues")
+                return
+            }
             if state.value != .idle { await resetLocal(peerWasUnavailable: true) }
             return
         }
@@ -554,6 +636,10 @@ public actor CallManager {
         if state.value == .connected && connectedAt.value == nil { problem("call ended before media connected") }
         ringTimer?.cancel()
         ringTimer = nil
+        iceRecovery?.cancel()
+        iceRecovery = nil
+        mediaConnectTimer?.cancel()
+        mediaConnectTimer = nil
         await logCall(peerWasUnavailable: peerWasUnavailable)
         rtc?.close()
         rtc = nil
