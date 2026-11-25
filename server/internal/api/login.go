@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
+	"log"
 	"net/http"
+	"os"
 	"server/internal/db"
 	"strings"
 
@@ -36,6 +38,14 @@ type LoginResponse struct {
 var perAccountLoginLimiter = NewRateLimiter(15*time.Minute, 15)
 
 func NewLoginHandler(queries *db.Queries, limiter *RateLimiter) func(http.ResponseWriter, *http.Request) {
+	// Демо-аккаунт для проверяющих App Store (REVIEW_DEMO_LOGIN в .env, ровно один
+	// логин): у него код TOTP не проверяется, только пароль — проверяющие Apple
+	// код из аутентификатора не вводят, и сборку отклоняли «не удалось войти».
+	// Не задан — исключений нет; остальных аккаунтов это не касается никогда.
+	var demoLogin = strings.TrimSpace(os.Getenv("REVIEW_DEMO_LOGIN"))
+	if demoLogin != "" {
+		log.Printf("login: демо-аккаунт проверяющих без TOTP: %s", demoLogin)
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		//объявляем переменную, где будут храниться данные логина и кода TOTP, которые пришли от клиента в JSON-формате
@@ -88,7 +98,9 @@ func NewLoginHandler(queries *db.Queries, limiter *RateLimiter) func(http.Respon
 		var UserCode string = TOTPCodeFromClient
 
 		//проверяем код, запоминаем результат - первое значение, которое потребуется для итоговой проверки
-		var CheckCodeResult bool = totp.Validate(UserCode, UserSecret)
+		//(у демо-аккаунта проверяющих код не проверяется — см. REVIEW_DEMO_LOGIN выше)
+		var demoAccount = demoLogin != "" && account.Login == demoLogin
+		var CheckCodeResult bool = demoAccount || totp.Validate(UserCode, UserSecret)
 
 		//Сравниваем пароли. Чтобы их сравнить, нужно каждый из них перевести в массив байтов.
 		//Но преждем всего - надо получить хэш введенного пользователем пароля и хэш пароля, который в бд
@@ -118,6 +130,9 @@ func NewLoginHandler(queries *db.Queries, limiter *RateLimiter) func(http.Respon
 
 		//отправляем результат
 		if CheckCodeResult && PWDCheck == 1 {
+			if demoAccount {
+				log.Printf("login: демо-аккаунт проверяющих %s вошёл без проверки TOTP", account.Login)
+			}
 			limiter.RecordSuccess(ipLoginKey)
 			perAccountLoginLimiter.RecordSuccess(LoginFromClient)
 
