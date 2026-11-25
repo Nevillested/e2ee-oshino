@@ -125,8 +125,6 @@ class WebRtcEngine(private val context: Context, private val log: Logger) : RtcE
         ) ?: error("WebRTC: не удалось создать соединение")
 
         init {
-            // наблюдатель жизненного цикла процесса добавляется только с главного потока
-            main.post { if (!closed) ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver) }
             log.log("WebRTC peer connection created, ice servers: ${iceServers.joinToString { s -> s.urls.joinToString("|") { it.substringBefore('?') } }}")
         }
 
@@ -247,6 +245,10 @@ class WebRtcEngine(private val context: Context, private val log: Logger) : RtcE
                 val helper = SurfaceTextureHelper.create("CallCapture", egl.eglBaseContext)
                 val source = factory.createVideoSource(false)
                 cam.initialize(helper, context, source.capturerObserver)
+                // возврат камеры при возврате на экран — только звонкам с видео. Не в init:
+                // поле наблюдателя объявлено ниже и в конструкторе ещё null — в +76 это роняло
+                // каждый звонок (NPE в LifecycleRegistry.addObserver). Добавляется с главного потока.
+                main.post { if (!closed) ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver) }
                 val track = factory.createVideoTrack("video0", source)
                 // своя камера — всегда новой строкой (addTransceiver), а не addTrack: тот по стандарту
                 // переиспользует видеостроку собеседника, если камеру первым включил он, и меняет
