@@ -1,0 +1,18 @@
+# Бот-собеседник для проверяющих App Store / Google Play (см. README, раздел про demo-bot).
+# Установка: дистрибутив (gradlew :demo-bot:installDist → demo-bot/build/install/demo-bot)
+# в /e2ee/demo-bot/app, данные бота — /e2ee/demo-bot/data (bot.json, ключи; права 600).
+[Unit]
+Description=Oshinobu demo bot (chat partner for app store reviewers)
+After=network-online.target oshinobu-server.service
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/e2ee/demo-bot
+ExecStart=/e2ee/demo-bot/app/bin/demo-bot run --data /e2ee/demo-bot/data
+Restart=always
+RestartSec=10
+# сервер маленький: ограничение памяти на всякий случай (куча JVM — 128 МБ)
+MemoryMax=300M
+
+[Install]
+WantedBy=multi-user.target

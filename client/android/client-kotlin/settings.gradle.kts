@@ -28,3 +28,7 @@ include(":flutter-compat")
 
 // :app — само Android-приложение (Jetpack Compose).
 include(":app")
+
+// :demo-bot — консольный бот-собеседник для проверяющих App Store / Google Play
+// (JVM, на :core): отвечает на сообщения и сам пишет демо-аккаунту при входе.
+include(":demo-bot")
