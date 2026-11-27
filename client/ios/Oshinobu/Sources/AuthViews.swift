@@ -98,18 +98,20 @@ private struct TermsConsent: View {
     @Binding var accepted: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
                 Button { accepted.toggle() } label: {
                     MIcon(accepted ? .checkBox : .checkBoxOutlineBlank, tint: accepted ? model.theme.primary : model.theme.textMuted)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text("welcome_termsAccept"))
                 Text(agreement).font(.roboto(13)).foregroundStyle(model.theme.textPrimary).tint(model.theme.primary)
+                    .multilineTextAlignment(.center)
             }
             MutedText("welcome_termsZeroTolerance", size: 12)
+                .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private var agreement: AttributedString {

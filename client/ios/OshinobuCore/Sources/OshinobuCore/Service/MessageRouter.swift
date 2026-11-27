@@ -130,6 +130,9 @@ public final class MessageRouter: @unchecked Sendable {
         }
         let chatIsOpen = host?.openChatPeerLogin == owner.login
         await apply(inner, owner, chatIsOpen)
+        // устройство собеседника — с его же сообщения: чат, начатый им, иначе не знал, куда
+        // отвечать и на кого жаловаться (жалоба падала с error.notSignedIn)
+        chats.setLastKnownDeviceId(owner.login, deviceId: sender)
         ack(deliveryId)
         if !chatIsOpen, !Self.silentTypes.contains(inner.type), !chats.isChatMuted(owner.login) {
             host?.playMessageSound()
