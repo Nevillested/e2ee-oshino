@@ -303,6 +303,9 @@
     <string name="register_title">Регистрация</string>
     <string name="report_commentHint">Комментарий (необязательно) — почему вы жалуетесь</string>
     <string name="report_sent">Жалоба отправлена</string>
+    <string name="report_blockTitle">Заблокировать пользователя?</string>
+    <string name="report_blockText">Вы пожаловались на сообщение от %1$s. Заблокировать его, чтобы он больше не мог вам писать и звонить?</string>
+    <string name="report_blockLater">Не сейчас</string>
     <string name="report_title">Пожаловаться на сообщение</string>
     <string name="settings_about">О приложении</string>
     <string name="settings_appLock">Вход в приложение</string>
@@ -347,6 +350,9 @@
     <string name="unit_mb">МБ</string>
     <string name="welcome_login">Войти</string>
     <string name="welcome_register">Регистрация</string>
+    <string name="welcome_termsAcceptPrefix">Я принимаю </string>
+    <string name="welcome_termsPrivacyLink">Политику конфиденциальности</string>
+    <string name="welcome_termsZeroTolerance">Недопустимый контент и оскорбления запрещены. На сообщение можно пожаловаться, пользователя можно заблокировать; жалобы рассматриваются в течение 24 часов, нарушители удаляются.</string>
     <string name="error_network">Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.</string>
     <string name="common_back">Назад</string>
     <string name="emoji_smileys">Смайлы</string>

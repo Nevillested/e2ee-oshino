@@ -1,5 +1,7 @@
 package com.oshinobu.app.ui.auth
 
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.Checkbox
 import com.oshinobu.app.ui.AppLoadingIndicator
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -91,6 +93,10 @@ fun Context.copyToClipboard(text: String, toast: String) {
 @Composable
 fun WelcomeScreen(onLogin: () -> Unit, onRegister: () -> Unit) {
     val colors = LocalAppColors.current
+    val context = LocalContext.current
+    val prefs = context.app.core.prefs
+    // условия приняты на этом устройстве — до входа и регистрации (App Store 1.2, так же на iOS)
+    var accepted by remember { mutableStateOf(prefs.getBool(TERMS_ACCEPTED_KEY) == true) }
     Column(
         Modifier.fillMaxSize().background(colors.background).padding(horizontal = 32.dp),
         verticalArrangement = Arrangement.Center,
@@ -98,9 +104,46 @@ fun WelcomeScreen(onLogin: () -> Unit, onRegister: () -> Unit) {
     ) {
         Text("Oshinobu", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = colors.textPrimary)
         Gap(48)
-        PrimaryButton(stringResource(R.string.welcome_login), onLogin)
+        PrimaryButton(stringResource(R.string.welcome_login), onLogin, enabled = accepted)
         Gap(12)
-        SecondaryButton(stringResource(R.string.welcome_register), onRegister)
+        SecondaryButton(stringResource(R.string.welcome_register), onRegister, enabled = accepted)
+        Gap(24)
+        TermsConsent(accepted) {
+            accepted = it
+            prefs.setBool(TERMS_ACCEPTED_KEY, it)
+        }
+    }
+}
+
+private const val TERMS_ACCEPTED_KEY = "terms_accepted_v1"
+
+/** Галочка «принимаю Условия и Политику» и строка о нулевой терпимости к недопустимому контенту. */
+@Composable
+private fun TermsConsent(accepted: Boolean, onChange: (Boolean) -> Unit) {
+    val colors = LocalAppColors.current
+    val context = LocalContext.current
+    val linkStyle = TextLinkStyles(SpanStyle(color = colors.primary, textDecoration = TextDecoration.Underline))
+    val agreement = buildAnnotatedString {
+        append(stringResource(R.string.welcome_termsAcceptPrefix))
+        withLink(LinkAnnotation.Url(context.siteDocUrl("terms"), linkStyle)) { append(stringResource(R.string.about_terms)) }
+        append(stringResource(R.string.register_agreementJoiner))
+        // по-русски — винительный падеж
+        withLink(LinkAnnotation.Url(context.siteDocUrl("privacy"), linkStyle)) { append(stringResource(R.string.welcome_termsPrivacyLink)) }
+    }
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = accepted,
+                onCheckedChange = onChange,
+                colors = CheckboxDefaults.colors(checkedColor = colors.primary, uncheckedColor = colors.textMuted),
+            )
+            Text(agreement, style = TextStyle(color = colors.textPrimary, fontSize = 13.sp))
+        }
+        Text(
+            stringResource(R.string.welcome_termsZeroTolerance),
+            style = TextStyle(color = colors.textMuted, fontSize = 12.sp),
+            modifier = Modifier.padding(start = 12.dp, top = 4.dp),
+        )
     }
 }
 

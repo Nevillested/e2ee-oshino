@@ -214,6 +214,7 @@ fun ChatScreen(
     var menu by remember { mutableStateOf<MenuTarget?>(null) }
     var deleteIds by remember { mutableStateOf<List<String>?>(null) }
     var reportTarget by remember { mutableStateOf<StoredMessage?>(null) }
+    var offerBlock by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
     var searchAsList by remember { mutableStateOf(false) }
     var searchIndex by remember { mutableIntStateOf(0) }
@@ -860,7 +861,16 @@ fun ChatScreen(
             onSent = {
                 reportTarget = null
                 Toast.makeText(context, context.getString(R.string.report_sent), Toast.LENGTH_SHORT).show()
+                // сразу предложить и заблокировать — нарушитель больше не сможет писать (App Store 1.2)
+                if (!vm.blockedByMe) offerBlock = true
             },
+        )
+    }
+    if (offerBlock) {
+        BlockAfterReportDialog(
+            peerLogin = vm.peer.login,
+            onDismiss = { offerBlock = false },
+            onBlock = { done -> vm.block { e -> if (e == null) offerBlock = false; done(e) } },
         )
     }
     stickerPackFor?.let { id ->

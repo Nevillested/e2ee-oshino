@@ -488,6 +488,18 @@ class ChatViewModel(
         dissolve(messages.filter { it.messageId in ids }) { core.chatService.deleteMessages(peer, ids, forPeer, pinned) }
     }
 
+    /** Заблокировать собеседника (после жалобы). */
+    fun block(onDone: (Throwable?) -> Unit) {
+        viewModelScope.launch {
+            val error = runCatching {
+                val chat = core.chats.getKnownPeers().first { it.peerLogin == peer.login }
+                core.chatActions.setBlocked(chat, true)
+                blockedByMe = true
+            }.exceptionOrNull()
+            onDone(error)
+        }
+    }
+
     fun report(msg: StoredMessage, comment: String, onDone: (Throwable?) -> Unit) {
         viewModelScope.launch {
             val error = runCatching {

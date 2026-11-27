@@ -303,6 +303,9 @@
     <string name="register_title">Registration</string>
     <string name="report_commentHint">Comment (optional) — why are you reporting this</string>
     <string name="report_sent">Report sent</string>
+    <string name="report_blockTitle">Block this user?</string>
+    <string name="report_blockText">You reported a message from %1$s. Block them so they can no longer message or call you?</string>
+    <string name="report_blockLater">Not now</string>
     <string name="report_title">Report message</string>
     <string name="settings_about">About the app</string>
     <string name="settings_appLock">App lock</string>
@@ -347,6 +350,9 @@
     <string name="unit_mb">MB</string>
     <string name="welcome_login">Log in</string>
     <string name="welcome_register">Register</string>
+    <string name="welcome_termsAcceptPrefix">I agree to the </string>
+    <string name="welcome_termsPrivacyLink">Privacy Policy</string>
+    <string name="welcome_termsZeroTolerance">Objectionable content and abusive behavior are not tolerated. You can report messages and block users; reports are reviewed within 24 hours, and violators are removed.</string>
     <string name="error_network">No connection to the server. Check your internet and try again.</string>
     <string name="common_back">Back</string>
     <string name="emoji_smileys">Smileys</string>

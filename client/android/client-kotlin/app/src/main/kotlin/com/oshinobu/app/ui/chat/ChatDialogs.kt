@@ -185,3 +185,32 @@ fun ReportDialog(onDismiss: () -> Unit, onSend: (comment: String, onDone: (Throw
         }
     }
 }
+
+/** После жалобы: «Заблокировать и этого пользователя?» */
+@Composable
+fun BlockAfterReportDialog(peerLogin: String, onDismiss: () -> Unit, onBlock: (onDone: (Throwable?) -> Unit) -> Unit) {
+    val context = LocalContext.current
+    var blocking by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    AppDialog(
+        stringResource(R.string.report_blockTitle),
+        onDismiss,
+        confirm = {
+            DialogButton(stringResource(R.string.chatMenu_block)) {
+                if (blocking) return@DialogButton
+                blocking = true
+                error = null
+                onBlock { e ->
+                    blocking = false
+                    if (e != null) error = context.errorText(e)
+                }
+            }
+        },
+        dismiss = { DialogButton(stringResource(R.string.report_blockLater), onClick = onDismiss) },
+    ) {
+        Column {
+            Text(stringResource(R.string.report_blockText, peerLogin))
+            ErrorLine(error)
+        }
+    }
+}
