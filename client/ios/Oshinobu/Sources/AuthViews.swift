@@ -73,18 +73,58 @@ struct SplashView: View {
 struct WelcomeView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var nav: AuthNavigator
+    /// Условия приняты на этом устройстве (до входа и регистрации, App Store 1.2; как на Android).
+    @AppStorage("terms_accepted_v1") private var termsAccepted = false
 
     var body: some View {
         VStack(spacing: 0) {
             Text(verbatim: "Oshinobu").font(.roboto(32, .bold)).foregroundStyle(model.theme.textPrimary)
             Gap(48)
-            PrimaryButton("welcome_login") { nav.push(.login) }
+            PrimaryButton("welcome_login", enabled: termsAccepted) { nav.push(.login) }
             Gap(12)
-            SecondaryButton("welcome_register") { nav.push(.register) }
+            SecondaryButton("welcome_register", enabled: termsAccepted) { nav.push(.register) }
+            Gap(24)
+            TermsConsent(accepted: $termsAccepted)
         }
         .padding(.horizontal, 32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(model.theme.background.ignoresSafeArea())
+    }
+}
+
+/// Галочка «принимаю Условия и Политику» и строка о нулевой терпимости к недопустимому контенту.
+private struct TermsConsent: View {
+    @EnvironmentObject private var model: AppModel
+    @Binding var accepted: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Button { accepted.toggle() } label: {
+                    MIcon(accepted ? .checkBox : .checkBoxOutlineBlank, tint: accepted ? model.theme.primary : model.theme.textMuted)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("welcome_termsAccept"))
+                Text(agreement).font(.roboto(13)).foregroundStyle(model.theme.textPrimary).tint(model.theme.primary)
+            }
+            MutedText("welcome_termsZeroTolerance", size: 12)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var agreement: AttributedString {
+        func link(_ key: String, _ doc: String) -> AttributedString {
+            var s = AttributedString(tr(key))
+            s.link = siteDocURL(doc, model.locale)
+            s.foregroundColor = model.theme.primary
+            s.underlineStyle = .single
+            return s
+        }
+        var s = AttributedString(tr("welcome_termsAcceptPrefix") + " ")
+        s += link("about_terms", "terms")
+        s += AttributedString(" " + tr("register_agreementJoiner") + " ")
+        s += link("welcome_termsPrivacyLink", "privacy") // по-русски — винительный падеж
+        return s
     }
 }
 
@@ -194,9 +234,9 @@ struct RegisterView: View {
             s.underlineStyle = .single
             return s
         }
-        var s = AttributedString(tr("register_agreementPrefix"))
+        var s = AttributedString(tr("register_agreementPrefix") + " ")
         s += link("about_terms", "terms")
-        s += AttributedString(tr("register_agreementJoiner"))
+        s += AttributedString(" " + tr("register_agreementJoiner") + " ")
         s += link("about_privacy", "privacy")
         s += AttributedString(".")
         return s

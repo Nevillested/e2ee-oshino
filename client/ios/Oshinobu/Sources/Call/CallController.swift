@@ -92,11 +92,8 @@ final class CallController: NSObject, CXProviderDelegate, @unchecked Sendable {
         if pushedCallId == callId { return completion() } // повтор того же пуша
         let id = UUID()
         let busy = uuid != nil || core.calls.state.value != .idle
-        let update = CXCallUpdate()
-        let login = core.chats.knownPeers().first { $0.lastKnownDeviceId == callerDeviceId }?.peerLogin
-        update.remoteHandle = CXHandle(type: .generic, value: login ?? callerDeviceId)
-        update.localizedCallerName = login ?? "Oshinobu"
-        update.hasVideo = false
+        let login = knownCallerName(callerDeviceId)
+        let update = callUpdate(name: login)
         if !busy {
             // сразу, до ответа CallKit: offer по WebSocket может прийти раньше
             uuid = id
@@ -110,6 +107,7 @@ final class CallController: NSObject, CXProviderDelegate, @unchecked Sendable {
                 self.endPushedCall(reason: .failed)
             }
         }
+        if login == nil, !busy { refreshCallerName(id, deviceId: callerDeviceId) }
         provider.reportNewIncomingCall(with: id, update: update) { [weak self] error in
             completion()
             guard let self else { return }
@@ -146,10 +144,8 @@ final class CallController: NSObject, CXProviderDelegate, @unchecked Sendable {
     }
 
     private func reportIncoming(_ incoming: IncomingCall) {
-        let update = CXCallUpdate()
-        update.remoteHandle = CXHandle(type: .generic, value: incoming.peer.login ?? incoming.peer.deviceId)
-        update.localizedCallerName = incoming.peer.login
-        update.hasVideo = false
+        let login = incoming.peer.login ?? knownCallerName(incoming.peer.deviceId)
+        let update = callUpdate(name: login)
         // offer звонка, уже показанного по пушу, — тот же экран CallKit, только с именем
         if let pushed = pushedCallId, pushed == incoming.callId, let id = uuid {
             pushedTimeout?.cancel()
@@ -160,8 +156,33 @@ final class CallController: NSObject, CXProviderDelegate, @unchecked Sendable {
         }
         let id = UUID()
         uuid = id
+        if login == nil { refreshCallerName(id, deviceId: incoming.peer.deviceId) }
         provider.reportNewIncomingCall(with: id, update: update) { [weak self] error in
             if let error { self?.core.logger.log("CallKit incoming report failed: \(error)") }
+        }
+    }
+
+    /// Логин звонящего по его устройству — без сети (владелец устройства или чат с ним).
+    private func knownCallerName(_ deviceId: String) -> String? {
+        core.router.knownOwner(deviceId)?.login ?? core.chats.knownPeers().first { $0.lastKnownDeviceId == deviceId }?.peerLogin
+    }
+
+    /// Экран звонка CallKit. Имя неизвестно — «Oshinobu», а не id устройства: его
+    /// CallKit показывал целиком (длинный UUID вместо имени звонящего).
+    private func callUpdate(name: String?) -> CXCallUpdate {
+        let update = CXCallUpdate()
+        update.remoteHandle = CXHandle(type: .generic, value: name ?? "Oshinobu")
+        update.localizedCallerName = name ?? "Oshinobu"
+        update.hasVideo = false
+        return update
+    }
+
+    /// На устройстве имени нет — спросить сервер и, пока звонок тот же, подставить имя.
+    private func refreshCallerName(_ id: UUID, deviceId: String) {
+        guard !deviceId.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            guard let self, let owner = await self.core.router.resolveOwner(deviceId), self.uuid == id else { return }
+            self.provider.reportCall(with: id, updated: self.callUpdate(name: owner.login))
         }
     }
 

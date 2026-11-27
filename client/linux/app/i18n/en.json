@@ -453,5 +453,8 @@
  "update_readyBody": "Install the update now?",
  "update_readyTitle": "New version downloaded",
  "welcome_login": "Log in",
- "welcome_register": "Register"
+ "welcome_register": "Register",
+ "welcome_termsAcceptPrefix": "I agree to the",
+ "welcome_termsPrivacyLink": "Privacy Policy",
+ "welcome_termsZeroTolerance": "Objectionable content and abusive behavior are not tolerated. You can report messages and block users; reports are reviewed within 24 hours, and violators are removed."
 }

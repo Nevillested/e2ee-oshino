@@ -308,6 +308,13 @@ public final class OshinobuCore: @unchecked Sendable {
     @discardableResult
     public func login(login: String, password: String, totpCode: String) async throws -> String {
         let result = try await api.login(login: login, password: password, totpCode: totpCode)
+        // Связка ключей iOS переживает удаление приложения: после переустановки в ней лежат
+        // ключи, device_id и переписка прошлого входа (возможно, другого аккаунта). Сессии
+        // нет — значит, это остатки: стереть, иначе вход шёл бы с чужим устройством (сервер
+        // отвечал 403, устройство не регистрировалось, сообщения не доходили)
+        keys.wipeAll()
+        chats.wipeAll()
+        prefs.remove("apns_sent")
         session.token = result.token
         session.login = login
         if let me = await api.getMyAccountInfo(token: result.token) { session.accountId = me.accountId }

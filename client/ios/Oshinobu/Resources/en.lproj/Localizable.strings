@@ -301,6 +301,9 @@
 "register_title" = "Registration";
 "report_commentHint" = "Comment (optional) — why are you reporting this";
 "report_sent" = "Report sent";
+"report_blockTitle" = "Block this user?";
+"report_blockText" = "You reported a message from %@. Block them so they can no longer message or call you?";
+"report_blockLater" = "Not now";
 "report_title" = "Report message";
 "settings_about" = "About the app";
 "settings_appLock" = "App lock";
@@ -345,6 +348,10 @@
 "unit_mb" = "MB";
 "welcome_login" = "Log in";
 "welcome_register" = "Register";
+"welcome_termsAccept" = "I agree to the Terms of Service and the Privacy Policy";
+"welcome_termsAcceptPrefix" = "I agree to the";
+"welcome_termsPrivacyLink" = "Privacy Policy";
+"welcome_termsZeroTolerance" = "Objectionable content and abusive behavior are not tolerated. You can report messages and block users; reports are reviewed within 24 hours, and violators are removed.";
 "error_network" = "No connection to the server. Check your internet and try again.";
 "common_back" = "Back";
 "emoji_smileys" = "Smileys";

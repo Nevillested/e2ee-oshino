@@ -651,6 +651,15 @@ struct ChatView: View {
                     try await core.api.reportMessage(token: token, reportedDeviceId: deviceId, messageText: m.reportText, reason: comment)
                 } onSent: {
                     toasts.show(tr("report_sent"))
+                    // сразу предложить и заблокировать — чтобы нарушитель больше не мог писать (App Store 1.2)
+                    if !current.blockedByMe {
+                        let chat = current, popups = model.popups
+                        popups.show {
+                            BlockAfterReportDialog(peerLogin: chat.peerLogin) {
+                                try await core.setBlocked(chat, true)
+                            }
+                        }
+                    }
                 }
             }
         case .cancelSend: model.core.cancelOutgoing(current.peerLogin, t.groupIds)
@@ -1948,6 +1957,36 @@ private struct ReportDialog: View {
                         self.error = localizedError(error)
                     }
                     sending = false
+                }
+            }
+        }
+        .tint(model.theme.primary)
+    }
+}
+
+/// После жалобы: «Заблокировать и этого пользователя?»
+private struct BlockAfterReportDialog: View {
+    @EnvironmentObject private var model: AppModel
+    let peerLogin: String
+    let onBlock: () async throws -> Void
+    @State private var error: String?
+
+    var body: some View {
+        AppDialog(title: "report_blockTitle", onDismiss: { model.popups.dismiss() }) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(String(format: tr("report_blockText"), peerLogin))
+                ErrorLine(text: error)
+            }
+        } buttons: {
+            DialogButton("report_blockLater") { model.popups.dismiss() }
+            DialogButton("chatMenu_block") {
+                Task {
+                    do {
+                        try await onBlock()
+                        model.popups.dismiss()
+                    } catch {
+                        self.error = localizedError(error)
+                    }
                 }
             }
         }

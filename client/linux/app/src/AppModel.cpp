@@ -253,6 +253,7 @@ AppModel::AppModel(QObject *parent) : QObject(parent) {
         if (core_->chats.peer(peer)) openChatWith(peer);
     });
     closeAction_ = core_->prefs->getString("ui_close_action").value_or(QString());
+    termsAccepted_ = core_->prefs->getBool("terms_accepted_v1").value_or(false);
     notificationsMuted_ = core_->prefs->getString("ui_notifications_muted").value_or(QString()) == "1";
     // иконка в трее — всегда, и при открытом окне: левый клик — открыть, правый — меню
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
@@ -287,6 +288,13 @@ void AppModel::setCloseAction(const QString &action) {
     closeAction_ = action;
     core_->prefs->setString("ui_close_action", action);
     Q_EMIT closeActionChanged();
+}
+
+void AppModel::setTermsAccepted(bool accepted) {
+    if (accepted == termsAccepted_) return;
+    termsAccepted_ = accepted;
+    core_->prefs->setBool("terms_accepted_v1", accepted);
+    Q_EMIT termsAcceptedChanged();
 }
 
 void AppModel::setNotificationsMuted(bool muted) {

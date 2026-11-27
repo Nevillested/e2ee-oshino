@@ -80,8 +80,32 @@ Item {
                 Layout.fillWidth: true
                 Layout.bottomMargin: 18
             }
-            FlatButton { text: Ui.t("welcome_login"); Layout.fillWidth: true; onClicked: stack.push(loginForm) }
-            FlatButton { text: Ui.t("welcome_register"); primary: false; outline: true; Layout.fillWidth: true; onClicked: stack.push(registerForm) }
+            FlatButton { text: Ui.t("welcome_login"); enabled: App.termsAccepted; Layout.fillWidth: true; onClicked: stack.push(loginForm) }
+            FlatButton { text: Ui.t("welcome_register"); enabled: App.termsAccepted; primary: false; outline: true; Layout.fillWidth: true; onClicked: stack.push(registerForm) }
+            // условия — до входа и регистрации (как на Android/iOS): без галочки кнопки неактивны
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+                ThemedCheck { checked: App.termsAccepted; onToggled: App.termsAccepted = checked }
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    color: Ui.c.textPrimary
+                    linkColor: Ui.c.primary
+                    textFormat: Text.StyledText
+                    text: Ui.t("welcome_termsAcceptPrefix") + " <a href=\"https://ee2e.oshino.space/terms/" + App.lang + "/\">" + Ui.t("about_terms")
+                        + "</a> " + Ui.t("register_agreementJoiner").trim() + " <a href=\"https://ee2e.oshino.space/privacy/" + App.lang + "/\">"
+                        + Ui.t("welcome_termsPrivacyLink") + "</a>"
+                    onLinkActivated: link => Qt.openUrlExternally(link)
+                }
+            }
+            Text {
+                text: Ui.t("welcome_termsZeroTolerance")
+                color: Ui.c.textMuted
+                font.pixelSize: 12
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
             Row {
                 Layout.alignment: Qt.AlignHCenter
                 spacing: 6

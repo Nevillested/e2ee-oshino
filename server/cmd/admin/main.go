@@ -93,6 +93,7 @@ func runMenu(ctx context.Context, queries *db.Queries, reader *bufio.Reader) {
 		fmt.Println("6) Удалить пригласительный код")
 		fmt.Println("7) Показать жалобы на сообщения")
 		fmt.Println("8) Показать отзывы (обратная связь)")
+		fmt.Println("9) Удалить аккаунт нарушителя (по жалобе)")
 		fmt.Println("0) Выход")
 		fmt.Print("Выбор: ")
 
@@ -121,6 +122,8 @@ func runMenu(ctx context.Context, queries *db.Queries, reader *bufio.Reader) {
 			runListReports(ctx, queries, reader)
 		case "8":
 			runListFeedback(ctx, queries, reader)
+		case "9":
+			runAction(ctx, queries, reader, ejectAccount)
 		case "0":
 			fmt.Println("Пока.")
 			return
@@ -167,6 +170,24 @@ func confirm(reader *bufio.Reader, prompt string) bool {
 		return false
 	}
 	return strings.TrimSpace(strings.ToLower(line)) == "yes"
+}
+
+// ejectAccount — реакция на жалобу (App Store 1.2: в течение 24 часов убрать
+// контент и нарушителя): переписка зашифрована на устройствах и на сервере её
+// нет, поэтому «убрать» — это удалить аккаунт нарушителя целиком, как при
+// удалении им самим (устройства, сессии и очередь сообщений — каскадом).
+// Вернуться он сможет только с новым приглашением.
+func ejectAccount(ctx context.Context, queries *db.Queries, reader *bufio.Reader, account db.Account) {
+	fmt.Printf("Аккаунт %q будет удалён безвозвратно: все его устройства, сессии и недоставленные сообщения.\n", account.Login)
+	if !confirm(reader, "Удалить?") {
+		fmt.Println("Отменено.")
+		return
+	}
+	if err := queries.DeleteAccount(ctx, account.ID); err != nil {
+		fmt.Printf("Не удалось удалить: %v\n", err)
+		return
+	}
+	fmt.Printf("Аккаунт %q удалён.\n", account.Login)
 }
 
 func resetPassword(ctx context.Context, queries *db.Queries, reader *bufio.Reader, account db.Account) {

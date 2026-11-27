@@ -63,6 +63,8 @@ class AppModel : public QObject, public osh::RouterHost {
     /// Что делает крестик: «tray» — свернуть в трей, «quit» — закрыть приложение, пусто — ещё не
     /// решено (спросить один раз и запомнить).
     Q_PROPERTY(QString closeAction READ closeAction WRITE setCloseAction NOTIFY closeActionChanged)
+    /// Условия использования приняты на этом устройстве — до входа и регистрации (как на Android/iOS).
+    Q_PROPERTY(bool termsAccepted READ termsAccepted WRITE setTermsAccepted NOTIFY termsAcceptedChanged)
     /// Уведомления о сообщениях (всплывающие и звук) выключены из меню трея; звонки звонят всегда.
     Q_PROPERTY(bool notificationsMuted READ notificationsMuted WRITE setNotificationsMuted NOTIFY notificationsMutedChanged)
     Q_PROPERTY(bool trayAvailable READ trayAvailable CONSTANT)
@@ -138,6 +140,8 @@ public:
     Q_INVOKABLE void quit();
     QString closeAction() const { return closeAction_; }
     void setCloseAction(const QString &action);
+    bool termsAccepted() const { return termsAccepted_; }
+    void setTermsAccepted(bool accepted);
     bool notificationsMuted() const { return notificationsMuted_; }
     void setNotificationsMuted(bool muted);
     bool trayAvailable() const { return tray_ != nullptr; }
@@ -244,6 +248,7 @@ Q_SIGNALS:
     void stickerRevisionChanged();
     void previewStickerChanged();
     void closeActionChanged();
+    void termsAcceptedChanged();
     void notificationsMutedChanged();
     void info(const QString &text);
     void totpReady(const QString &url, const QString &secret);
@@ -314,6 +319,7 @@ private:
     QMenu *trayMenu_ = nullptr;
     QAction *trayOpen_ = nullptr, *trayMute_ = nullptr, *trayQuit_ = nullptr;
     QString closeAction_;
+    bool termsAccepted_ = false;
     bool notificationsMuted_ = false;
     void updateTrayMenu();
     Notifier *notifier_ = nullptr;
