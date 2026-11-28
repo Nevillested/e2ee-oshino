@@ -298,8 +298,8 @@
     <string name="recovery_success">Password changed, you can now log in</string>
     <string name="recovery_title">Password recovery</string>
     <string name="recovery_titleTotp">Authenticator recovery</string>
-    <string name="register_agreementJoiner"> and </string>
-    <string name="register_agreementPrefix">By registering, you agree to the </string>
+    <string name="register_agreementJoiner">and</string>
+    <string name="register_agreementPrefix">By registering, you agree to the</string>
     <string name="register_title">Registration</string>
     <string name="report_commentHint">Comment (optional) — why are you reporting this</string>
     <string name="report_sent">Report sent</string>
@@ -350,7 +350,7 @@
     <string name="unit_mb">MB</string>
     <string name="welcome_login">Log in</string>
     <string name="welcome_register">Register</string>
-    <string name="welcome_termsAcceptPrefix">I agree to the </string>
+    <string name="welcome_termsAcceptPrefix">I agree to the</string>
     <string name="welcome_termsPrivacyLink">Privacy Policy</string>
     <string name="welcome_termsZeroTolerance">Objectionable content and abusive behavior are not tolerated. You can report messages and block users; reports are reviewed within 24 hours, and violators are removed.</string>
     <string name="error_network">No connection to the server. Check your internet and try again.</string>

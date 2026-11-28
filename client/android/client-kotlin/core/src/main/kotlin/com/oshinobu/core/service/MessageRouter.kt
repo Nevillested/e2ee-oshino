@@ -167,6 +167,9 @@ class MessageRouter(
         }
         val chatIsOpen = host.openChatPeerLogin == owner.login
         apply(inner, owner, chatIsOpen)
+        // устройство собеседника — с его же сообщения: чат, начатый им, иначе его не знал
+        // (iOS: жалоба падала с error.notSignedIn; бот не мог ответить)
+        chats.setLastKnownDeviceId(owner.login, senderDeviceId)
         ack(deliveryId)
 
         if (!chatIsOpen && inner.type !in SILENT_TYPES && !chats.isChatMuted(owner.login)) {

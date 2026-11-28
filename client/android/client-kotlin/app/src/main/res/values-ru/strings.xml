@@ -298,8 +298,8 @@
     <string name="recovery_success">Пароль изменён, теперь можно войти</string>
     <string name="recovery_title">Восстановление пароля</string>
     <string name="recovery_titleTotp">Восстановление аутентификатора</string>
-    <string name="register_agreementJoiner"> и </string>
-    <string name="register_agreementPrefix">Регистрируясь, вы соглашаетесь с </string>
+    <string name="register_agreementJoiner">и</string>
+    <string name="register_agreementPrefix">Регистрируясь, вы соглашаетесь с</string>
     <string name="register_title">Регистрация</string>
     <string name="report_commentHint">Комментарий (необязательно) — почему вы жалуетесь</string>
     <string name="report_sent">Жалоба отправлена</string>
@@ -350,7 +350,7 @@
     <string name="unit_mb">МБ</string>
     <string name="welcome_login">Войти</string>
     <string name="welcome_register">Регистрация</string>
-    <string name="welcome_termsAcceptPrefix">Я принимаю </string>
+    <string name="welcome_termsAcceptPrefix">Я принимаю</string>
     <string name="welcome_termsPrivacyLink">Политику конфиденциальности</string>
     <string name="welcome_termsZeroTolerance">Недопустимый контент и оскорбления запрещены. На сообщение можно пожаловаться, пользователя можно заблокировать; жалобы рассматриваются в течение 24 часов, нарушители удаляются.</string>
     <string name="error_network">Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.</string>

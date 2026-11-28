@@ -31,7 +31,7 @@ class DemoBot(private val core: OshinobuCore, private val config: BotConfig, pri
         const val HANDLED_KEY = "demo_bot_handled"
         const val GREETED_PREFIX = "demo_bot_greeted:"
         const val MAX_HANDLED = 2000
-        const val GREET_POLL_MS = 20_000L
+        const val GREET_POLL_MS = 5_000L
         const val SESSION_CHECK_MS = 60_000L
     }
 
@@ -138,7 +138,7 @@ class DemoBot(private val core: OshinobuCore, private val config: BotConfig, pri
             val messages = listOf(
                 "Hi! I'm the Oshinobu demo bot. This chat is end-to-end encrypted: only you and I can read it, the server only relays ciphertext.",
                 "Try anything here: send a message, a photo, a file or a voice message, reply to a message, react with an emoji. I answer every message automatically.",
-                "You can also report or block me (long press a message or this chat), and delete your account in Settings.",
+                "You can also report a message (open its menu: tap it on iPhone, long press on Android), block me (long press this chat in the chat list) and delete your account in Settings.",
                 "Calls are peer-to-peer between two people, and I'm a bot, so I can't pick up. If you call me, I'll decline.",
             )
             for (text in messages) core.chatService.sendText(peer, text)

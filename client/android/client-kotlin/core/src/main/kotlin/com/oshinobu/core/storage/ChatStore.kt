@@ -504,7 +504,10 @@ class ChatStore(private val secure: SecureStore, private val now: () -> Long = S
 
     suspend fun setPeerDeletedStatus(peerLogin: String, isDeleted: Boolean) = updatePeer(peerLogin) { it.isDeleted = isDeleted; true }
 
-    suspend fun setLastKnownDeviceId(peerLogin: String, deviceId: String) = updatePeer(peerLogin) { it.lastKnownDeviceId = deviceId; true }
+    // теперь зовётся на каждое входящее — без изменений список чатов не перезаписываем
+    suspend fun setLastKnownDeviceId(peerLogin: String, deviceId: String) = updatePeer(peerLogin) {
+        if (it.lastKnownDeviceId == deviceId) false else { it.lastKnownDeviceId = deviceId; true }
+    }
 
     /** Разовая досчитка lastMessageIsMine/IsRead у списков, созданных до появления этих полей. */
     suspend fun backfillLastMessageMeta() = withPeersLock {

@@ -124,25 +124,26 @@ private fun TermsConsent(accepted: Boolean, onChange: (Boolean) -> Unit) {
     val context = LocalContext.current
     val linkStyle = TextLinkStyles(SpanStyle(color = colors.primary, textDecoration = TextDecoration.Underline))
     val agreement = buildAnnotatedString {
-        append(stringResource(R.string.welcome_termsAcceptPrefix))
+        // пробелы — здесь: в ресурсах Android их по краям строки обрезает
+        append(stringResource(R.string.welcome_termsAcceptPrefix) + " ")
         withLink(LinkAnnotation.Url(context.siteDocUrl("terms"), linkStyle)) { append(stringResource(R.string.about_terms)) }
-        append(stringResource(R.string.register_agreementJoiner))
+        append(" " + stringResource(R.string.register_agreementJoiner) + " ")
         // по-русски — винительный падеж
         withLink(LinkAnnotation.Url(context.siteDocUrl("privacy"), linkStyle)) { append(stringResource(R.string.welcome_termsPrivacyLink)) }
     }
-    Column(Modifier.fillMaxWidth()) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(
                 checked = accepted,
                 onCheckedChange = onChange,
                 colors = CheckboxDefaults.colors(checkedColor = colors.primary, uncheckedColor = colors.textMuted),
             )
-            Text(agreement, style = TextStyle(color = colors.textPrimary, fontSize = 13.sp))
+            Text(agreement, style = TextStyle(color = colors.textPrimary, fontSize = 13.sp, textAlign = TextAlign.Center))
         }
         Text(
             stringResource(R.string.welcome_termsZeroTolerance),
-            style = TextStyle(color = colors.textMuted, fontSize = 12.sp),
-            modifier = Modifier.padding(start = 12.dp, top = 4.dp),
+            style = TextStyle(color = colors.textMuted, fontSize = 12.sp, textAlign = TextAlign.Center),
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         )
     }
 }
@@ -234,9 +235,10 @@ fun RegisterScreen(onBack: () -> Unit, onRegistered: (login: String, totpUrl: St
         val privacy = stringResource(R.string.about_privacy)
         val linkStyle = TextLinkStyles(SpanStyle(color = colors.primary, textDecoration = TextDecoration.Underline))
         val agreement = buildAnnotatedString {
-            append(stringResource(R.string.register_agreementPrefix))
+            // пробелы — здесь: в ресурсах Android их по краям строки обрезает («agree to theTerms»)
+            append(stringResource(R.string.register_agreementPrefix) + " ")
             withLink(LinkAnnotation.Url(context.siteDocUrl("terms"), linkStyle)) { append(terms) }
-            append(stringResource(R.string.register_agreementJoiner))
+            append(" " + stringResource(R.string.register_agreementJoiner) + " ")
             withLink(LinkAnnotation.Url(context.siteDocUrl("privacy"), linkStyle)) { append(privacy) }
             append(".")
         }
