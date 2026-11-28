@@ -84,12 +84,14 @@ Item {
             FlatButton { text: Ui.t("welcome_register"); enabled: App.termsAccepted; primary: false; outline: true; Layout.fillWidth: true; onClicked: stack.push(registerForm) }
             // условия — до входа и регистрации (как на Android/iOS): без галочки кнопки неактивны
             RowLayout {
-                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignHCenter
+                Layout.maximumWidth: parent.width
                 spacing: 4
                 ThemedCheck { checked: App.termsAccepted; onToggled: App.termsAccepted = checked }
                 Text {
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
+                    horizontalAlignment: Text.AlignHCenter
                     color: Ui.c.textPrimary
                     linkColor: Ui.c.primary
                     textFormat: Text.StyledText
@@ -104,6 +106,7 @@ Item {
                 color: Ui.c.textMuted
                 font.pixelSize: 12
                 wrapMode: Text.Wrap
+                horizontalAlignment: Text.AlignHCenter
                 Layout.fillWidth: true
             }
             Row {

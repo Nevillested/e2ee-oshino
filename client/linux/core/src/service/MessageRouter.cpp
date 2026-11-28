@@ -111,6 +111,8 @@ Task<void> MessageRouter::process(QString senderDeviceId, QJsonObject envelope, 
     }
     const bool chatIsOpen = host_.openChatPeerLogin() == owner->login;
     apply(*inner, *owner, chatIsOpen);
+    // устройство собеседника — с его же сообщения: чат, начатый им, иначе его не знал (как на Android/iOS)
+    chats_.setLastKnownDeviceId(owner->login, senderDeviceId);
     ack(deliveryId);
     if (!chatIsOpen && !silentTypes().contains(inner->type) && !chats_.isChatMuted(owner->login)) {
         host_.playMessageSound();
